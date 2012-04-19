@@ -4145,8 +4145,8 @@ static int
 read_debug_types (DSO *dso)
 {
   unsigned char *ptr, *endcu, *endsec;
-  uint32_t value;
   htab_t abbrev;
+  unsigned int value, last_abbrev_offset = -1U;
 
   ptr = debug_sections[DEBUG_TYPES].data;
   if (ptr == NULL)
@@ -4197,16 +4197,28 @@ read_debug_types (DSO *dso)
 	  return 1;
 	}
 
-      abbrev = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value,
-			    true);
-      if (abbrev == NULL)
-	return 1;
+      if (cu_offset && last_abbrev_offset == value)
+	abbrev = NULL;
+      else
+	{
+	  abbrev = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value,
+				true);
+	  if (abbrev == NULL)
+	    return 1;
+	  last_abbrev_offset = value;
+	}
 
       cu = (struct dw_cu *) obstack_alloc (&ob, sizeof (struct dw_cu));
       memset (cu, '\0', sizeof (*cu));
       cu->cu_new_abbrev = abbrev;
       cu->cu_offset = cu_offset;
       cu->cu_version = cu_version;
+      if (abbrev == NULL)
+	{
+	  cu->u1.cu_new_abbrev_owner = last_cu->u1.cu_new_abbrev_owner;
+	  if (cu->u1.cu_new_abbrev_owner == NULL)
+	    cu->u1.cu_new_abbrev_owner = last_cu;
+	}
       if (first_cu == NULL)
 	first_cu = last_cu = cu;
       else
@@ -4834,6 +4846,11 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 
       if (cu->cu_die == NULL)
 	{
+	  if (cu->u1.cu_new_abbrev_owner != NULL)
+	    {
+	      ncus--;
+	      continue;
+	    }
 	  if (htab_elements (cu->cu_new_abbrev) >= 128)
 	    nlargeabbrevs++;
 	  cu->u2.cu_largest_entry = 0;
@@ -5010,8 +5027,10 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
   obstack_free (&vec, NULL);
   free (t);
   cuarr = (struct dw_cu **) xmalloc (ncus * sizeof (struct dw_cu *));
-  for (cu = first_cu, i = 0; cu; cu = cu->cu_next, i++)
-    cuarr[i] = cu;
+  for (cu = first_cu, i = 0; cu; cu = cu->cu_next)
+    if (cu->u1.cu_new_abbrev_owner == NULL)
+      cuarr[i++] = cu;
+  assert (i == ncus);
   qsort (cuarr, ncus, sizeof (struct dw_cu *), cu_abbrev_cmp);
   /* For CUs with < 128 abbrevs, try to see if either all of the
      abbrevs are at < 128 positions in >= 128 abbrev CUs, or
