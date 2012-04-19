@@ -2673,9 +2673,9 @@ die_eq (const void *p, const void *q)
   count = obstack_object_size (&ob) / sizeof (void *);
   arr = (dw_die_ref *) obstack_finish (&ob);
   if (!ret)
-    for (i = 0; i < count; i++)
+    for (i = count; i;)
       {
-	dw_die_ref die = arr[i]->die_dup;
+	dw_die_ref die = arr[--i]->die_dup;
 	die->die_nextdup = arr[i]->die_nextdup;
 	arr[i]->die_nextdup = NULL;
 	arr[i]->die_dup = NULL;
