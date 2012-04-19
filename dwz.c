@@ -330,19 +330,20 @@ static struct
     int sec;
   } debug_sections[] =
   {
-#define DEBUG_INFO	0
-#define DEBUG_ABBREV	1
-#define DEBUG_LINE	2
-#define DEBUG_ARANGES	3
-#define DEBUG_PUBNAMES	4
-#define DEBUG_PUBTYPES	5
-#define DEBUG_MACINFO	6
-#define DEBUG_LOC	7
-#define DEBUG_STR	8
-#define DEBUG_FRAME	9
-#define DEBUG_RANGES	10
-#define DEBUG_TYPES	11
-#define DEBUG_MACRO	12
+#define DEBUG_INFO		0
+#define DEBUG_ABBREV		1
+#define DEBUG_LINE		2
+#define DEBUG_ARANGES		3
+#define DEBUG_PUBNAMES		4
+#define DEBUG_PUBTYPES		5
+#define DEBUG_MACINFO		6
+#define DEBUG_LOC		7
+#define DEBUG_STR		8
+#define DEBUG_FRAME		9
+#define DEBUG_RANGES		10
+#define DEBUG_TYPES		11
+#define DEBUG_MACRO		12
+#define DEBUG_GDB_SCRIPTS	13
     { ".debug_info", NULL, 0, 0 },
     { ".debug_abbrev", NULL, 0, 0 },
     { ".debug_line", NULL, 0, 0 },
@@ -356,6 +357,7 @@ static struct
     { ".debug_ranges", NULL, 0, 0 },
     { ".debug_types", NULL, 0, 0 },
     { ".debug_macro", NULL, 0, 0 },
+    { ".debug_gdb_scripts", NULL, 0, 0 },
     { NULL, NULL, 0, 0 }
   };
 
