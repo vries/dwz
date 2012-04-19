@@ -3090,11 +3090,9 @@ partition_cmp (const void *p, const void *q)
     {
       while (ref1 && ref1->die_cu == last_cu1)
 	ref1 = ref1->die_nextdup;
-      if (ref1 == NULL)
-	break;
       while (ref2 && ref2->die_cu == last_cu2)
 	ref2 = ref2->die_nextdup;
-      if (ref2 == NULL)
+      if (ref1 == NULL || ref2 == NULL)
 	break;
       last_cu1 = ref1->die_cu;
       last_cu2 = ref2->die_cu;
@@ -3201,11 +3199,9 @@ partition_dups (void)
 		    {
 		      while (ref1 && ref1->die_cu == last_cu1)
 			ref1 = ref1->die_nextdup;
-		      if (ref1 == NULL)
-			break;
 		      while (ref2 && ref2->die_cu == last_cu2)
 			ref2 = ref2->die_nextdup;
-		      if (ref2 == NULL)
+		      if (ref1 == NULL || ref2 == NULL)
 			break;
 		      last_cu1 = ref1->die_cu;
 		      last_cu2 = ref2->die_cu;
