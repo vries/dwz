@@ -2195,7 +2195,7 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 	  else
 	    {
 	      /* If we get here, all u.p1.die_hash values in the arr array
-		 are used by more than one day.  Do the more expensive
+		 are used by more than one DIE.  Do the more expensive
 		 computation as fallback.  */
 	      for (i = 0; i < count; i++)
 		{
@@ -2217,14 +2217,14 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
   return ret;
 }
 
-/* Hash function for dup_htab.  Both u.p1.die_hash and
-   u.p1.die_ref_hash are interesting.  */
+/* Hash function for dup_htab.  u.p1.die_ref_hash should have u.p1.die_hash
+   iteratively hashed into it already.  */
 static hashval_t
 die_hash (const void *p)
 {
   dw_die_ref die = (dw_die_ref) p;
 
-  return die->u.p1.die_hash ^ die->u.p1.die_ref_hash;
+  return die->u.p1.die_ref_hash;
 }
 
 /* Return 1 if DIE1 and DIE2 match.  TOP_DIE1 and TOP_DIE2
@@ -2719,9 +2719,10 @@ find_dups (dw_die_ref parent)
     {
       if (child->die_ck_state == CK_KNOWN)
 	{
+	  if (child->die_dup != NULL)
+	    continue;
 	  slot = htab_find_slot_with_hash (dup_htab, child,
-					   child->u.p1.die_hash
-					   ^ child->u.p1.die_ref_hash,
+					   child->u.p1.die_ref_hash,
 					   INSERT);
 	  if (slot == NULL)
 	    error (1, ENOMEM, "Not enough memory to find duplicates");
@@ -3219,14 +3220,14 @@ partition_dups (void)
 		}
 	      if (cnt == 0)
 		{
-		  struct dw_cu *last_cu = NULL;
+		  struct dw_cu *last_cu1 = NULL;
 		  for (ref = arr[i]->die_nextdup;; ref = ref->die_nextdup)
 		    {
-		      while (ref && ref->die_cu == last_cu)
+		      while (ref && ref->die_cu == last_cu1)
 			ref = ref->die_nextdup;
 		      if (ref == NULL)
 			break;
-		      last_cu = ref->die_cu;
+		      last_cu1 = ref->die_cu;
 		      cnt++;
 		    }
 		}
