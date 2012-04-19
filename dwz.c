@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <obstack.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #include <gelf.h>
 #include "dwarf2.h"
@@ -51,8 +52,8 @@ xmalloc (size_t size)
   return newmem;
 }
 
-/* General obstack for struct dw_cu, dw_die, dw_toplevel_die,
-   also used for temporary vectors.  */
+/* General obstack for struct dw_cu, dw_die, also used for temporary
+   vectors.  */
 static struct obstack ob;
 
 /* String obstack for .debug_line filenames.  */
@@ -534,13 +535,9 @@ struct dw_die
 	  unsigned int die_intracu_udata_size;
 	} p2;
      } u;
-};
+  /* The remaining fields are present only if die_toplevel is
+     1.  */
 
-/* If die_toplevel is set, we allocate this structure instead.  */
-struct dw_toplevel_die
-{
-  /* Must be first.  */
-  struct dw_die die;
   /* Pointer to a duplicate DIE.  */
   dw_die_ref die_dup;
   /* Chain of duplicate DIEs.  If die_dup is NULL, but die_nextdup
@@ -552,17 +549,11 @@ struct dw_toplevel_die
   dw_die_ref die_nextdup;
 };
 
-/* Accessors of die_dup and die_nextdup field.  die->die_toplevel
-   must be set to use these two.  */
-#define die_dup(die) \
-  (((struct dw_toplevel_die *) (&(die)->die_cu))->die_dup)
-#define die_nextdup(die) \
-  (((struct dw_toplevel_die *) (&(die)->die_cu))->die_nextdup)
 /* Safe variant that check die_toplevel.  Can't be used on LHS.  */
 #define die_safe_dup(die) \
-  ((die)->die_toplevel ? die_dup (die) : (dw_die_ref) NULL)
+  ((die)->die_toplevel ? (die)->die_dup : (dw_die_ref) NULL)
 #define die_safe_nextdup(die) \
-  ((die)->die_toplevel ? die_nextdup (die) : (dw_die_ref) NULL)
+  ((die)->die_toplevel ? (die)->die_nextdup : (dw_die_ref) NULL)
 
 /* Hash function in cu->cu_abbrev as well as cu->cu_new_abbrev htab.  */
 static hashval_t
@@ -2314,11 +2305,11 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	 on it again.  If non-match is determined later,
 	 die_eq wrapper undoes this (which is why the DIE
 	 pointer is added to the vector).  */
-      die_dup (die2) = die1;
+      die2->die_dup = die1;
       if (!die2->die_op_type_referenced)
 	die2->die_remove = 1;
-      die_nextdup (die2) = die_nextdup (die1);
-      die_nextdup (die1) = die2;
+      die2->die_nextdup = die1->die_nextdup;
+      die1->die_nextdup = die2;
       obstack_ptr_grow (&ob, die2);
     }
   while (1)
@@ -2619,8 +2610,8 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 		 in the hash table) already has a dup, follow to that
 		 dup.  Don't do the same for reft2, {{top_,}die,reft,child}2
 		 should always be from the current CU.  */
-	      if (die_dup (reft1))
-		reft1 = die_dup (reft1);
+	      if (reft1->die_dup)
+		reft1 = reft1->die_dup;
 	      if (die_eq_1 (reft1, reft2, reft1, reft2) == 0)
 		FAIL;
 	    }
@@ -2679,10 +2670,10 @@ die_eq (const void *p, const void *q)
   if (!ret)
     for (i = 0; i < count; i++)
       {
-	dw_die_ref die = die_dup (arr[i]);
-	die_nextdup (die) = die_nextdup (arr[i]);
-	die_nextdup (arr[i]) = NULL;
-	die_dup (arr[i]) = NULL;
+	dw_die_ref die = arr[i]->die_dup;
+	die->die_nextdup = arr[i]->die_nextdup;
+	arr[i]->die_nextdup = NULL;
+	arr[i]->die_dup = NULL;
 	arr[i]->die_remove = 0;
       }
   obstack_free (&ob, (void *) arr);
@@ -2897,15 +2888,15 @@ read_debug_info (DSO *dso)
 	      || parent->die_parent == NULL
 	      || parent->die_named_namespace)
 	    {
-	      die = (dw_die_ref)
-		    obstack_alloc (&ob, sizeof (struct dw_toplevel_die));
-	      memset (die, '\0', sizeof (struct dw_toplevel_die));
+	      die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
+	      memset (die, '\0', sizeof (struct dw_die));
 	      die->die_toplevel = 1;
 	    }
 	  else
 	    {
-	      die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
-	      memset (die, '\0', sizeof (*die));
+	      die = (dw_die_ref)
+		    obstack_alloc (&ob, offsetof (struct dw_die, die_dup));
+	      memset (die, '\0', offsetof (struct dw_die, die_dup));
 	    }
 	  *diep = die;
 	  die->die_tag = t->tag;
@@ -3094,15 +3085,15 @@ partition_cmp (const void *p, const void *q)
   dw_die_ref die2 = *(dw_die_ref *) q;
   dw_die_ref ref1, ref2;
   struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
-  for (ref1 = die_nextdup (die1), ref2 = die_nextdup (die2);;
-       ref1 = die_nextdup (ref1), ref2 = die_nextdup (ref2))
+  for (ref1 = die1->die_nextdup, ref2 = die2->die_nextdup;;
+       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
     {
       while (ref1 && ref1->die_cu == last_cu1)
-	ref1 = die_nextdup (ref1);
+	ref1 = ref1->die_nextdup;
       if (ref1 == NULL)
 	break;
       while (ref2 && ref2->die_cu == last_cu2)
-	ref2 = die_nextdup (ref2);
+	ref2 = ref2->die_nextdup;
       if (ref2 == NULL)
 	break;
       last_cu1 = ref1->die_cu;
@@ -3132,8 +3123,8 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
   dw_die_ref child;
   for (child = parent->die_child; child; child = child->die_sib)
     {
-      if (die_nextdup (child) != NULL
-	  && die_dup (child) == NULL
+      if (child->die_nextdup != NULL
+	  && child->die_dup == NULL
 	  && child->die_offset != -1U)
 	obstack_ptr_grow (vec, child);
       else if (child->die_named_namespace)
@@ -3149,20 +3140,19 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   dw_die_ref new_die;
   if (die->die_toplevel)
     {
-      new_die = (dw_die_ref)
-		obstack_alloc (&ob, sizeof (struct dw_toplevel_die));
+      new_die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
       memset (new_die, '\0', sizeof (*new_die));
       new_die->die_toplevel = 1;
-      die_dup (die) = new_die;
-      die_nextdup (new_die) = die;
+      die->die_dup = new_die;
+      new_die->die_nextdup = die;
       if (!die->die_op_type_referenced)
 	die->die_remove = 1;
     }
   else
     {
       new_die = (dw_die_ref)
-		obstack_alloc (&ob, sizeof (struct dw_die));
-      memset (new_die, '\0', sizeof (*new_die));
+		obstack_alloc (&ob, offsetof (struct dw_die, die_dup));
+      memset (new_die, '\0', offsetof (struct dw_die, die_dup));
     }
   new_die->die_parent = parent;
   new_die->die_tag = die->die_tag;
@@ -3206,15 +3196,15 @@ partition_dups (void)
 		  dw_die_ref ref1, ref2;
 		  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
 		  size_t this_cnt = 0;
-		  for (ref1 = die_nextdup (arr[i]), ref2 = die_nextdup (arr[j]);;
-		       ref1 = die_nextdup (ref1), ref2 = die_nextdup (ref2))
+		  for (ref1 = arr[i]->die_nextdup, ref2 = arr[j]->die_nextdup;;
+		       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
 		    {
 		      while (ref1 && ref1->die_cu == last_cu1)
-			ref1 = die_nextdup (ref1);
+			ref1 = ref1->die_nextdup;
 		      if (ref1 == NULL)
 			break;
 		      while (ref2 && ref2->die_cu == last_cu2)
-			ref2 = die_nextdup (ref2);
+			ref2 = ref2->die_nextdup;
 		      if (ref2 == NULL)
 			break;
 		      last_cu1 = ref1->die_cu;
@@ -3229,16 +3219,16 @@ partition_dups (void)
 		  cnt = this_cnt;
 		}
 	      if (cnt == 0)
-		for (ref = die_nextdup (arr[i]); ref; ref = die_nextdup (ref))
+		for (ref = arr[i]->die_nextdup; ref; ref = ref->die_nextdup)
 		  cnt++;
 	      for (k = i; k < j; k++)
 		{
 		  size += calc_sizes (arr[k]);
 		  for (ref = arr[k]->die_parent;
-		       ref->die_named_namespace && die_dup (ref) == NULL;
+		       ref->die_named_namespace && ref->die_dup == NULL;
 		       ref = ref->die_parent)
 		    {
-		      die_dup (ref) = arr[k];
+		      ref->die_dup = arr[k];
 		      namespaces++;
 		    }
 		}
@@ -3247,7 +3237,7 @@ partition_dups (void)
 		  for (k = i; k < j; k++)
 		    for (ref = arr[k]->die_parent; ref->die_named_namespace;
 			 ref = ref->die_parent)
-		      die_dup (ref) = NULL;
+		      ref->die_dup = NULL;
 		}
 	      orig_size = size * (cnt + 1);
 	      /* Estimated size of CU header and DW_TAG_partial_unit
@@ -3279,57 +3269,55 @@ partition_dups (void)
 		      last_partial_cu = partial_cu;
 		    }
 		  die = (dw_die_ref)
-			obstack_alloc (&ob, sizeof (struct dw_toplevel_die));
-		  memset (die, '\0', sizeof (struct dw_toplevel_die));
+			obstack_alloc (&ob, sizeof (struct dw_die));
+		  memset (die, '\0', sizeof (*die));
 		  die->die_toplevel = 1;
 		  partial_cu->cu_die = die;
 		  die->die_tag = DW_TAG_partial_unit;
 		  die->die_offset = -1U;
 		  die->die_cu = partial_cu;
-		  die_nextdup (die) = cu->cu_die;
+		  die->die_nextdup = cu->cu_die;
 		  die->die_size = 9;
 		  diep = &die->die_child;
 		  for (k = i; k < j; k++)
 		    {
 		      dw_die_ref child = copy_die_tree (die, arr[k]);
-		      for (ref = die_nextdup (arr[k]);
-			   ref; ref = die_nextdup (ref))
-			die_dup (ref) = child;
+		      for (ref = arr[k]->die_nextdup;
+			   ref; ref = ref->die_nextdup)
+			ref->die_dup = child;
 		      if (namespaces)
 			{
 			  for (ref = arr[k]->die_parent;
 			       ref->die_named_namespace
-			       && die_dup (ref) == NULL;
+			       && ref->die_dup == NULL;
 			       ref = ref->die_parent)
 			    {
 			      dw_die_ref namespc
 				= (dw_die_ref)
 				  obstack_alloc (&ob,
-						 sizeof (struct
-							 dw_toplevel_die));
-			      memset (namespc, '\0',
-				      sizeof (struct dw_toplevel_die));
+						 sizeof (struct dw_die));
+			      memset (namespc, '\0', sizeof (struct dw_die));
 			      namespc->die_toplevel = 1;
 			      namespc->die_tag = ref->die_tag;
 			      namespc->die_offset = -1U;
 			      namespc->die_cu = partial_cu;
-			      die_nextdup (namespc) = ref;
+			      namespc->die_nextdup = ref;
 			      namespc->die_child = child;
 			      namespc->die_parent = die;
 			      namespc->die_size = 9;
 			      namespc->die_named_namespace = 1;
 			      child->die_parent = namespc;
-			      die_dup (ref) = namespc;
+			      ref->die_dup = namespc;
 			      child = namespc;
 			    }
-			  if (die_dup (ref) != NULL)
+			  if (ref->die_dup != NULL)
 			    {
 			      dw_die_ref *diep2;
-			      for (diep2 = &die_dup (ref)->die_child->die_sib;
+			      for (diep2 = &ref->die_dup->die_child->die_sib;
 				   *diep2; diep2 = &(*diep2)->die_sib)
 				;
 			      *diep2 = child;
-			      child->die_parent = die_dup (ref);
+			      child->die_parent = ref->die_dup;
 			      continue;
 			    }
 			}
@@ -3342,7 +3330,7 @@ partition_dups (void)
 			for (ref = arr[k]->die_parent;
 			     ref->die_named_namespace;
 			     ref = ref->die_parent)
-			  die_dup (ref) = NULL;
+			  ref->die_dup = NULL;
 		    }
 		}
 	      else
@@ -3352,9 +3340,9 @@ partition_dups (void)
 		    {
 		      for (ref = arr[k]; ref; ref = next)
 			{
-			  next = die_nextdup (ref);
-			  die_dup (ref) = NULL;
-			  die_nextdup (ref) = NULL;
+			  next = ref->die_nextdup;
+			  ref->die_dup = NULL;
+			  ref->die_nextdup = NULL;
 			  ref->die_remove = 0;
 			}
 		      arr[k] = NULL;
@@ -3612,8 +3600,8 @@ create_import_tree (void)
 	   rdie->die_named_namespace; rdie = rdie->die_child)
 	;
       assert (rdie->die_toplevel);
-      for (die = die_nextdup (rdie), prev_cu = NULL;
-	   die; die = die_nextdup (die))
+      for (die = rdie->die_nextdup, prev_cu = NULL;
+	   die; die = die->die_nextdup)
 	{
 	  if (die->die_cu == prev_cu)
 	    continue;
@@ -3624,8 +3612,8 @@ create_import_tree (void)
       ipu->incoming = (struct import_edge *)
 		       obstack_alloc (&iob, ipu->incoming_count
 					    * sizeof (*ipu->incoming));
-      for (die = die_nextdup (rdie), i = 0, prev_cu = NULL;
-	   die; die = die_nextdup (die))
+      for (die = rdie->die_nextdup, i = 0, prev_cu = NULL;
+	   die; die = die->die_nextdup)
 	{
 	  if (die->die_cu == prev_cu)
 	    continue;
@@ -4104,9 +4092,8 @@ create_import_tree (void)
       partial_cu->cu_next = last_partial_cu->cu_next;
       last_partial_cu->cu_next = partial_cu;
       last_partial_cu = partial_cu;
-      die = (dw_die_ref)
-	    obstack_alloc (&ob, sizeof (struct dw_toplevel_die));
-      memset (die, '\0', sizeof (struct dw_toplevel_die));
+      die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
+      memset (die, '\0', sizeof (struct dw_die));
       die->die_toplevel = 1;
       partial_cu->cu_die = die;
       die->die_tag = DW_TAG_partial_unit;
@@ -4127,14 +4114,13 @@ create_import_tree (void)
 	{
 	  dw_die_ref *diep;
 	  dw_die_ref die = (dw_die_ref)
-			   obstack_alloc (&ob,
-					  sizeof (struct dw_toplevel_die));
+			   obstack_alloc (&ob, sizeof (struct dw_die));
 	  memset (die, '\0', sizeof (*die));
 	  die->die_toplevel = 1;
 	  die->die_tag = DW_TAG_imported_unit;
 	  die->die_offset = -1U;
 	  die->die_cu = cu;
-	  die_nextdup (die) = e->icu->cu->cu_die;
+	  die->die_nextdup = e->icu->cu->cu_die;
 	  die->die_parent = die->die_cu->cu_die;
 	  die->die_size = (cu->cu_version == 2 ? 1 + ptr_size : 5);
 	  /* Put the new DW_TAG_imported_unit DIE after all typed DWARF
@@ -4286,8 +4272,8 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
     {
       if (ref != NULL)
 	;
-      else if (die_safe_nextdup (die) && die_dup (die_nextdup (die)) == die)
-	ref = die_nextdup (die);
+      else if (die_safe_nextdup (die) && die->die_nextdup->die_dup == die)
+	ref = die->die_nextdup;
     }
   else
     ref = die;
@@ -4430,14 +4416,14 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 		      refdt = refd;
 		      while (refdt->die_toplevel == 0)
 			refdt = refdt->die_parent;
-		      if (die_dup (refdt) && refdt->die_op_type_referenced)
+		      if (refdt->die_dup && refdt->die_op_type_referenced)
 			{
 			  if (die->die_cu == refd->die_cu)
 			    form = DW_FORM_ref4;
-			  else if (die->die_cu == die_dup (refdt)->die_cu)
+			  else if (die->die_cu == refdt->die_dup->die_cu)
 			    {
 			      form = DW_FORM_ref4;
-			      refd = die_find_dup (refdt, die_dup (refdt),
+			      refd = die_find_dup (refdt, refdt->die_dup,
 						   refd);
 			    }
 			  else
@@ -4445,8 +4431,8 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 			}
 		      else
 			{
-			  if (die_dup (refdt))
-			    refd = die_find_dup (refdt, die_dup (refdt), refd);
+			  if (refdt->die_dup)
+			    refd = die_find_dup (refdt, refdt->die_dup, refd);
 			  if (die->die_cu == refd->die_cu)
 			    form = DW_FORM_ref4;
 			  else
@@ -4481,9 +4467,9 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
       case DW_TAG_partial_unit:
 	t->nattr = 0;
 	die->die_size = 0;
-	if (die_nextdup (die) == NULL)
+	if (die->die_nextdup == NULL)
 	  break;
-	if (die_nextdup (die)->die_cu->cu_nfiles)
+	if (die->die_nextdup->die_cu->cu_nfiles)
 	  {
 	    t->attr[0].attr = DW_AT_stmt_list;
 	    t->attr[0].form = die->die_cu->cu_version < 4
@@ -4491,10 +4477,10 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	    die->die_size += 4;
 	    t->nattr++;
 	  }
-	if (die_nextdup (die)->die_cu->cu_comp_dir)
+	if (die->die_nextdup->die_cu->cu_comp_dir)
 	  {
 	    enum dwarf_form form;
-	    unsigned char *ptr = get_AT (die_nextdup (die),
+	    unsigned char *ptr = get_AT (die->die_nextdup,
 					 DW_AT_comp_dir, &form);
 	    assert (ptr && (form == DW_FORM_string || form == DW_FORM_strp));
 	    t->attr[t->nattr].attr = DW_AT_comp_dir;
@@ -4503,7 +4489,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      die->die_size += 4;
 	    else
 	      die->die_size
-		= strlen (die_nextdup (die)->die_cu->cu_comp_dir) + 1;
+		= strlen (die->die_nextdup->die_cu->cu_comp_dir) + 1;
 	    t->nattr++;
 	  }
 	break;
@@ -4511,7 +4497,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
       case DW_TAG_module:
 	{
 	  enum dwarf_form form;
-	  unsigned char *ptr = get_AT (die_nextdup (die), DW_AT_name, &form);
+	  unsigned char *ptr = get_AT (die->die_nextdup, DW_AT_name, &form);
 	  assert (ptr && (form == DW_FORM_string || form == DW_FORM_strp));
 	  t->attr[0].attr = DW_AT_name;
 	  t->attr[0].form = form;
@@ -5453,8 +5439,8 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	  refdt = refd;
 	  while (refdt->die_toplevel == 0)
 	    refdt = refdt->die_parent;
-	  if (die_dup (refdt) && !refdt->die_op_type_referenced)
-	    refd = die_find_dup (refdt, die_dup (refdt), refd);
+	  if (refdt->die_dup && !refdt->die_op_type_referenced)
+	    refd = die_find_dup (refdt, refdt->die_dup, refd);
 	  write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
 		      refd->die_cu->cu_new_offset
 		      + refd->u.p2.die_new_offset);
@@ -5553,8 +5539,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
     {
       if (ref != NULL)
 	;
-      else if (die_safe_nextdup (die) && die_dup (die_nextdup (die)) == die)
-	ref = die_nextdup (die);
+      else if (die_safe_nextdup (die) && die->die_nextdup->die_dup == die)
+	ref = die->die_nextdup;
     }
   else
     ref = die;
@@ -5594,8 +5580,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		refdt = refd;
 		while (refdt->die_toplevel == 0)
 		  refdt = refdt->die_parent;
-		if (die_dup (refdt) && !refdt->die_op_type_referenced)
-		  refd = die_find_dup (refdt, die_dup (refdt), refd);
+		if (refdt->die_dup && !refdt->die_op_type_referenced)
+		  refd = die_find_dup (refdt, refdt->die_dup, refd);
 		value = refd->die_cu->cu_new_offset
 			+ refd->u.p2.die_new_offset;
 		write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
@@ -5685,13 +5671,13 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		  refdt = refd;
 		  while (refdt->die_toplevel == 0)
 		    refdt = refdt->die_parent;
-		  if (die_dup (refdt) && refdt->die_op_type_referenced)
+		  if (refdt->die_dup && refdt->die_op_type_referenced)
 		    {
-		      if (die->die_cu == die_dup (refdt)->die_cu)
-			refd = die_find_dup (refdt, die_dup (refdt), refd);
+		      if (die->die_cu == refdt->die_dup->die_cu)
+			refd = die_find_dup (refdt, refdt->die_dup, refd);
 		    }
-		  else if (die_dup (refdt))
-		    refd = die_find_dup (refdt, die_dup (refdt), refd);
+		  else if (refdt->die_dup)
+		    refd = die_find_dup (refdt, refdt->die_dup, refd);
 		  value = refd->u.p2.die_new_offset;
 		  if (die->u.p2.die_new_abbrev->attr[j].form
 		      == DW_FORM_ref_addr)
@@ -5771,7 +5757,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	if (die->u.p2.die_new_abbrev->attr[0].attr == DW_AT_stmt_list)
 	  {
 	    enum dwarf_form form;
-	    unsigned char *p = get_AT (die_nextdup (die),
+	    unsigned char *p = get_AT (die->die_nextdup,
 				       DW_AT_stmt_list, &form);
 	    assert (p && (form == DW_FORM_sec_offset
 			  || form == DW_FORM_data4));
@@ -5783,7 +5769,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	    == DW_AT_comp_dir)
 	  {
 	    enum dwarf_form form;
-	    unsigned char *p = get_AT (die_nextdup (die),
+	    unsigned char *p = get_AT (die->die_nextdup,
 				       DW_AT_comp_dir, &form);
 	    assert (p);
 	    assert (form
@@ -5806,7 +5792,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
       case DW_TAG_module:
 	{
 	  enum dwarf_form form;
-	  unsigned char *p = get_AT (die_nextdup (die), DW_AT_name, &form);
+	  unsigned char *p = get_AT (die->die_nextdup, DW_AT_name, &form);
 	  assert (p && (form == die->u.p2.die_new_abbrev->attr[0].form));
 	  if (form == DW_FORM_strp)
 	    {
@@ -5844,8 +5830,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	}
       case DW_TAG_imported_unit:
 	write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
-		    die_nextdup (die)->die_cu->cu_new_offset
-		    + die_nextdup (die)->u.p2.die_new_offset);
+		    die->die_nextdup->die_cu->cu_new_offset
+		    + die->die_nextdup->u.p2.die_new_offset);
 	ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
 	break;
       default:
