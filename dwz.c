@@ -1888,8 +1888,11 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 	{
 	  die->die_ref_seen = 1;
 	  if (second_idx != NULL)
-	    die->u.p1.die_ref_hash
-	      = iterative_hash_object (*second_idx, die->u.p1.die_hash);
+	    {
+	      die->u.p1.die_ref_hash
+		= iterative_hash_object (*second_idx, die->u.p1.die_hash);
+	      (*second_idx)++;
+	    }
 	}
       else
 	{
@@ -3215,8 +3218,18 @@ partition_dups (void)
 		  cnt = this_cnt;
 		}
 	      if (cnt == 0)
-		for (ref = arr[i]->die_nextdup; ref; ref = ref->die_nextdup)
-		  cnt++;
+		{
+		  struct dw_cu *last_cu = NULL;
+		  for (ref = arr[i]->die_nextdup;; ref = ref->die_nextdup)
+		    {
+		      while (ref && ref->die_cu == last_cu)
+			ref = ref->die_nextdup;
+		      if (ref == NULL)
+			break;
+		      last_cu = ref->die_cu;
+		      cnt++;
+		    }
+		}
 	      for (k = i; k < j; k++)
 		{
 		  size += calc_sizes (arr[k]);
