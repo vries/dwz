@@ -5270,7 +5270,8 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       if (cu->u1.cu_new_abbrev_owner != NULL)
 	{
 	  cu->u2.cu_new_abbrev_offset = -1U;
-	  htab_delete (cu->cu_new_abbrev);
+	  if (cu->cu_new_abbrev)
+	    htab_delete (cu->cu_new_abbrev);
 	  cu->cu_new_abbrev = NULL;
 	  continue;
 	}
