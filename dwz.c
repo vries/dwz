@@ -56,9 +56,6 @@ xmalloc (size_t size)
    vectors.  */
 static struct obstack ob;
 
-/* String obstack for .debug_line filenames.  */
-static struct obstack strob;
-
 typedef struct
 {
   Elf *elf;
@@ -375,7 +372,7 @@ struct abbrev_tag
 {
   /* Abbreviation number.  */
   unsigned int entry;
-  /* Hash value, in cu->cu_abbrev hash tables it is
+  /* Hash value, in first abbrev hash tables it is
      the same as entry, in cu->cu_new_abbrev hash tables
      iterative hash of all the relevant values.  */
   hashval_t hash;
@@ -384,7 +381,7 @@ struct abbrev_tag
   /* Number of attributes.  */
   unsigned int nattr;
   /* How many DIEs refer to this abbreviation (unused
-     in cu->cu_abbrev hash tables).  */
+     in first abbrev hash tables).  */
   unsigned int nusers;
   /* True if DIEs with this abbreviation have children.  */
   bool children;
@@ -409,16 +406,17 @@ struct dw_file
    unit.  */
 struct dw_cu
 {
-  /* Abbreviation hash table, or NULL for newly created
-     partial CUs.  */
-  htab_t cu_abbrev;
   /* Cached entries from .debug_line file table.  */
   struct dw_file *cu_files;
   unsigned int cu_nfiles;
+  /* Kind of CU, normal (present in .debug_info), newly created
+     partial unit or .debug_types unit.  */
+  enum { CU_NORMAL, CU_PU, CU_TYPES } cu_kind;
   /* CUs linked from first_cu through this chain.  */
   struct dw_cu *cu_next;
-  /* Offset in original .debug_info if cu_abbrev is non-NULL,
-     otherwise a unique index of the newly created partial CU.  */
+  /* Offset in original .debug_info if CU_NORMAL or .debug_types
+     if CU_TYPES, otherwise a unique index of the newly created
+     partial CU.  */
   unsigned int cu_offset;
   /* DWARF version of the CU.  */
   unsigned int cu_version;
@@ -557,7 +555,8 @@ struct dw_die
 #define die_safe_nextdup(die) \
   ((die)->die_toplevel ? (die)->die_nextdup : (dw_die_ref) NULL)
 
-/* Hash function in cu->cu_abbrev as well as cu->cu_new_abbrev htab.  */
+/* Hash function in first abbrev hash table as well as cu->cu_new_abbrev
+   htab.  */
 static hashval_t
 abbrev_hash (const void *p)
 {
@@ -566,7 +565,7 @@ abbrev_hash (const void *p)
   return t->hash;
 }
 
-/* Equality function in cu->cu_abbrev htab.  */
+/* Equality function in first abbrev htab.  */
 static int
 abbrev_eq (const void *p, const void *q)
 {
@@ -574,13 +573,6 @@ abbrev_eq (const void *p, const void *q)
   struct abbrev_tag *t2 = (struct abbrev_tag *)q;
 
   return t1->entry == t2->entry;
-}
-
-/* Delete function in cu->cu_abbrev htab.  */
-static void
-abbrev_del (void *p)
-{
-  free (p);
 }
 
 /* Equality function in cu->cu_new_abbrev htab.  */
@@ -623,7 +615,7 @@ compute_abbrev_hash (struct abbrev_tag *t)
 static unsigned int max_nattr;
 
 /* Parse a .debug_abbrev entry at PTR.  If !DEBUG_TYPES, return
-   cu->cu_abbrev style hash table, otherwise return cu->cu_new_abbrev
+   first abbrev htab style hash table, otherwise return cu->cu_new_abbrev
    style hash table (this is used for reading .debug_types abbreviations
    which we are not rewriting).  */
 static htab_t
@@ -632,29 +624,51 @@ read_abbrev (DSO *dso, unsigned char *ptr, bool debug_types)
   htab_t h;
   unsigned int attr, form;
   struct abbrev_tag *t;
-  unsigned int size;
   void **slot;
 
   if (debug_types)
     h = htab_try_create (20, abbrev_hash, abbrev_eq2, NULL);
   else
-    h = htab_try_create (50, abbrev_hash, abbrev_eq, abbrev_del);
+    h = htab_try_create (50, abbrev_hash, abbrev_eq, NULL);
   if (h == NULL)
     {
 no_memory:
       error (0, ENOMEM, "%s: Could not read .debug_abbrev", dso->filename);
       if (h)
-	{
-	  h->del_f = abbrev_del;
-	  htab_delete (h);
-	}
+	htab_delete (h);
       return NULL;
     }
 
   while ((attr = read_uleb128 (ptr)) != 0)
     {
-      size = 10;
-      t = xmalloc (sizeof (*t) + size * sizeof (struct abbrev_attr));
+      unsigned int nattr = 0;
+      unsigned char *p = ptr;
+
+      read_uleb128 (p);
+      p++;
+      while (read_uleb128 (p) != 0)
+	{
+	  nattr++;
+	  form = read_uleb128 (p);
+	  if (form == 2
+	      || (form > DW_FORM_flag_present && form != DW_FORM_ref_sig8))
+	    {
+	      error (0, 0, "%s: Unknown DWARF DW_FORM_%d", dso->filename, form);
+	      htab_delete (h);
+	      return NULL;
+	    }
+	}
+      if (read_uleb128 (p) != 0)
+	{
+	  error (0, 0, "%s: DWARF abbreviation does not end with 2 zeros",
+		 dso->filename);
+	  htab_delete (h);
+	  return NULL;
+	}
+
+      t = (struct abbrev_tag *)
+	  obstack_alloc (&ob,
+			 sizeof (*t) + nattr * sizeof (struct abbrev_attr));
       t->entry = attr;
       t->hash = attr;
       t->nattr = 0;
@@ -664,52 +678,22 @@ no_memory:
       t->op_type_referenced = false;
       while ((attr = read_uleb128 (ptr)) != 0)
 	{
-	  if (t->nattr == size)
-	    {
-	      size += 10;
-	      t = realloc (t, sizeof (*t) + size * sizeof (struct abbrev_attr));
-	      if (t == NULL)
-		goto no_memory;
-	    }
 	  form = read_uleb128 (ptr);
-	  if (form == 2
-	      || (form > DW_FORM_flag_present && form != DW_FORM_ref_sig8))
-	    {
-	      error (0, 0, "%s: Unknown DWARF DW_FORM_%d", dso->filename, form);
-	      free (t);
-	      h->del_f = abbrev_del;
-	      htab_delete (h);
-	      return NULL;
-	    }
-
 	  t->attr[t->nattr].attr = attr;
 	  t->attr[t->nattr++].form = form;
 	}
-      if (read_uleb128 (ptr) != 0)
-	{
-	  error (0, 0, "%s: DWARF abbreviation does not end with 2 zeros",
-		 dso->filename);
-	  free (t);
-	  h->del_f = abbrev_del;
-	  htab_delete (h);
-	  return NULL;
-	}
+      read_uleb128 (ptr);
       if (t->nattr > max_nattr)
 	max_nattr = t->nattr;
       if (debug_types)
 	compute_abbrev_hash (t);
       slot = htab_find_slot_with_hash (h, t, t->hash, INSERT);
       if (slot == NULL)
-	{
-	  free (t);
-	  goto no_memory;
-	}
+	goto no_memory;
       if (*slot != NULL)
 	{
 	  error (0, 0, "%s: Duplicate DWARF abbreviation %d", dso->filename,
 		 t->entry);
-	  free (t);
-	  h->del_f = abbrev_del;
 	  htab_delete (h);
 	  return NULL;
 	}
@@ -815,12 +799,9 @@ read_debug_line (DSO *dso, struct dw_cu *cu, uint32_t off)
     }
 
   cu->cu_nfiles = file_cnt;
-  cu->cu_files = calloc (file_cnt, sizeof (struct dw_file));
-  if (cu->cu_files == NULL)
-    {
-      error (0, ENOMEM, "Not enough memory");
-      return 1;
-    }
+  cu->cu_files = (struct dw_file *)
+		 obstack_alloc (&ob, file_cnt * sizeof (struct dw_file));
+  memset (cu->cu_files, 0, file_cnt * sizeof (struct dw_file));
 
   ptr = file;
   file_cnt = 0;
@@ -849,14 +830,14 @@ read_debug_line (DSO *dso, struct dw_cu *cu, uint32_t off)
 	  size_t dir_len = strlen (cu->cu_files[file_cnt].dir);
 	  if (dir_len)
 	    {
-	      obstack_grow (&strob, cu->cu_files[file_cnt].dir,
+	      obstack_grow (&ob, cu->cu_files[file_cnt].dir,
 			    dir_len);
 	      if (cu->cu_files[file_cnt].dir[dir_len - 1] != '/')
-		obstack_1grow (&strob, '/');
-	      obstack_grow (&strob, cu->cu_files[file_cnt].file,
+		obstack_1grow (&ob, '/');
+	      obstack_grow (&ob, cu->cu_files[file_cnt].file,
 			    file_len);
 	      cu->cu_files[file_cnt].file
-		= (char *) obstack_finish (&strob);
+		= (char *) obstack_finish (&ob);
 	      cu->cu_files[file_cnt].dir = NULL;
 	    }
 	}
@@ -2711,7 +2692,7 @@ calc_sizes (dw_die_ref die)
 
 /* Walk toplevel DIEs in tree rooted by PARENT, and see if they
    match previously processed DIEs.  */
-static void
+static int
 find_dups (dw_die_ref parent)
 {
   void **slot;
@@ -2727,13 +2708,18 @@ find_dups (dw_die_ref parent)
 					   child->u.p1.die_ref_hash,
 					   INSERT);
 	  if (slot == NULL)
-	    error (1, ENOMEM, "Not enough memory to find duplicates");
+	    {
+	      error (0, ENOMEM, "Not enough memory to find duplicates");
+	      return 1;
+	    }
 	  if (*slot == NULL)
 	    *slot = child;
 	}
       else if (child->die_named_namespace)
-	find_dups (child);
+	if (find_dups (child))
+	  return 1;
     }
+  return 0;
 }
 
 #ifdef DEBUG_DUMP_DIES
@@ -2759,8 +2745,9 @@ static int
 read_debug_info (DSO *dso)
 {
   unsigned char *ptr, *endcu, *endsec;
-  uint32_t value;
-  htab_t abbrev;
+  unsigned int value;
+  htab_t abbrev = NULL;
+  unsigned int last_abbrev_offset = 0;
   struct abbrev_tag tag, *t;
 
   dup_htab = htab_try_create (100000, die_hash, die_eq, NULL);
@@ -2770,8 +2757,6 @@ read_debug_info (DSO *dso)
       return 1;
     }
 
-  obstack_init (&ob);
-  obstack_init (&strob);
   ptr = debug_sections[DEBUG_INFO].data;
   endsec = ptr + debug_sections[DEBUG_INFO].size;
   while (ptr < endsec)
@@ -2787,7 +2772,7 @@ read_debug_info (DSO *dso)
       if (ptr + 11 > endsec)
 	{
 	  error (0, 0, "%s: .debug_info CU header too small", dso->filename);
-	  return 1;
+	  goto fail;
 	}
 
       endcu = ptr + 4;
@@ -2795,13 +2780,13 @@ read_debug_info (DSO *dso)
       if (endcu == ptr + 0xffffffff)
 	{
 	  error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
-	  return 1;
+	  goto fail;
 	}
 
       if (endcu > endsec)
 	{
 	  error (0, 0, "%s: .debug_info too small", dso->filename);
-	  return 1;
+	  goto fail;
 	}
 
       cu_version = read_16 (ptr);
@@ -2809,7 +2794,7 @@ read_debug_info (DSO *dso)
 	{
 	  error (0, 0, "%s: DWARF version %d unhandled", dso->filename,
 		 cu_version);
-	  return 1;
+	  goto fail;
 	}
 
       value = read_32 (ptr);
@@ -2820,7 +2805,7 @@ read_debug_info (DSO *dso)
 	  else
 	    error (0, 0, "%s: DWARF CU abbrev offset too large",
 		   dso->filename);
-	  return 1;
+	  goto fail;
 	}
 
       if (ptr_size == 0)
@@ -2830,24 +2815,30 @@ read_debug_info (DSO *dso)
 	    {
 	      error (0, 0, "%s: Invalid DWARF pointer size %d",
 		     dso->filename, ptr_size);
-	      return 1;
+	      goto fail;
 	    }
 	}
       else if (read_8 (ptr) != ptr_size)
 	{
 	  error (0, 0, "%s: DWARF pointer size differs between CUs",
 		 dso->filename);
-	  return 1;
+	  goto fail;
 	}
 
-      abbrev = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value,
-			    false);
-      if (abbrev == NULL)
-	return 1;
+      if (abbrev == NULL || value != last_abbrev_offset)
+	{
+	  if (abbrev)
+	    htab_delete (abbrev);
+	  abbrev = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value,
+				false);
+	  if (abbrev == NULL)
+	    goto fail;
+	}
+      last_abbrev_offset = value;
 
       cu = (struct dw_cu *) obstack_alloc (&ob, sizeof (struct dw_cu));
       memset (cu, '\0', sizeof (*cu));
-      cu->cu_abbrev = abbrev;
+      cu->cu_kind = CU_NORMAL;
       cu->cu_offset = cu_offset;
       cu->cu_version = cu_version;
       diep = &cu->cu_die;
@@ -2881,14 +2872,14 @@ read_debug_info (DSO *dso)
 	  if (diep == NULL)
 	    {
 	      error (0, 0, "%s: Wrong .debug_info DIE tree", dso->filename);
-	      return 1;
+	      goto fail;
 	    }
 	  t = htab_find_with_hash (abbrev, &tag, tag.entry);
 	  if (t == NULL)
 	    {
 	      error (0, 0, "%s: Could not find DWARF abbreviation %d",
 		     dso->filename, tag.entry);
-	      return 1;
+	      goto fail;
 	    }
 	  if (parent == NULL
 	      || parent->die_parent == NULL
@@ -2931,7 +2922,7 @@ read_debug_info (DSO *dso)
 		    {
 		      error (0, 0, "%s: Attributes extend beyond end of CU",
 			     dso->filename);
-		      return 1;
+		      goto fail;
 		    }
 		}
 	      switch (form)
@@ -3009,14 +3000,14 @@ read_debug_info (DSO *dso)
 		default:
 		  error (0, 0, "%s: Unknown DWARF DW_FORM_%d",
 			 dso->filename, form);
-		  return 1;
+		  goto fail;
 		}
 
 	      if (ptr >= endcu)
 		{
 		  error (0, 0, "%s: Attributes extend beyond end of CU",
 			 dso->filename);
-		  return 1;
+		  goto fail;
 		}
 
 	      if (form == DW_FORM_block1)
@@ -3025,7 +3016,7 @@ read_debug_info (DSO *dso)
 		    {
 		      error (0, 0, "%s: Attributes extend beyond end of CU",
 			     dso->filename);
-		      return 1;
+		      goto fail;
 		    }
 
 		  if (t->attr[i].attr > DW_AT_linkage_name
@@ -3038,7 +3029,7 @@ read_debug_info (DSO *dso)
 		    {
 		      error (0, 0, "%s: Unknown DWARF DW_AT_%d with block DW_FORM",
 			     dso->filename, t->attr[i].attr);
-		      return 1;
+		      goto fail;
 		    }
 
 		  ptr += len;
@@ -3047,7 +3038,7 @@ read_debug_info (DSO *dso)
 	  die->die_size = (ptr - debug_sections[DEBUG_INFO].data)
 			  - die_offset;
 	  if (off_htab_add_die (die))
-	    return 1;
+	    goto fail;
 	}
 
       if (cu->cu_die == NULL
@@ -3057,28 +3048,37 @@ read_debug_info (DSO *dso)
 	{
 	  error (0, 0, "%s: .debug_info section chunk doesn't contain a single"
 			" compile_unit or partial_unit", dso->filename);
-	  return 1;
+	  goto fail;
 	}
 
       cu->cu_comp_dir = get_AT_string (cu->cu_die, DW_AT_comp_dir);
       debug_line_off = get_AT_int (cu->cu_die, DW_AT_stmt_list, &present);
       if (present && read_debug_line (dso, cu, debug_line_off))
-	return 1;
+	goto fail;
 
       if (checksum_die (dso, NULL, cu->cu_die))
-	return 1;
+	goto fail;
       checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
 
 #ifdef DEBUG_DUMP_DIES
       dump_dies (0, cu->cu_die);
 #endif
 
-      find_dups (cu->cu_die);
+      if (find_dups (cu->cu_die))
+	goto fail;
     }
 
+  if (abbrev)
+    htab_delete (abbrev);
   htab_delete (dup_htab);
   dup_htab = NULL;
   return 0;
+fail:
+  if (abbrev)
+    htab_delete (abbrev);
+  htab_delete (dup_htab);
+  dup_htab = NULL;
+  return 1;
 }
 
 /* Compare function called from qsort, which should ensure that
@@ -3271,6 +3271,7 @@ partition_dups (void)
 		    = (struct dw_cu *)
 		      obstack_alloc (&ob, sizeof (struct dw_cu));
 		  memset (partial_cu, '\0', sizeof (*partial_cu));
+		  partial_cu->cu_kind = CU_PU;
 		  partial_cu->cu_offset = cu_off++;
 		  partial_cu->cu_version = cu->cu_version;
 		  if (first_partial_cu == NULL)
@@ -3587,14 +3588,14 @@ create_import_tree (void)
   unsigned int new_edge_cost;
 
   /* If no PUs were created, there is nothing to do here.  */
-  if (first_cu == NULL || first_cu->cu_abbrev != NULL)
+  if (first_cu == NULL || first_cu->cu_kind != CU_PU)
     return 0;
 
   obstack_init (&iob);
   min_cu_version = first_cu->cu_version;
   /* First construct a bipartite graph between CUs and PUs.  */
   for (pu = first_cu, npus = 0;
-       pu && pu->cu_abbrev == NULL; pu = pu->cu_next, npus++)
+       pu && pu->cu_kind == CU_PU; pu = pu->cu_next, npus++)
     {
       dw_die_ref die, rdie;
       struct dw_cu *prev_cu;
@@ -3661,7 +3662,7 @@ create_import_tree (void)
   else if (new_pu_version == 2)
     edge_cost = 1 + ptr_size;
   new_edge_cost = new_pu_version == 2 ? 1 + ptr_size : 5;
-  for (pu = first_cu; pu && pu->cu_abbrev == NULL; pu = pu->cu_next)
+  for (pu = first_cu; pu && pu->cu_kind == CU_PU; pu = pu->cu_next)
     {
       ipu = pu->u1.cu_icu;
       for (i = 0; i < ipu->incoming_count; i++)
@@ -3673,7 +3674,7 @@ create_import_tree (void)
   ipus = (struct import_cu **)
 	 obstack_alloc (&iob, (npus + ncus) * sizeof (*ipus));
   for (pu = first_cu, npus = 0;
-       pu && pu->cu_abbrev == NULL; pu = pu->cu_next, npus++)
+       pu && pu->cu_kind == CU_PU; pu = pu->cu_next, npus++)
     {
       ipu = pu->u1.cu_icu;
       qsort (ipu->incoming, ipu->incoming_count, sizeof (*ipu->incoming),
@@ -4098,6 +4099,7 @@ create_import_tree (void)
 	= (struct dw_cu *)
 	  obstack_alloc (&ob, sizeof (struct dw_cu));
       memset (partial_cu, '\0', sizeof (*partial_cu));
+      partial_cu->cu_kind = CU_PU;
       partial_cu->cu_offset = cu_off++;
       partial_cu->cu_version = new_pu_version;
       partial_cu->u1.cu_icu = ipu;
@@ -4226,6 +4228,7 @@ read_debug_types (DSO *dso)
 
       cu = (struct dw_cu *) obstack_alloc (&ob, sizeof (struct dw_cu));
       memset (cu, '\0', sizeof (*cu));
+      cu->cu_kind = CU_TYPES;
       cu->cu_new_abbrev = abbrev;
       cu->cu_offset = cu_offset;
       cu->cu_version = cu_version;
@@ -4564,9 +4567,10 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
   else
     {
       struct abbrev_tag *newt
-	= xmalloc (sizeof (*newt) + t->nattr * sizeof (struct abbrev_attr));
-      memcpy (newt, t, sizeof (*newt)
-		       + t->nattr * sizeof (struct abbrev_attr));
+	= (struct abbrev_tag *)
+	  obstack_copy (&ob, t,
+			sizeof (*newt)
+			+ t->nattr * sizeof (struct abbrev_attr));
       *slot = newt;
       die->u.p2.die_new_abbrev = newt;
     }
@@ -4609,9 +4613,10 @@ build_abbrevs (struct dw_cu *cu, struct abbrev_tag *t, unsigned int *ndies,
 /* Helper to record all abbrevs from the hash table into ob obstack
    vector.  Called through htab_traverse.  */
 static int
-list_abbrevs (void **slot, void *info __attribute__((unused)))
+list_abbrevs (void **slot, void *data)
 {
-  obstack_ptr_grow (&ob, *slot);
+  struct obstack *obp = (struct obstack *) data;
+  obstack_ptr_grow (obp, *slot);
   return 1;
 }
 
@@ -4824,9 +4829,9 @@ cu_abbrev_cmp (const void *p, const void *q)
   if (nabbrevs1 > nabbrevs2)
     return 1;
   /* The rest is just to get stable sort.  */
-  if (cu1->cu_abbrev != NULL && cu2->cu_abbrev == NULL)
+  if (cu1->cu_kind != CU_PU && cu2->cu_kind == CU_PU)
     return -1;
-  if (cu1->cu_abbrev == NULL && cu2->cu_abbrev != NULL)
+  if (cu1->cu_kind == CU_PU && cu2->cu_kind != CU_PU)
     return 1;
   if (cu1->cu_offset < cu2->cu_offset)
     return -1;
@@ -4845,12 +4850,14 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 {
   unsigned long total_size = 0, abbrev_size = 0;
   struct dw_cu *cu, **cuarr;
-  struct abbrev_tag *t
-    = xmalloc (sizeof (*t) + (max_nattr + 4) * sizeof (struct abbrev_attr));
+  struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
   struct obstack vec;
 
   obstack_init (&vec);
+  t = (struct abbrev_tag *)
+      obstack_alloc (&vec, sizeof (*t)
+			   + (max_nattr + 4) * sizeof (struct abbrev_attr));
   for (cu = first_cu, ncus = 0; cu; cu = cu->cu_next, ncus++)
     {
       unsigned int intracu, ndies = 0, tagsize = 0, nchildren = 0;
@@ -4860,7 +4867,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       enum dwarf_form intracuform = DW_FORM_ref4;
       dw_die_ref child, *lastotr, child_next, *last;
 
-      if (cu->cu_die == NULL)
+      if (cu->cu_kind == CU_TYPES)
 	{
 	  if (cu->u1.cu_new_abbrev_owner != NULL)
 	    {
@@ -4877,11 +4884,10 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       if (build_abbrevs (cu, t, &ndies, &vec))
 	{
 	  obstack_free (&vec, NULL);
-	  free (t);
 	  return 1;
 	}
       nabbrevs = htab_elements (cu->cu_new_abbrev);
-      htab_traverse (cu->cu_new_abbrev, list_abbrevs, NULL);
+      htab_traverse (cu->cu_new_abbrev, list_abbrevs, &ob);
       assert (obstack_object_size (&ob) == nabbrevs * sizeof (void *));
       arr = (struct abbrev_tag **) obstack_finish (&ob);
       intracu = obstack_object_size (&vec) / sizeof (void *) / 2;
@@ -4999,13 +5005,13 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	}
 
       intracuvec = intracuarr;
-      off = finalize_new_die_offsets (cu->cu_die, 11, intracusize, &intracuvec);
+      off = finalize_new_die_offsets (cu->cu_die, 11, intracusize,
+				      &intracuvec);
       if (off == -1U)
 	{
 	  error (0, 0, "%s: DW_OP_call2 or typed DWARF stack referenced DIE"
 		       " layed out at too big offset", dso->filename);
 	  obstack_free (&vec, NULL);
-	  free (t);
 	  return 1;
 	}
       assert (*intracuvec == NULL && off == cusize);
@@ -5027,7 +5033,6 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		{
 		  obstack_free (&ob, (void *) arr);
 		  obstack_free (&vec, NULL);
-		  free (t);
 		  error (0, ENOMEM, "Could not compute .debug_abbrev");
 		  return 1;
 		}
@@ -5040,9 +5045,9 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       cu->cu_new_offset = total_size;
       total_size += cusize;
     }
-  obstack_free (&vec, NULL);
-  free (t);
-  cuarr = (struct dw_cu **) xmalloc (ncus * sizeof (struct dw_cu *));
+  obstack_free (&vec, (void *) t);
+  cuarr = (struct dw_cu **) obstack_alloc (&vec,
+					   ncus * sizeof (struct dw_cu *));
   for (cu = first_cu, i = 0; cu; cu = cu->cu_next)
     if (cu->u1.cu_new_abbrev_owner == NULL)
       cuarr[i++] = cu;
@@ -5061,9 +5066,9 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       if (cuarr[i]->u1.cu_new_abbrev_owner != NULL)
 	continue;
       nabbrevs = htab_elements (cuarr[i]->cu_new_abbrev);
-      htab_traverse (cuarr[i]->cu_new_abbrev, list_abbrevs, NULL);
-      assert (obstack_object_size (&ob) == nabbrevs * sizeof (void *));
-      arr = (struct abbrev_tag **) obstack_finish (&ob);
+      htab_traverse (cuarr[i]->cu_new_abbrev, list_abbrevs, &vec);
+      assert (obstack_object_size (&vec) == nabbrevs * sizeof (void *));
+      arr = (struct abbrev_tag **) obstack_finish (&vec);
       if (nabbrevs >= 128)
 	{
 	  nattempts = 0;
@@ -5084,7 +5089,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		     adjusting .debug_abbrev offsets into it, so the
 		     assigned entry values for .debug_types section
 		     can't change.  */
-		  if (cuarr[i]->cu_die == NULL)
+		  if (cuarr[i]->cu_kind == CU_TYPES)
 		    {
 		      if (t == NULL || t->entry != arr[k]->entry)
 			break;
@@ -5111,8 +5116,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 						INSERT);
 		  if (slot == NULL)
 		    {
-		      obstack_free (&ob, (void *) arr);
-		      free (cuarr);
+		      obstack_free (&vec, NULL);
 		      error (0, ENOMEM, "Could not compute .debug_abbrev");
 		      return 1;
 		    }
@@ -5120,14 +5124,13 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		    arr[k]->entry = ((struct abbrev_tag *) *slot)->entry;
 		  else
 		    {
-		      struct abbrev_tag *newt
-			= xmalloc (sizeof (*newt)
-				   + arr[k]->nattr
-				     * sizeof (struct abbrev_attr));
+		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
-		      memcpy (newt, arr[k],
-			      sizeof (*newt)
-			      + arr[k]->nattr * sizeof (struct abbrev_attr));
+		      newt = (struct abbrev_tag *)
+			     obstack_copy (&ob, arr[k],
+					   sizeof (*newt)
+					   + arr[k]->nattr
+					     * sizeof (struct abbrev_attr));
 		      *slot = newt;
 		    }
 		}
@@ -5135,7 +5138,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	      cuarr[i]->u1.cu_new_abbrev_owner = cuarr[j];
 	      break;
 	    }
-	  obstack_free (&ob, (void *) arr);
+	  obstack_free (&vec, (void *) arr);
 	  continue;
 	}
       /* Don't search all CUs, that might be too expensive.  So just search
@@ -5165,7 +5168,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	      /* We aren't rewriting .debug_types section, merely adjusting
 		 .debug_abbrev offsets into it, so the assigned entry
 		 values for .debug_types section can't change.  */
-	      if (cuarr[i]->cu_die == NULL && t->entry != arr[k]->entry)
+	      if (cuarr[i]->cu_kind == CU_TYPES && t->entry != arr[k]->entry)
 		break;
 	    }
 	  if (k == nabbrevs)
@@ -5206,7 +5209,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		  /* We aren't rewriting .debug_types section, merely adjusting
 		     .debug_abbrev offsets into it, so the assigned entry
 		     values for .debug_types section can't change.  */
-		  if (cuarr[i]->cu_die == NULL
+		  if (cuarr[i]->cu_kind == CU_TYPES
 		      && (t == NULL || t->entry != arr[k]->entry))
 		    {
 		      curdups = 0;
@@ -5234,8 +5237,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 						INSERT);
 		  if (slot == NULL)
 		    {
-		      obstack_free (&ob, (void *) arr);
-		      free (cuarr);
+		      obstack_free (&vec, NULL);
 		      error (0, ENOMEM, "Could not compute .debug_abbrev");
 		      return 1;
 		    }
@@ -5243,14 +5245,13 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		    arr[k]->entry = ((struct abbrev_tag *) *slot)->entry;
 		  else
 		    {
-		      struct abbrev_tag *newt
-			= xmalloc (sizeof (*newt)
-				   + arr[k]->nattr
-				     * sizeof (struct abbrev_attr));
+		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
-		      memcpy (newt, arr[k],
-			      sizeof (*newt)
-			      + arr[k]->nattr * sizeof (struct abbrev_attr));
+		      newt = (struct abbrev_tag *)
+			     obstack_copy (&ob, arr[k],
+					   sizeof (*newt)
+					   + arr[k]->nattr
+					     * sizeof (struct abbrev_attr));
 		      *slot = newt;
 		    }
 		}
@@ -5258,9 +5259,9 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	      cuarr[i]->u1.cu_new_abbrev_owner = cuarr[j];
 	    }
 	}
-      obstack_free (&ob, (void *) arr);
+      obstack_free (&vec, (void *) arr);
     }
-  free (cuarr);
+  obstack_free (&vec, NULL);
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       struct abbrev_tag **arr;
@@ -5269,11 +5270,13 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       if (cu->u1.cu_new_abbrev_owner != NULL)
 	{
 	  cu->u2.cu_new_abbrev_offset = -1U;
+	  htab_delete (cu->cu_new_abbrev);
+	  cu->cu_new_abbrev = NULL;
 	  continue;
 	}
       cu->u2.cu_new_abbrev_offset = abbrev_size;
       nabbrevs = htab_elements (cu->cu_new_abbrev);
-      htab_traverse (cu->cu_new_abbrev, list_abbrevs, NULL);
+      htab_traverse (cu->cu_new_abbrev, list_abbrevs, &ob);
       assert (obstack_object_size (&ob) == nabbrevs * sizeof (void *));
       arr = (struct abbrev_tag **) obstack_finish (&ob);
       for (i = 0; i < nabbrevs; i++)
@@ -5343,7 +5346,7 @@ write_abbrev (unsigned long abbrev_size)
       if (cu->u1.cu_new_abbrev_owner != NULL)
 	continue;
       nabbrevs = htab_elements (cu->cu_new_abbrev);
-      htab_traverse (cu->cu_new_abbrev, list_abbrevs, NULL);
+      htab_traverse (cu->cu_new_abbrev, list_abbrevs, &ob);
       assert (obstack_object_size (&ob) == nabbrevs * sizeof (void *));
       arr = (struct abbrev_tag **) obstack_finish (&ob);
       qsort (arr, nabbrevs, sizeof (*arr), abbrev_entry_cmp);
@@ -5362,6 +5365,8 @@ write_abbrev (unsigned long abbrev_size)
 	}
       *ptr++ = 0;
       obstack_free (&ob, (void *) arr);
+      htab_delete (cu->cu_new_abbrev);
+      cu->cu_new_abbrev = NULL;
     }
   assert (abbrev + abbrev_size == ptr);
   return abbrev;
@@ -5896,9 +5901,9 @@ write_info (unsigned long info_size)
     {
       unsigned long next_off = info_size;
       /* Ignore .debug_types CUs.  */
-      if (cu->cu_die == NULL)
+      if (cu->cu_kind == CU_TYPES)
 	break;
-      if (cu->cu_next && cu->cu_next->cu_die)
+      if (cu->cu_next && cu->cu_next->cu_kind != CU_TYPES)
 	next_off = cu->cu_next->cu_new_offset;
       /* Write CU header.  */
       write_32 (ptr, next_off - cu->cu_new_offset - 4);
@@ -5980,7 +5985,7 @@ write_types (void)
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       /* Ignore .debug_info CUs.  */
-      if (cu->cu_die != NULL)
+      if (cu->cu_kind != CU_TYPES)
 	continue;
       ptr = types + cu->cu_offset + 6;
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
@@ -6123,11 +6128,11 @@ fdopen_dso (int fd, const char *name)
       goto error_out;
     }
 
-  /* Allocate DSO structure. Leave place for additional 20 new section
-     headers.  */
+  /* Allocate DSO structure.  */
   dso = (DSO *)
-	malloc (sizeof(DSO) + (ehdr.e_shnum + 20) * sizeof(GElf_Shdr)
-		+ (ehdr.e_shnum + 20) * sizeof(Elf_Scn *));
+	malloc (sizeof(DSO) + ehdr.e_shnum * sizeof(GElf_Shdr)
+		+ ehdr.e_shnum * sizeof(Elf_Scn *)
+		+ strlen (name) + 1);
   if (!dso)
     {
       error (0, ENOMEM, "Could not open DSO");
@@ -6139,7 +6144,7 @@ fdopen_dso (int fd, const char *name)
   memset (dso, 0, sizeof(DSO));
   dso->elf = elf;
   dso->ehdr = ehdr;
-  dso->scn = (Elf_Scn **) &dso->shdr[ehdr.e_shnum + 20];
+  dso->scn = (Elf_Scn **) &dso->shdr[ehdr.e_shnum];
 
   for (i = 0; i < ehdr.e_shnum; ++i)
     {
@@ -6147,15 +6152,12 @@ fdopen_dso (int fd, const char *name)
       gelf_getshdr (dso->scn[i], dso->shdr + i);
     }
 
-  dso->filename = (const char *) strdup (name);
+  dso->filename = (const char *) &dso->scn[ehdr.e_shnum];
+  strcpy ((char *) &dso->scn[ehdr.e_shnum], name);
   return dso;
 
 error_out:
-  if (dso)
-    {
-      free ((char *) dso->filename);
-      free (dso);
-    }
+  free (dso);
   if (elf)
     elf_end (elf);
   if (fd != -1)
@@ -6286,6 +6288,7 @@ main (int argc, char *argv[])
   unsigned char *new_debug_abbrev, *new_debug_info;
   unsigned char *new_debug_loc, *new_debug_types;
   struct stat st;
+  struct dw_cu *cu;
 
   if (argc < 3)
     error (1, 0, "Usage: dwz input_object output_object");
@@ -6305,6 +6308,8 @@ main (int argc, char *argv[])
   dso = fdopen_dso (fd, file);
   if (dso == NULL)
     exit (1);
+
+  obstack_init (&ob);
 
   if (read_dwarf (dso))
     exit (1);
@@ -6334,13 +6339,37 @@ main (int argc, char *argv[])
   new_debug_loc = write_loc ();
   new_debug_types = write_types ();
 
+  for (cu = first_cu; cu; cu = cu->cu_next)
+    {
+      if (cu->cu_new_abbrev)
+	htab_delete (cu->cu_new_abbrev);
+      cu->cu_new_abbrev = NULL;
+    }
+  if (off_htab != NULL)
+    htab_delete (off_htab);
+  off_htab = NULL;
+  if (loc_htab != NULL)
+    {
+      obstack_free (&loc_ob, NULL);
+      htab_delete (loc_htab);
+      loc_htab = NULL;
+    }
+  obstack_free (&ob, NULL);
+
   write_dso (dso, outfile, new_debug_abbrev, new_debug_abbrev_size,
 	     new_debug_info, new_debug_info_size, new_debug_loc,
 	     new_debug_types, &st);
 
+  free (new_debug_info);
+  free (new_debug_abbrev);
+  free (new_debug_loc);
+  free (new_debug_types);
+
   if (elf_end (dso->elf) < 0)
     error (1, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno()));
   close (fd);
+
+  free (dso);
 
   return 0;
 }
