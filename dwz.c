@@ -37,7 +37,7 @@
 #include "hashtab.h"
 
 #ifndef IGNORE_LOCUS
-#define IGNORE_LOCUS 0
+# define IGNORE_LOCUS 0
 #endif
 
 #define obstack_chunk_alloc     xmalloc
@@ -55,6 +55,8 @@ xmalloc (size_t size)
 /* General obstack for struct dw_cu, dw_die, also used for temporary
    vectors.  */
 static struct obstack ob;
+/* Short lived obstack, global only to free it on allocation failures.  */
+static struct obstack alt_ob;
 
 typedef struct
 {
@@ -555,6 +557,68 @@ struct dw_die
 #define die_safe_nextdup(die) \
   ((die)->die_toplevel ? (die)->die_nextdup : (dw_die_ref) NULL)
 
+#ifdef __GNUC__
+# define ALIGN_STRUCT(name)
+#else
+# define ALIGN_STRUCT(name) struct align_##name { char c; struct name s; };
+#endif
+ALIGN_STRUCT (abbrev_tag)
+ALIGN_STRUCT (dw_file)
+ALIGN_STRUCT (dw_cu)
+ALIGN_STRUCT (dw_die)
+
+/* Big pool allocator.  obstack isn't efficient, because it aligns everything
+   too much, and allocates too small chunks.  All these objects are only freed
+   together.  */
+
+static unsigned char *pool, *pool_next, *pool_limit;
+
+static void *
+pool_alloc_1 (unsigned int align, unsigned int size)
+{
+  void *ret;
+  if (pool == NULL
+      || (size_t) (pool_limit - pool_next) < (size_t) align + size)
+    {
+      size_t new_size = (size_t) align + size;
+      unsigned char *new_pool;
+      new_size += sizeof (void *);
+      if (new_size < 16384 * 1024 - 64)
+	new_size = 16384 * 1024 - 64;
+      new_pool = (unsigned char *) xmalloc (new_size);
+      *(unsigned char **) new_pool = pool;
+      pool_next = new_pool + sizeof (unsigned char *);
+      pool_limit = new_pool + new_size;
+      pool = new_pool;
+    }
+  pool_next = (unsigned char *) (((uintptr_t) pool_next + align - 1)
+				 & ~(uintptr_t) (align - 1));
+  ret = pool_next;
+  pool_next += size;
+  return ret;
+}
+
+static void
+pool_destroy (void)
+{
+  pool_next = NULL;
+  pool_limit = NULL;
+  while (pool)
+    {
+      void *p = (void *) pool;
+      pool = *(unsigned char **) pool;
+      free (p);
+    }
+}
+
+#ifdef __GNUC__
+# define pool_alloc(name, size) \
+  (struct name *) pool_alloc_1 (__alignof__ (struct name), size)
+#else
+# define pool_alloc(name, size) \
+  (struct name *) pool_alloc_1 (offsetof (struct align_##name, s), size)
+#endif
+
 /* Hash function in first abbrev hash table as well as cu->cu_new_abbrev
    htab.  */
 static hashval_t
@@ -666,9 +730,8 @@ no_memory:
 	  return NULL;
 	}
 
-      t = (struct abbrev_tag *)
-	  obstack_alloc (&ob,
-			 sizeof (*t) + nattr * sizeof (struct abbrev_attr));
+      t = pool_alloc (abbrev_tag,
+		      sizeof (*t) + nattr * sizeof (struct abbrev_attr));
       t->entry = attr;
       t->hash = attr;
       t->nattr = 0;
@@ -799,8 +862,7 @@ read_debug_line (DSO *dso, struct dw_cu *cu, uint32_t off)
     }
 
   cu->cu_nfiles = file_cnt;
-  cu->cu_files = (struct dw_file *)
-		 obstack_alloc (&ob, file_cnt * sizeof (struct dw_file));
+  cu->cu_files = pool_alloc (dw_file, file_cnt * sizeof (struct dw_file));
   memset (cu->cu_files, 0, file_cnt * sizeof (struct dw_file));
 
   ptr = file;
@@ -1282,10 +1344,10 @@ struct debug_loc_adjust
      is owned by more than one CU.  */
   struct dw_cu *cu;
 };
+ALIGN_STRUCT (debug_loc_adjust)
 
 /* Hash table and obstack for recording .debug_loc adjustment ranges.  */
 static htab_t loc_htab;
-static struct obstack loc_ob;
 
 /* Hash function for loc_htab.  */
 static hashval_t
@@ -1372,14 +1434,13 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
 		     dso->filename);
 	      return 1;
 	    }
-	  obstack_init (&loc_ob);
 	}
       slot = htab_find_slot_with_hash (loc_htab, &adj, adj.end_offset, INSERT);
       if (slot == NULL)
 	goto no_memory;
       if (*slot == NULL)
 	{
-	  a = obstack_alloc (&loc_ob, sizeof (*a));
+	  a = pool_alloc (debug_loc_adjust, sizeof (*a));
 	  *a = adj;
 	  *slot = (void *) a;
 	}
@@ -2836,7 +2897,7 @@ read_debug_info (DSO *dso)
 	}
       last_abbrev_offset = value;
 
-      cu = (struct dw_cu *) obstack_alloc (&ob, sizeof (struct dw_cu));
+      cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
       memset (cu, '\0', sizeof (*cu));
       cu->cu_kind = CU_NORMAL;
       cu->cu_offset = cu_offset;
@@ -2885,14 +2946,13 @@ read_debug_info (DSO *dso)
 	      || parent->die_parent == NULL
 	      || parent->die_named_namespace)
 	    {
-	      die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
+	      die = pool_alloc (dw_die, sizeof (struct dw_die));
 	      memset (die, '\0', sizeof (struct dw_die));
 	      die->die_toplevel = 1;
 	    }
 	  else
 	    {
-	      die = (dw_die_ref)
-		    obstack_alloc (&ob, offsetof (struct dw_die, die_dup));
+	      die = pool_alloc (dw_die, offsetof (struct dw_die, die_dup));
 	      memset (die, '\0', offsetof (struct dw_die, die_dup));
 	    }
 	  *diep = die;
@@ -3144,7 +3204,7 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   dw_die_ref new_die;
   if (die->die_toplevel)
     {
-      new_die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
+      new_die = pool_alloc (dw_die, sizeof (struct dw_die));
       memset (new_die, '\0', sizeof (*new_die));
       new_die->die_toplevel = 1;
       die->die_dup = new_die;
@@ -3154,8 +3214,7 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
     }
   else
     {
-      new_die = (dw_die_ref)
-		obstack_alloc (&ob, offsetof (struct dw_die, die_dup));
+      new_die = pool_alloc (dw_die, offsetof (struct dw_die, die_dup));
       memset (new_die, '\0', offsetof (struct dw_die, die_dup));
     }
   new_die->die_parent = parent;
@@ -3178,18 +3237,17 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
 static int
 partition_dups (void)
 {
-  struct obstack vec;
   unsigned int cu_off = 0;
   struct dw_cu *cu, *first_partial_cu = NULL, *last_partial_cu = NULL;
   size_t vec_size, i, j;
-  obstack_init (&vec);
+  unsigned char *to_free = obstack_alloc (&alt_ob, 1);
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
-      partition_find_dups (&vec, cu->cu_die);
-      vec_size = obstack_object_size (&vec) / sizeof (void *);
+      partition_find_dups (&alt_ob, cu->cu_die);
+      vec_size = obstack_object_size (&alt_ob) / sizeof (void *);
       if (vec_size != 0)
 	{
-	  dw_die_ref *arr = (dw_die_ref *) obstack_finish (&vec);
+	  dw_die_ref *arr = (dw_die_ref *) obstack_finish (&alt_ob);
 	  qsort (arr, vec_size, sizeof (dw_die_ref), partition_cmp);
 	  for (i = 0; i < vec_size; i = j)
 	    {
@@ -3268,8 +3326,7 @@ partition_dups (void)
 		{
 		  dw_die_ref die, *diep;
 		  struct dw_cu *partial_cu
-		    = (struct dw_cu *)
-		      obstack_alloc (&ob, sizeof (struct dw_cu));
+		    = pool_alloc (dw_cu, sizeof (struct dw_cu));
 		  memset (partial_cu, '\0', sizeof (*partial_cu));
 		  partial_cu->cu_kind = CU_PU;
 		  partial_cu->cu_offset = cu_off++;
@@ -3281,8 +3338,7 @@ partition_dups (void)
 		      last_partial_cu->cu_next = partial_cu;
 		      last_partial_cu = partial_cu;
 		    }
-		  die = (dw_die_ref)
-			obstack_alloc (&ob, sizeof (struct dw_die));
+		  die = pool_alloc (dw_die, sizeof (struct dw_die));
 		  memset (die, '\0', sizeof (*die));
 		  die->die_toplevel = 1;
 		  partial_cu->cu_die = die;
@@ -3306,9 +3362,8 @@ partition_dups (void)
 			       ref = ref->die_parent)
 			    {
 			      dw_die_ref namespc
-				= (dw_die_ref)
-				  obstack_alloc (&ob,
-						 sizeof (struct dw_die));
+				= pool_alloc (dw_die,
+					      sizeof (struct dw_die));
 			      memset (namespc, '\0', sizeof (struct dw_die));
 			      namespc->die_toplevel = 1;
 			      namespc->die_tag = ref->die_tag;
@@ -3362,7 +3417,7 @@ partition_dups (void)
 		    }
 		}
 	    }
-	  obstack_free (&vec, (void *) arr);
+	  obstack_free (&alt_ob, (void *) arr);
 	}
     }
   if (first_partial_cu)
@@ -3370,7 +3425,7 @@ partition_dups (void)
       last_partial_cu->cu_next = first_cu;
       first_cu = first_partial_cu;
     }
-  obstack_free (&vec, NULL);
+  obstack_free (&alt_ob, to_free);
   return 0;
 }
 
@@ -3565,12 +3620,12 @@ static int
 create_import_tree (void)
 {
   struct dw_cu *pu, *cu, *last_partial_cu = NULL;
-  struct obstack iob;
   unsigned int i, new_pu_version = 2, min_cu_version, npus, ncus;
   struct import_cu **ipus, *ipu, *icu;
   unsigned int cu_off;
   unsigned int puidx;
   struct import_cu *last_pu, *pu_freelist = NULL;
+  unsigned char *to_free;
   /* size doesn't count anything already created before this
      function (partial units etc.) or already preexisting, just
      initially the cumulative sizes of DW_TAG_imported_unit DIEs
@@ -3591,7 +3646,7 @@ create_import_tree (void)
   if (first_cu == NULL || first_cu->cu_kind != CU_PU)
     return 0;
 
-  obstack_init (&iob);
+  to_free = obstack_alloc (&alt_ob, 1);
   min_cu_version = first_cu->cu_version;
   /* First construct a bipartite graph between CUs and PUs.  */
   for (pu = first_cu, npus = 0;
@@ -3605,7 +3660,7 @@ create_import_tree (void)
 	new_pu_version = pu->cu_version;
       if (pu->cu_version < min_cu_version)
 	min_cu_version = pu->cu_version;
-      ipu = (struct import_cu *) obstack_alloc (&iob, sizeof (*ipu));
+      ipu = (struct import_cu *) obstack_alloc (&alt_ob, sizeof (*ipu));
       memset (ipu, 0, sizeof (*ipu));
       ipu->cu = pu;
       pu->u1.cu_icu = ipu;
@@ -3623,8 +3678,9 @@ create_import_tree (void)
 	  prev_cu = die->die_cu;
 	}
       ipu->incoming = (struct import_edge *)
-		       obstack_alloc (&iob, ipu->incoming_count
-					    * sizeof (*ipu->incoming));
+		       obstack_alloc (&alt_ob,
+				      ipu->incoming_count
+				      * sizeof (*ipu->incoming));
       for (die = rdie->die_nextdup, i = 0, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
@@ -3633,7 +3689,8 @@ create_import_tree (void)
 	  icu = die->die_cu->u1.cu_icu;
 	  if (icu == NULL)
 	    {
-	      icu = (struct import_cu *) obstack_alloc (&iob, sizeof (*ipu));
+	      icu = (struct import_cu *)
+		    obstack_alloc (&alt_ob, sizeof (*ipu));
 	      memset (icu, 0, sizeof (*icu));
 	      icu->cu = die->die_cu;
 	      die->die_cu->u1.cu_icu = icu;
@@ -3653,8 +3710,9 @@ create_import_tree (void)
 	  min_cu_version = cu->cu_version;
 	cu->u1.cu_icu->outgoing
 	  = (struct import_edge *)
-	    obstack_alloc (&iob, cu->u1.cu_icu->outgoing_count
-				 * sizeof (*cu->u1.cu_icu->outgoing));
+	    obstack_alloc (&alt_ob,
+			   cu->u1.cu_icu->outgoing_count
+			   * sizeof (*cu->u1.cu_icu->outgoing));
 	cu->u1.cu_icu->outgoing_count = 0;
       }
   if (ptr_size == 4 || min_cu_version > 2)
@@ -3672,7 +3730,7 @@ create_import_tree (void)
 	}
     }
   ipus = (struct import_cu **)
-	 obstack_alloc (&iob, (npus + ncus) * sizeof (*ipus));
+	 obstack_alloc (&alt_ob, (npus + ncus) * sizeof (*ipus));
   for (pu = first_cu, npus = 0;
        pu && pu->cu_kind == CU_PU; pu = pu->cu_next, npus++)
     {
@@ -3785,7 +3843,7 @@ create_import_tree (void)
 			    }
 			  else
 			    npu = (struct import_cu *)
-				  obstack_alloc (&iob, sizeof (*npu));
+				  obstack_alloc (&alt_ob, sizeof (*npu));
 			  memset (npu, 0, sizeof (*npu));
 			  npu->incoming_count = srccount;
 			  npu->outgoing_count = dstcount;
@@ -4095,9 +4153,7 @@ create_import_tree (void)
   for (ipu = ipus[npus - 1]->next; ipu; ipu = ipu->next)
     {
       dw_die_ref die;
-      struct dw_cu *partial_cu
-	= (struct dw_cu *)
-	  obstack_alloc (&ob, sizeof (struct dw_cu));
+      struct dw_cu *partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
       memset (partial_cu, '\0', sizeof (*partial_cu));
       partial_cu->cu_kind = CU_PU;
       partial_cu->cu_offset = cu_off++;
@@ -4106,7 +4162,7 @@ create_import_tree (void)
       partial_cu->cu_next = last_partial_cu->cu_next;
       last_partial_cu->cu_next = partial_cu;
       last_partial_cu = partial_cu;
-      die = (dw_die_ref) obstack_alloc (&ob, sizeof (struct dw_die));
+      die = pool_alloc (dw_die, sizeof (struct dw_die));
       memset (die, '\0', sizeof (struct dw_die));
       die->die_toplevel = 1;
       partial_cu->cu_die = die;
@@ -4127,8 +4183,7 @@ create_import_tree (void)
       for (e = icu->outgoing; e; e = e->next)
 	{
 	  dw_die_ref *diep;
-	  dw_die_ref die = (dw_die_ref)
-			   obstack_alloc (&ob, sizeof (struct dw_die));
+	  dw_die_ref die = pool_alloc (dw_die, sizeof (struct dw_die));
 	  memset (die, '\0', sizeof (*die));
 	  die->die_toplevel = 1;
 	  die->die_tag = DW_TAG_imported_unit;
@@ -4152,7 +4207,7 @@ create_import_tree (void)
     }
   for (cu = first_cu; cu; cu = cu->cu_next)
     cu->u1.cu_icu = NULL;
-  obstack_free (&iob, NULL);
+  obstack_free (&alt_ob, to_free);
   return 0;
 }
 
@@ -4226,7 +4281,7 @@ read_debug_types (DSO *dso)
 	  last_abbrev_offset = value;
 	}
 
-      cu = (struct dw_cu *) obstack_alloc (&ob, sizeof (struct dw_cu));
+      cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
       memset (cu, '\0', sizeof (*cu));
       cu->cu_kind = CU_TYPES;
       cu->cu_new_abbrev = abbrev;
@@ -4567,10 +4622,10 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
   else
     {
       struct abbrev_tag *newt
-	= (struct abbrev_tag *)
-	  obstack_copy (&ob, t,
-			sizeof (*newt)
-			+ t->nattr * sizeof (struct abbrev_attr));
+	= pool_alloc (abbrev_tag,
+		      sizeof (*newt) + t->nattr * sizeof (struct abbrev_attr));
+      memcpy (newt, t,
+	      sizeof (*newt) + t->nattr * sizeof (struct abbrev_attr));
       *slot = newt;
       die->u.p2.die_new_abbrev = newt;
     }
@@ -4852,12 +4907,12 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
   struct dw_cu *cu, **cuarr;
   struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
-  struct obstack vec;
+  unsigned char *to_free = obstack_alloc (&alt_ob, 1);
 
-  obstack_init (&vec);
   t = (struct abbrev_tag *)
-      obstack_alloc (&vec, sizeof (*t)
-			   + (max_nattr + 4) * sizeof (struct abbrev_attr));
+      obstack_alloc (&alt_ob,
+		     sizeof (*t)
+		     + (max_nattr + 4) * sizeof (struct abbrev_attr));
   for (cu = first_cu, ncus = 0; cu; cu = cu->cu_next, ncus++)
     {
       unsigned int intracu, ndies = 0, tagsize = 0, nchildren = 0;
@@ -4881,18 +4936,15 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 			 &cu->u2.cu_largest_entry);
 	  continue;
 	}
-      if (build_abbrevs (cu, t, &ndies, &vec))
-	{
-	  obstack_free (&vec, NULL);
-	  return 1;
-	}
+      if (build_abbrevs (cu, t, &ndies, &alt_ob))
+	return 1;
       nabbrevs = htab_elements (cu->cu_new_abbrev);
       htab_traverse (cu->cu_new_abbrev, list_abbrevs, &ob);
       assert (obstack_object_size (&ob) == nabbrevs * sizeof (void *));
       arr = (struct abbrev_tag **) obstack_finish (&ob);
-      intracu = obstack_object_size (&vec) / sizeof (void *) / 2;
-      obstack_ptr_grow (&vec, NULL);
-      intracuarr = (dw_die_ref *) obstack_finish (&vec);
+      intracu = obstack_object_size (&alt_ob) / sizeof (void *) / 2;
+      obstack_ptr_grow (&alt_ob, NULL);
+      intracuarr = (dw_die_ref *) obstack_finish (&alt_ob);
       if (nabbrevs >= 128)
 	{
 	  unsigned int limit, uleb128_size;
@@ -5011,7 +5063,6 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	{
 	  error (0, 0, "%s: DW_OP_call2 or typed DWARF stack referenced DIE"
 		       " layed out at too big offset", dso->filename);
-	  obstack_free (&vec, NULL);
 	  return 1;
 	}
       assert (*intracuvec == NULL && off == cusize);
@@ -5031,8 +5082,6 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 					       arr[i]->hash, INSERT);
 	      if (slot == NULL)
 		{
-		  obstack_free (&ob, (void *) arr);
-		  obstack_free (&vec, NULL);
 		  error (0, ENOMEM, "Could not compute .debug_abbrev");
 		  return 1;
 		}
@@ -5041,12 +5090,12 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	    }
 	}
       obstack_free (&ob, (void *) arr);
-      obstack_free (&vec, (void *) intracuarr);
+      obstack_free (&alt_ob, (void *) intracuarr);
       cu->cu_new_offset = total_size;
       total_size += cusize;
     }
-  obstack_free (&vec, (void *) t);
-  cuarr = (struct dw_cu **) obstack_alloc (&vec,
+  obstack_free (&alt_ob, (void *) t);
+  cuarr = (struct dw_cu **) obstack_alloc (&alt_ob,
 					   ncus * sizeof (struct dw_cu *));
   for (cu = first_cu, i = 0; cu; cu = cu->cu_next)
     if (cu->u1.cu_new_abbrev_owner == NULL)
@@ -5066,9 +5115,9 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
       if (cuarr[i]->u1.cu_new_abbrev_owner != NULL)
 	continue;
       nabbrevs = htab_elements (cuarr[i]->cu_new_abbrev);
-      htab_traverse (cuarr[i]->cu_new_abbrev, list_abbrevs, &vec);
-      assert (obstack_object_size (&vec) == nabbrevs * sizeof (void *));
-      arr = (struct abbrev_tag **) obstack_finish (&vec);
+      htab_traverse (cuarr[i]->cu_new_abbrev, list_abbrevs, &alt_ob);
+      assert (obstack_object_size (&alt_ob) == nabbrevs * sizeof (void *));
+      arr = (struct abbrev_tag **) obstack_finish (&alt_ob);
       if (nabbrevs >= 128)
 	{
 	  nattempts = 0;
@@ -5116,7 +5165,6 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 						INSERT);
 		  if (slot == NULL)
 		    {
-		      obstack_free (&vec, NULL);
 		      error (0, ENOMEM, "Could not compute .debug_abbrev");
 		      return 1;
 		    }
@@ -5126,11 +5174,13 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		    {
 		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
-		      newt = (struct abbrev_tag *)
-			     obstack_copy (&ob, arr[k],
-					   sizeof (*newt)
-					   + arr[k]->nattr
-					     * sizeof (struct abbrev_attr));
+		      newt = pool_alloc (abbrev_tag,
+					 sizeof (*newt) 
+					 + arr[k]->nattr
+					   * sizeof (struct abbrev_attr));
+		      memcpy (newt, arr[k],
+			      sizeof (*newt) 
+			      + arr[k]->nattr * sizeof (struct abbrev_attr));
 		      *slot = newt;
 		    }
 		}
@@ -5138,7 +5188,7 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	      cuarr[i]->u1.cu_new_abbrev_owner = cuarr[j];
 	      break;
 	    }
-	  obstack_free (&vec, (void *) arr);
+	  obstack_free (&alt_ob, (void *) arr);
 	  continue;
 	}
       /* Don't search all CUs, that might be too expensive.  So just search
@@ -5237,7 +5287,6 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 						INSERT);
 		  if (slot == NULL)
 		    {
-		      obstack_free (&vec, NULL);
 		      error (0, ENOMEM, "Could not compute .debug_abbrev");
 		      return 1;
 		    }
@@ -5247,11 +5296,13 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		    {
 		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
-		      newt = (struct abbrev_tag *)
-			     obstack_copy (&ob, arr[k],
-					   sizeof (*newt)
-					   + arr[k]->nattr
-					     * sizeof (struct abbrev_attr));
+		      newt = pool_alloc (abbrev_tag,
+					 sizeof (*newt)
+					 + arr[k]->nattr
+					   * sizeof (struct abbrev_attr));
+		      memcpy (newt, arr[k],
+			      sizeof (*newt)
+			      + arr[k]->nattr * sizeof (struct abbrev_attr));
 		      *slot = newt;
 		    }
 		}
@@ -5259,9 +5310,9 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	      cuarr[i]->u1.cu_new_abbrev_owner = cuarr[j];
 	    }
 	}
-      obstack_free (&vec, (void *) arr);
+      obstack_free (&alt_ob, (void *) arr);
     }
-  obstack_free (&vec, NULL);
+  obstack_free (&alt_ob, to_free);
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       struct abbrev_tag **arr;
@@ -6311,6 +6362,7 @@ main (int argc, char *argv[])
     exit (1);
 
   obstack_init (&ob);
+  obstack_init (&alt_ob);
 
   if (read_dwarf (dso))
     exit (1);
@@ -6351,11 +6403,12 @@ main (int argc, char *argv[])
   off_htab = NULL;
   if (loc_htab != NULL)
     {
-      obstack_free (&loc_ob, NULL);
       htab_delete (loc_htab);
       loc_htab = NULL;
     }
+  obstack_free (&alt_ob, NULL);
   obstack_free (&ob, NULL);
+  pool_destroy ();
 
   write_dso (dso, outfile, new_debug_abbrev, new_debug_abbrev_size,
 	     new_debug_info, new_debug_info_size, new_debug_loc,
