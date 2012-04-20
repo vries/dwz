@@ -16,21 +16,21 @@
    Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.  */
 
 #include <assert.h>
-#include <byteswap.h>
-#include <endian.h>
 #include <errno.h>
 #include <error.h>
-#include <limits.h>
+#include <fcntl.h>
+#include <getopt.h>
+#include <setjmp.h>
 #include <string.h>
-#include <stdlib.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
+
 #include <obstack.h>
-#include <stdbool.h>
-#include <stddef.h>
 
 #include <gelf.h>
 #include "dwarf2.h"
@@ -40,16 +40,19 @@
 # define IGNORE_LOCUS 0
 #endif
 
-#define obstack_chunk_alloc     xmalloc
+#define obstack_chunk_alloc     malloc
 #define obstack_chunk_free      free
 
-static void *
-xmalloc (size_t size)
+/* Where to longjmp on OOM.  */
+static jmp_buf oom_buf;
+
+/* Handle OOM situation.  If handling more than one file, we might
+   just fail to handle some large file due to OOM, but could very well
+   handle other smaller files after it.  */
+static void
+dwz_oom (void)
 {
-  void *newmem = malloc (size);
-  if (!newmem)
-    error (1, ENOMEM, "Could not allocate memory");
-  return newmem;
+  longjmp (oom_buf, 1);
 }
 
 /* General obstack for struct dw_cu, dw_die, also used for temporary
@@ -295,29 +298,6 @@ buf_write_be64 (unsigned char *data, uint64_t v)
 {
   buf_write_be32 (data, v >> 32);
   buf_write_be32 (data + 4, v);
-}
-
-/* Return a string from section SEC at offset OFFSET.  */
-static const char *
-strptr (DSO *dso, int sec, off_t offset)
-{
-  Elf_Scn *scn;
-  Elf_Data *data;
-
-  scn = dso->scn[sec];
-  if (offset >= 0 && (GElf_Addr) offset < dso->shdr[sec].sh_size)
-    {
-      data = NULL;
-      while ((data = elf_rawdata (scn, data)) != NULL)
-	{
-	  if (data->d_buf
-	      && offset >= data->d_off
-	      && offset < (off_t) (data->d_off + data->d_size))
-	    return (const char *) data->d_buf + (offset - data->d_off);
-	}
-    }
-
-  return NULL;
 }
 
 /* Details about standard DWARF sections.  */
@@ -585,7 +565,9 @@ pool_alloc_1 (unsigned int align, unsigned int size)
       new_size += sizeof (void *);
       if (new_size < 16384 * 1024 - 64)
 	new_size = 16384 * 1024 - 64;
-      new_pool = (unsigned char *) xmalloc (new_size);
+      new_pool = (unsigned char *) malloc (new_size);
+      if (new_pool == NULL)
+	dwz_oom ();
       *(unsigned char **) new_pool = pool;
       pool_next = new_pool + sizeof (unsigned char *);
       pool_limit = new_pool + new_size;
@@ -3646,6 +3628,7 @@ create_import_tree (void)
   if (first_cu == NULL || first_cu->cu_kind != CU_PU)
     return 0;
 
+  edge_freelist = NULL;
   to_free = obstack_alloc (&alt_ob, 1);
   min_cu_version = first_cu->cu_version;
   /* First construct a bipartite graph between CUs and PUs.  */
@@ -5175,11 +5158,11 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
 		      newt = pool_alloc (abbrev_tag,
-					 sizeof (*newt) 
+					 sizeof (*newt)
 					 + arr[k]->nattr
 					   * sizeof (struct abbrev_attr));
 		      memcpy (newt, arr[k],
-			      sizeof (*newt) 
+			      sizeof (*newt)
 			      + arr[k]->nattr * sizeof (struct abbrev_attr));
 		      *slot = newt;
 		    }
@@ -5387,9 +5370,11 @@ static unsigned char *
 write_abbrev (unsigned long abbrev_size)
 {
   struct dw_cu *cu;
-  unsigned char *abbrev = xmalloc (abbrev_size);
+  unsigned char *abbrev = malloc (abbrev_size);
   unsigned char *ptr = abbrev;
 
+  if (abbrev == NULL)
+    dwz_oom ();
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       struct abbrev_tag **arr;
@@ -5946,9 +5931,11 @@ static unsigned char *
 write_info (unsigned long info_size)
 {
   struct dw_cu *cu;
-  unsigned char *info = xmalloc (info_size);
+  unsigned char *info = malloc (info_size);
   unsigned char *ptr = info;
 
+  if (info == NULL)
+    dwz_oom ();
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       unsigned long next_off = info_size;
@@ -6011,7 +5998,9 @@ write_loc (void)
   unsigned char *loc, *old;
   if (loc_htab == NULL)
     return NULL;
-  loc = xmalloc (debug_sections[DEBUG_LOC].size);
+  loc = malloc (debug_sections[DEBUG_LOC].size);
+  if (loc == NULL)
+    dwz_oom ();
   old = debug_sections[DEBUG_LOC].data;
   memcpy (loc, old, debug_sections[DEBUG_LOC].size);
   debug_sections[DEBUG_LOC].data = loc;
@@ -6031,7 +6020,9 @@ write_types (void)
 
   if (debug_sections[DEBUG_TYPES].data == NULL)
     return NULL;
-  types = xmalloc (debug_sections[DEBUG_TYPES].size);
+  types = malloc (debug_sections[DEBUG_TYPES].size);
+  if (types == NULL)
+    dwz_oom ();
   memcpy (types, debug_sections[DEBUG_TYPES].data,
 	  debug_sections[DEBUG_TYPES].size);
   for (cu = first_cu; cu; cu = cu->cu_next)
@@ -6045,6 +6036,30 @@ write_types (void)
   return types;
 }
 
+/* Return a string from section SEC at offset OFFSET.  */
+static const char *
+strptr (DSO *dso, int sec, off_t offset)
+{
+  Elf_Scn *scn;
+  Elf_Data *data;
+
+  scn = dso->scn[sec];
+  if (offset >= 0 && (GElf_Addr) offset < dso->shdr[sec].sh_size)
+    {
+      data = NULL;
+      while ((data = elf_rawdata (scn, data)) != NULL)
+	{
+	  if (data->d_buf
+	      && offset >= data->d_off
+	      && offset < (off_t) (data->d_off + data->d_size))
+	    return (const char *) data->d_buf + (offset - data->d_off);
+	}
+    }
+
+  return NULL;
+}
+
+/* Read DWARF sections from DSO.  */
 static int
 read_dwarf (DSO *dso)
 {
@@ -6137,15 +6152,20 @@ read_dwarf (DSO *dso)
       return 1;
     }
 
-  if (debug_sections[DEBUG_INFO].data != NULL)
+  if (debug_sections[DEBUG_INFO].data == NULL)
     {
-      if (read_debug_info (dso))
-	return 1;
+      error (0, 0, "%s: .debug_info section not present",
+	     dso->filename);
+      return 1;
     }
+
+  if (read_debug_info (dso))
+    return 1;
 
   return 0;
 }
 
+/* Open an ELF file NAME.  */
 static DSO *
 fdopen_dso (int fd, const char *name)
 {
@@ -6222,7 +6242,7 @@ error_out:
    .debug_info section (and INFO_SIZE its size), LOC and TYPES
    are contents of new .debug_loc resp. debug_types sections if
    any adjustments are needed.  */
-static void
+static int
 write_dso (DSO *dso, const char *file, unsigned char *abbrev,
 	   unsigned long abbrev_size, unsigned char *info,
 	   unsigned long info_size, unsigned char *loc,
@@ -6233,6 +6253,7 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
   char *e_ident;
   int fd, i;
   GElf_Off off, diff;
+  char *filename = NULL;
 
   diff = (GElf_Off) abbrev_size
 	 - (GElf_Off) dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_size;
@@ -6253,13 +6274,39 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
     dso->ehdr.e_shoff += diff;
   dso->shdr[debug_sections[DEBUG_INFO].sec].sh_size += diff;
 
-  fd = open (file, O_RDWR | O_CREAT, 0600);
-  if (fd == -1)
-    error (1, errno, "Failed to open %s for writing", file);
+  if (file == NULL)
+    {
+      size_t len = strlen (dso->filename);
+      filename = alloca (len + sizeof (".#dwz#.XXXXXX"));
+      memcpy (filename, dso->filename, len);
+      memcpy (filename + len, ".#dwz#.XXXXXX", sizeof (".#dwz#.XXXXXX"));
+      fd = mkstemp (filename);
+      file = (const char *) filename;
+      if (fd == -1)
+	{
+	  error (0, errno, "Failed to create temporary file for %s",
+		 dso->filename);
+	  return 1;
+	}
+    }
+  else
+    {
+      fd = open (file, O_RDWR | O_CREAT, 0600);
+      if (fd == -1)
+	{
+	  error (0, errno, "Failed to open %s for writing", file);
+	  return 1;
+	}
+    }
 
   elf = elf_begin (fd, ELF_C_WRITE_MMAP, NULL);
   if (elf == NULL)
-    error (1, 0, "cannot open ELF file: %s", elf_errmsg (-1));
+    {
+      error (0, 0, "cannot open ELF file: %s", elf_errmsg (-1));
+      unlink (file);
+      close (fd);
+      return 1;
+    }
 
   /* Some gelf_newehdr implementations don't return the resulting
      ElfNN_Ehdr, so we have to do it the hard way instead of:
@@ -6283,7 +6330,13 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
       || memcpy (e_ident, dso->ehdr.e_ident, EI_NIDENT) == NULL
       || gelf_update_ehdr (elf, &dso->ehdr) == 0
       || gelf_newphdr (elf, dso->ehdr.e_phnum) == 0)
-    error (1, 0, "Could not create new ELF headers");
+    {
+      error (0, 0, "Could not create new ELF headers");
+      unlink (file);
+      elf_end (elf);
+      close (fd);
+      return 1;
+    }
   ehdr = dso->ehdr;
   elf_flagelf (elf, ELF_C_SET, ELF_F_LAYOUT | ELF_F_PERMISSIVE);
   for (i = 0; i < ehdr.e_phnum; ++i)
@@ -6320,77 +6373,41 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
     }
 
   if (elf_update (elf, ELF_C_WRITE_MMAP) == -1)
-    error (1, 0, "%s: elf_update failed", dso->filename);
+    {
+      error (0, 0, "%s: elf_update failed", dso->filename);
+      unlink (file);
+      elf_end (elf);
+      close (fd);
+      return 1;
+    }
 
   if (elf_end (elf) < 0)
-    error (1, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno()));
+    {
+      error (0, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno ()));
+      unlink (file);
+      elf_end (elf);
+      close (fd);
+      return 1;
+    }
 
   fchown (fd, st->st_uid, st->st_gid);
   fchmod (fd, st->st_mode & 07777);
   close (fd);
+
+  if (filename != NULL && rename (filename, dso->filename))
+    {
+      error (0, errno, "Failed to rename temporary file over %s",
+	     dso->filename);
+      unlink (file);
+    }
+  return 0;
 }
 
-int
-main (int argc, char *argv[])
+/* Free memory and clear global variables.  */
+static void
+cleanup (void)
 {
-  DSO *dso;
-  int fd;
-  const char *file, *outfile;
-  unsigned long new_debug_info_size, new_debug_abbrev_size;
-  unsigned char *new_debug_abbrev, *new_debug_info;
-  unsigned char *new_debug_loc, *new_debug_types;
-  struct stat st;
   struct dw_cu *cu;
-
-  if (argc < 3)
-    error (1, 0, "Usage: dwz input_object output_object");
-
-  file = argv[1];
-  outfile = argv[2];
-
-  if (elf_version (EV_CURRENT) == EV_NONE)
-    error (1, 0, "library out of date\n");
-
-  fd = open (file, O_RDONLY);
-  if (fd < 0)
-    error (1, errno, "Failed to open input file %s", file);
-  if (fstat (fd, &st) < 0)
-    error (1, errno, "Failed to stat input file %s", file);
-
-  dso = fdopen_dso (fd, file);
-  if (dso == NULL)
-    exit (1);
-
-  obstack_init (&ob);
-  obstack_init (&alt_ob);
-
-  if (read_dwarf (dso))
-    exit (1);
-
-  if (partition_dups ())
-    exit (1);
-
-  if (create_import_tree ())
-    exit (1);
-
-  if (read_debug_types (dso))
-    exit (1);
-
-  if (compute_abbrevs (dso, &new_debug_info_size, &new_debug_abbrev_size))
-    exit (1);
-
-  if (new_debug_info_size + new_debug_abbrev_size
-      >= debug_sections[DEBUG_INFO].size + debug_sections[DEBUG_ABBREV].size)
-    error (1, 0, "%s: DWARF compression not beneficial "
-		 "- old size %ld new size %ld", dso->filename,
-	   (unsigned long) (debug_sections[DEBUG_INFO].size
-			    + debug_sections[DEBUG_ABBREV].size),
-	   new_debug_info_size + new_debug_abbrev_size);
-
-  new_debug_abbrev = write_abbrev (new_debug_abbrev_size);
-  new_debug_info = write_info (new_debug_info_size);
-  new_debug_loc = write_loc ();
-  new_debug_types = write_types ();
 
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
@@ -6406,24 +6423,187 @@ main (int argc, char *argv[])
       htab_delete (loc_htab);
       loc_htab = NULL;
     }
+  if (dup_htab != NULL)
+    htab_delete (dup_htab);
+  dup_htab = NULL;
+
   obstack_free (&alt_ob, NULL);
   obstack_free (&ob, NULL);
   pool_destroy ();
+  first_cu = NULL;
+  last_cu = NULL;
+  ptr_size = 0;
+  max_nattr = 0;
+  do_read_16 = NULL;
+  do_read_32 = NULL;
+  do_read_64 = NULL;
+  do_write_16 = NULL;
+  do_write_32 = NULL;
+  do_write_64 = NULL;
+  edge_freelist = NULL;
+}
 
-  write_dso (dso, outfile, new_debug_abbrev, new_debug_abbrev_size,
-	     new_debug_info, new_debug_info_size, new_debug_loc,
-	     new_debug_types, &st);
+/* Handle compression of a single file FILE.  If OUTFILE is
+   non-NULL, the result will be stored into that file, otherwise
+   the result will be written into a temporary file that is renamed
+   over FILE.  */
+static int
+dwz (const char *file, const char *outfile)
+{
+  DSO *dso;
+  int ret = 0, fd;
+  unsigned int i;
+  unsigned long new_debug_info_size, new_debug_abbrev_size;
+  unsigned char * volatile new_debug_abbrev = NULL;
+  unsigned char * volatile new_debug_info = NULL;
+  unsigned char * volatile new_debug_loc = NULL;
+  unsigned char * volatile new_debug_types = NULL;
+  struct stat st;
 
-  free (new_debug_info);
-  free (new_debug_abbrev);
-  free (new_debug_loc);
-  free (new_debug_types);
+  fd = open (file, O_RDONLY);
+  if (fd < 0)
+    {
+      error (0, errno, "Failed to open input file %s", file);
+      return 1;
+    }
+  if (fstat (fd, &st) < 0)
+    {
+      close (fd);
+      error (0, errno, "Failed to stat input file %s", file);
+      return 1;
+    }
+
+  dso = fdopen_dso (fd, file);
+  if (dso == NULL)
+    return 1;
+
+  obstack_alloc_failed_handler = dwz_oom;
+  if (setjmp (oom_buf))
+    {
+      error (0, ENOMEM, "%s: Could not allocate memory", dso->filename);
+
+      cleanup ();
+
+      free (new_debug_info);
+      free (new_debug_abbrev);
+      free (new_debug_loc);
+      free (new_debug_types);
+      ret = 1;
+    }
+  else
+    {
+      obstack_init (&ob);
+      obstack_init (&alt_ob);
+
+      if (read_dwarf (dso)
+	  || partition_dups ()
+	  || create_import_tree ()
+	  || read_debug_types (dso)
+	  || compute_abbrevs (dso, &new_debug_info_size,
+			      &new_debug_abbrev_size))
+	ret = 1;
+      else if (new_debug_info_size + new_debug_abbrev_size
+	       >= debug_sections[DEBUG_INFO].size
+		  + debug_sections[DEBUG_ABBREV].size)
+	{
+	  error (0, 0, "%s: DWARF compression not beneficial "
+		       "- old size %ld new size %ld", dso->filename,
+		 (unsigned long) (debug_sections[DEBUG_INFO].size
+				  + debug_sections[DEBUG_ABBREV].size),
+		 new_debug_info_size + new_debug_abbrev_size);
+	  ret = 1;
+	}
+      else
+	{
+	  new_debug_abbrev = write_abbrev (new_debug_abbrev_size);
+	  new_debug_info = write_info (new_debug_info_size);
+	  new_debug_loc = write_loc ();
+	  new_debug_types = write_types ();
+
+	  cleanup ();
+
+	  if (write_dso (dso, outfile, new_debug_abbrev, new_debug_abbrev_size,
+			 new_debug_info, new_debug_info_size, new_debug_loc,
+			 new_debug_types, &st))
+	    ret = 1;
+
+	  free (new_debug_info);
+	  free (new_debug_abbrev);
+	  free (new_debug_loc);
+	  free (new_debug_types);
+	}
+    }
+
+  for (i = 0; debug_sections[i].name; ++i)
+    {
+      debug_sections[i].data = NULL;
+      debug_sections[i].size = 0;
+      debug_sections[i].sec = 0;
+    }
 
   if (elf_end (dso->elf) < 0)
-    error (1, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno()));
+    {
+      error (0, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno ()));
+      ret = 1;
+    }
   close (fd);
 
   free (dso);
+  return ret;
+}
 
-  return 0;
+/* Options for getopt_long.  */
+static struct option dwz_options[] =
+{
+  { "help",	no_argument,	   0, 0 },
+  { "output",	required_argument, 0, 'o' },
+};
+
+/* Print usage and exit.  */
+static void
+usage (void)
+{
+  error (1, 0, "Usage: dwz [-o OUTFILE] [FILES]");
+}
+
+int
+main (int argc, char *argv[])
+{
+  const char *outfile = NULL;
+  int ret = 0;
+
+  if (elf_version (EV_CURRENT) == EV_NONE)
+    error (1, 0, "library out of date\n");
+
+  while (1)
+    {
+      int option_index;
+      int c = getopt_long (argc, argv, "o:", dwz_options, &option_index);
+      if (c == -1)
+	break;
+      switch (c)
+	{
+	default:
+	  usage ();
+	  break;
+
+	case 'o':
+	  outfile = optarg;
+	  break;
+	}
+    }
+
+  if (optind == argc)
+    ret = dwz ("a.out", outfile);
+  else if (optind + 1 == argc)
+    ret = dwz (argv[optind], outfile);
+  else
+    {
+      if (outfile != NULL)
+	error (1, 0, "-o option not allowed for multiple files");
+      while (optind < argc)
+	ret |= dwz (argv[optind++], NULL);
+    }
+
+  return ret;
 }
