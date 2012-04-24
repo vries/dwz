@@ -323,6 +323,7 @@ static struct
 #define DEBUG_TYPES		11
 #define DEBUG_MACRO		12
 #define DEBUG_GDB_SCRIPTS	13
+#define GDB_INDEX		14
     { ".debug_info", NULL, 0, 0 },
     { ".debug_abbrev", NULL, 0, 0 },
     { ".debug_line", NULL, 0, 0 },
@@ -337,6 +338,7 @@ static struct
     { ".debug_types", NULL, 0, 0 },
     { ".debug_macro", NULL, 0, 0 },
     { ".debug_gdb_scripts", NULL, 0, 0 },
+    { ".gdb_index", NULL, 0, 0 },
     { NULL, NULL, 0, 0 }
   };
 
@@ -6036,6 +6038,146 @@ write_types (void)
   return types;
 }
 
+/* Construct new .gdb_index section in malloced memory,
+   return pointer to it.  */
+static unsigned char *
+write_gdb_index (unsigned long info_size, unsigned long *gdb_index_size)
+{
+  struct dw_cu *cu;
+  unsigned char *gdb_index, *ptr, *inptr, *end;
+  unsigned int ncus = 0, npus = 0, ver;
+  unsigned int culistoff, cutypesoff, addressoff, symboloff, constoff;
+
+  *gdb_index_size = 0;
+  if (debug_sections[GDB_INDEX].data == NULL
+      || debug_sections[GDB_INDEX].size < 0x18)
+    return NULL;
+  inptr = (unsigned char *) debug_sections[GDB_INDEX].data;
+  ver = buf_read_ule32 (inptr);
+  if (ver < 4 || ver > 6)
+    return NULL;
+
+  for (cu = first_cu; cu; cu = cu->cu_next)
+    if (cu->cu_kind == CU_PU)
+      npus++;
+    else if (cu->cu_kind == CU_NORMAL)
+      ncus++;
+    else if (cu->cu_kind == CU_TYPES)
+      break;
+  culistoff = buf_read_ule32 (inptr + 0x04);
+  cutypesoff = buf_read_ule32 (inptr + 0x08);
+  addressoff = buf_read_ule32 (inptr + 0x0c);
+  symboloff = buf_read_ule32 (inptr + 0x10);
+  constoff = buf_read_ule32 (inptr + 0x14);
+  if (culistoff != 0x18
+      || cutypesoff != 0x18 + ncus * 16
+      || addressoff < cutypesoff
+      || ((addressoff - cutypesoff) % 24) != 0
+      || symboloff < addressoff
+      || ((symboloff - addressoff) % 20) != 0
+      || constoff < symboloff
+      || ((constoff - symboloff) & (constoff - symboloff - 1)) != 0
+      || ((constoff - symboloff) & 7) != 0
+      || debug_sections[GDB_INDEX].size < constoff)
+    return NULL;
+  inptr += 0x18;
+  for (cu = first_cu; cu; cu = cu->cu_next)
+    if (cu->cu_kind == CU_NORMAL)
+      {
+	if (buf_read_ule64 (inptr) != cu->cu_offset)
+	  return NULL;
+	inptr += 16;
+      }
+
+  *gdb_index_size = debug_sections[GDB_INDEX].size + npus * 16;
+  gdb_index = malloc (*gdb_index_size);
+  if (gdb_index == NULL)
+    dwz_oom ();
+  /* Write new header.  */
+  buf_write_le32 (gdb_index + 0x00, ver);
+  buf_write_le32 (gdb_index + 0x04, culistoff);
+  buf_write_le32 (gdb_index + 0x08, cutypesoff + npus * 16);
+  buf_write_le32 (gdb_index + 0x0c, addressoff + npus * 16);
+  buf_write_le32 (gdb_index + 0x10, symboloff + npus * 16);
+  buf_write_le32 (gdb_index + 0x14, constoff + npus * 16);
+  ptr = gdb_index + 0x18;
+  /* Write new CU list.  */
+  for (cu = first_cu; cu; cu = cu->cu_next)
+    {
+      unsigned long next_off = info_size;
+      if (cu->cu_kind == CU_TYPES)
+	break;
+      if (cu->cu_next && cu->cu_next->cu_kind != CU_TYPES)
+	next_off = cu->cu_next->cu_new_offset;
+      buf_write_le64 (ptr, cu->cu_new_offset);
+      buf_write_le64 (ptr + 8, next_off - cu->cu_new_offset);
+      ptr += 16;
+    }
+  /* Copy types CU list unmodified.  */
+  memcpy (ptr, inptr, addressoff - cutypesoff);
+  ptr += addressoff - cutypesoff;
+  inptr += addressoff - cutypesoff;
+  end = inptr + (symboloff - addressoff);
+  /* Copy address area, adjusting all CU indexes.  */
+  while (inptr < end)
+    {
+      memcpy (ptr, inptr, 16);
+      buf_write_le32 (ptr + 16, buf_read_ule32 (inptr + 16) + npus);
+      ptr += 20;
+      inptr += 20;
+    }
+  /* Copy the symbol hash table.  */
+  memcpy (ptr, inptr, constoff - symboloff);
+  /* Clear the const pool initially.  */
+  memset (ptr + (constoff - symboloff), '\0',
+	  debug_sections[GDB_INDEX].size - constoff);
+  ptr = ptr + (constoff - symboloff);
+  end = inptr + (constoff - symboloff);
+  /* Finally copy over const objects into the const pool, strings as is,
+     CU vectors with CU indexes adjusted.  */
+  while (inptr < end)
+    {
+      unsigned int name = buf_read_ule32 (inptr);
+      unsigned int cuvec = buf_read_ule32 (inptr + 4);
+
+      inptr += 8;
+      if (name == 0 && cuvec == 0)
+	continue;
+      if (name > debug_sections[GDB_INDEX].size - constoff - 1
+	  || cuvec > debug_sections[GDB_INDEX].size - constoff - 4)
+	{
+	fail:
+	  free (gdb_index);
+	  *gdb_index_size = 0;
+	  return NULL;
+	}
+      if (ptr[name] == '\0')
+	{
+	  unsigned char *strend = end + name;
+	  while (*strend != '\0')
+	    {
+	      if (strend + 1
+		  == end + (debug_sections[GDB_INDEX].size - constoff))
+		goto fail;
+	      strend++;
+	    }
+	  memcpy (ptr + name, end + name, strend + 1 - (end + name));
+	}
+      if (buf_read_ule32 (ptr + cuvec) == 0)
+	{
+	  unsigned int count = buf_read_ule32 (end + cuvec), i;
+	  if (count * 4
+	      > debug_sections[GDB_INDEX].size - constoff - cuvec - 4)
+	    goto fail;
+	  buf_write_le32 (ptr + cuvec, count);
+	  for (i = 0; i < count; i++)
+	    buf_write_le32 (ptr + cuvec + 4 + i,
+			    buf_read_ule32 (end + cuvec + 4 + i) + npus);
+	}
+    }
+  return gdb_index;
+}
+
 /* Return a string from section SEC at offset OFFSET.  */
 static const char *
 strptr (DSO *dso, int sec, off_t offset)
@@ -6082,7 +6224,8 @@ read_dwarf (DSO *dso)
 	const char *name = strptr (dso, dso->ehdr.e_shstrndx,
 				   dso->shdr[i].sh_name);
 
-	if (strncmp (name, ".debug_", sizeof (".debug_") - 1) == 0)
+	if (strncmp (name, ".debug_", sizeof (".debug_") - 1) == 0
+	    || strcmp (name, ".gdb_index") == 0)
 	  {
 	    for (j = 0; debug_sections[j].name; ++j)
 	      if (strcmp (name, debug_sections[j].name) == 0)
@@ -6246,7 +6389,8 @@ static int
 write_dso (DSO *dso, const char *file, unsigned char *abbrev,
 	   unsigned long abbrev_size, unsigned char *info,
 	   unsigned long info_size, unsigned char *loc,
-	   unsigned char *types, struct stat *st)
+	   unsigned char *types, unsigned char *gdb_index,
+	   unsigned long gdb_index_size, struct stat *st)
 {
   Elf *elf = NULL;
   GElf_Ehdr ehdr;
@@ -6254,15 +6398,17 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
   int fd, i;
   GElf_Off off, diff;
   char *filename = NULL;
+  bool remove_gdb_index = false;
 
+  ehdr = dso->ehdr;
   diff = (GElf_Off) abbrev_size
 	 - (GElf_Off) dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_size;
   off = dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_offset;
   for (i = 1; i < dso->ehdr.e_shnum; ++i)
     if (dso->shdr[i].sh_offset > off)
       dso->shdr[i].sh_offset += diff;
-  if (dso->ehdr.e_shoff > off)
-    dso->ehdr.e_shoff += diff;
+  if (ehdr.e_shoff > off)
+    ehdr.e_shoff += diff;
   dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_size += diff;
   diff = (GElf_Off) info_size
 	 - (GElf_Off) dso->shdr[debug_sections[DEBUG_INFO].sec].sh_size;
@@ -6270,9 +6416,42 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
   for (i = 1; i < dso->ehdr.e_shnum; ++i)
     if (dso->shdr[i].sh_offset > off)
       dso->shdr[i].sh_offset += diff;
-  if (dso->ehdr.e_shoff > off)
-    dso->ehdr.e_shoff += diff;
+  if (ehdr.e_shoff > off)
+    ehdr.e_shoff += diff;
   dso->shdr[debug_sections[DEBUG_INFO].sec].sh_size += diff;
+  if (debug_sections[GDB_INDEX].data)
+    {
+      diff = (GElf_Off) gdb_index_size
+	     - (GElf_Off) dso->shdr[debug_sections[GDB_INDEX].sec].sh_size;
+      off = dso->shdr[debug_sections[GDB_INDEX].sec].sh_offset;
+      for (i = 1; i < dso->ehdr.e_shnum; ++i)
+	if (dso->shdr[i].sh_offset > off)
+	  dso->shdr[i].sh_offset += diff;
+      if (ehdr.e_shoff > off)
+	ehdr.e_shoff += diff;
+      dso->shdr[debug_sections[GDB_INDEX].sec].sh_size += diff;
+      remove_gdb_index = gdb_index == NULL;
+      if (remove_gdb_index)
+	{
+	  ehdr.e_shnum--;
+	  for (i = 1; i < dso->ehdr.e_shnum; ++i)
+	    {
+	      if (dso->shdr[i].sh_offset > ehdr.e_shoff)
+		dso->shdr[i].sh_offset -= ehdr.e_shentsize;
+	      if (dso->shdr[i].sh_link
+		  > (unsigned int) debug_sections[GDB_INDEX].sec)
+		dso->shdr[i].sh_link--;
+	      if ((dso->shdr[i].sh_type == SHT_REL
+		   || dso->shdr[i].sh_type == SHT_RELA
+		   || (dso->shdr[i].sh_flags & SHF_INFO_LINK))
+		  && dso->shdr[i].sh_info
+		     > (unsigned int) debug_sections[GDB_INDEX].sec)
+		dso->shdr[i].sh_info--;
+	    }
+	  if (ehdr.e_shstrndx > debug_sections[GDB_INDEX].sec)
+	    ehdr.e_shstrndx--;
+	}
+    }
 
   if (file == NULL)
     {
@@ -6328,8 +6507,8 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
       /* This is here just for the gelfx wrapper, so that gelf_update_ehdr
 	 already has the correct ELF class.  */
       || memcpy (e_ident, dso->ehdr.e_ident, EI_NIDENT) == NULL
-      || gelf_update_ehdr (elf, &dso->ehdr) == 0
-      || gelf_newphdr (elf, dso->ehdr.e_phnum) == 0)
+      || gelf_update_ehdr (elf, &ehdr) == 0
+      || gelf_newphdr (elf, ehdr.e_phnum) == 0)
     {
       error (0, 0, "Could not create new ELF headers");
       unlink (file);
@@ -6337,7 +6516,6 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
       close (fd);
       return 1;
     }
-  ehdr = dso->ehdr;
   elf_flagelf (elf, ELF_C_SET, ELF_F_LAYOUT | ELF_F_PERMISSIVE);
   for (i = 0; i < ehdr.e_phnum; ++i)
     {
@@ -6346,11 +6524,15 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
       gelf_update_phdr (elf, i, phdr);
     }
 
-  for (i = 1; i < ehdr.e_shnum; ++i)
+  for (i = 1; i < dso->ehdr.e_shnum; ++i)
     {
-      Elf_Scn *scn = elf_newscn (elf);
+      Elf_Scn *scn;
       Elf_Data *data1, *data2;
 
+      if (remove_gdb_index
+	  && i == debug_sections[GDB_INDEX].sec)
+	continue;
+      scn = elf_newscn (elf);
       elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
       gelf_update_shdr (scn, &dso->shdr[i]);
       data1 = elf_getdata (dso->scn[i], NULL);
@@ -6370,6 +6552,11 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
 	data2->d_buf = loc;
       else if (types != NULL && i == debug_sections[DEBUG_TYPES].sec)
 	data2->d_buf = types;
+      else if (i == debug_sections[GDB_INDEX].sec)
+	{
+	  data2->d_buf = gdb_index;
+	  data2->d_size = dso->shdr[i].sh_size;
+	}
     }
 
   if (elf_update (elf, ELF_C_WRITE_MMAP) == -1)
@@ -6453,11 +6640,12 @@ dwz (const char *file, const char *outfile)
   DSO *dso;
   int ret = 0, fd;
   unsigned int i;
-  unsigned long new_debug_info_size, new_debug_abbrev_size;
+  unsigned long new_debug_info_size, new_debug_abbrev_size, new_gdb_index_size;
   unsigned char * volatile new_debug_abbrev = NULL;
   unsigned char * volatile new_debug_info = NULL;
   unsigned char * volatile new_debug_loc = NULL;
   unsigned char * volatile new_debug_types = NULL;
+  unsigned char * volatile new_gdb_index = NULL;
   struct stat st;
 
   fd = open (file, O_RDONLY);
@@ -6488,6 +6676,7 @@ dwz (const char *file, const char *outfile)
       free (new_debug_abbrev);
       free (new_debug_loc);
       free (new_debug_types);
+      free (new_gdb_index);
       ret = 1;
     }
   else
@@ -6519,18 +6708,22 @@ dwz (const char *file, const char *outfile)
 	  new_debug_info = write_info (new_debug_info_size);
 	  new_debug_loc = write_loc ();
 	  new_debug_types = write_types ();
+	  new_gdb_index
+	    = write_gdb_index (new_debug_info_size, &new_gdb_index_size);
 
 	  cleanup ();
 
 	  if (write_dso (dso, outfile, new_debug_abbrev, new_debug_abbrev_size,
 			 new_debug_info, new_debug_info_size, new_debug_loc,
-			 new_debug_types, &st))
+			 new_debug_types, new_gdb_index, new_gdb_index_size,
+			 &st))
 	    ret = 1;
 
 	  free (new_debug_info);
 	  free (new_debug_abbrev);
 	  free (new_debug_loc);
 	  free (new_debug_types);
+	  free (new_gdb_index);
 	}
     }
 
