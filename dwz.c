@@ -4311,6 +4311,17 @@ die_find_dup (dw_die_ref orig, dw_die_ref dup, dw_die_ref die)
   return NULL;
 }
 
+/* Return number of bytes needed to encode VAL using
+   uleb128.  */
+static unsigned int
+size_of_uleb128 (uint64_t val)
+{
+  unsigned int size;
+  for (size = 1; (val >>= 7) != 0; size++)
+    ;
+  return size;
+}
+
 /* Compute new abbreviations for DIE (with reference DIE REF).
    T is a temporary buffer.  Fill in *NDIES - number of DIEs
    in the tree, and record pairs of referrer/referree DIEs for
@@ -4322,6 +4333,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 {
   dw_die_ref child, ref_child, sib = NULL;
   unsigned int i, j;
+  uint64_t low_pc = 0;
   void **slot;
 
   die->u.p2.die_new_abbrev = NULL;
@@ -4372,6 +4384,11 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	  case DW_FORM_indirect:
 	    i = -2U;
 	    break;
+	  case DW_FORM_addr:
+	    if (reft->attr[i].attr == DW_AT_high_pc
+		&& die->die_cu->cu_version >= 4)
+	      i = -2U;
+	    break;
 	  default:
 	    break;
 	  }
@@ -4407,6 +4424,44 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 		  break;
 		case DW_FORM_addr:
 		  ptr += ptr_size;
+		  if (reft->attr[i].attr == DW_AT_low_pc
+		      && die->die_cu->cu_version >= 4)
+		    low_pc = read_size (ptr - ptr_size, ptr_size);
+		  else if (reft->attr[i].attr == DW_AT_high_pc
+			   && low_pc)
+		    {
+		      uint64_t high_pc = read_size (ptr - ptr_size, ptr_size);
+		      /* If both DW_AT_low_pc and DW_AT_high_pc attributes
+			 are present and have DW_FORM_addr, attempt to shrink
+			 the DIE by using DW_FORM_udata or DW_FORM_data4
+			 form for the latter in DWARF4+.  Don't try
+			 DW_FORM_data[12], that might increase .debug_abbrev
+			 size too much or increase the uleb128 size of too
+			 many abbrev numbers.  */
+		      if (high_pc > low_pc)
+			{
+			  unsigned int nform = 0;
+			  unsigned int sz = size_of_uleb128 (high_pc - low_pc);
+			  if (sz <= 4 && sz < (unsigned) ptr_size)
+			    nform = DW_FORM_udata;
+			  else if (ptr_size > 4
+				   && high_pc - low_pc <= 0xffffffff)
+			    {
+			      nform = DW_FORM_data4;
+			      sz = 4;
+			    }
+			  else if (sz < (unsigned) ptr_size)
+			    nform = DW_FORM_udata;
+			  if (nform)
+			    {
+			      t->attr[j].attr = reft->attr[i].attr;
+			      t->attr[j++].form = nform;
+			      die->die_size -= ptr - orig_ptr;
+			      die->die_size += sz;
+			      continue;
+			    }
+			}
+		    }
 		  break;
 		case DW_FORM_flag_present:
 		  break;
@@ -4717,17 +4772,6 @@ abbrev_cmp (const void *p, const void *q)
 	return 1;
     }
   return 0;
-}
-
-/* Return number of bytes needed to encode VAL using
-   uleb128.  */
-static unsigned int
-size_of_uleb128 (uint64_t val)
-{
-  unsigned int size;
-  for (size = 1; (val >>= 7) != 0; size++)
-    ;
-  return size;
 }
 
 /* First phase of computation of u.p2.die_new_offset and
@@ -5607,6 +5651,7 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 static unsigned char *
 write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 {
+  uint64_t low_pc = 0;
   dw_die_ref child, sib = NULL;
   if (die->die_remove)
     return ptr;
@@ -5667,6 +5712,27 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      }
 	    case DW_FORM_addr:
 	      inptr += ptr_size;
+	      if (reft->attr[i].attr == DW_AT_low_pc)
+		low_pc = read_size (inptr - ptr_size, ptr_size);
+	      if (reft->attr[i].attr == DW_AT_high_pc
+		  && die->u.p2.die_new_abbrev->attr[j].form
+		     != reft->attr[i].form)
+		{
+		  uint64_t high_pc = read_size (inptr - ptr_size, ptr_size);
+		  switch (die->u.p2.die_new_abbrev->attr[j].form)
+		    {
+		    case DW_FORM_udata:
+		      write_uleb128 (ptr, high_pc - low_pc);
+		      break;
+		    case DW_FORM_data4:
+		      write_32 (ptr, high_pc - low_pc);
+		      break;
+		    default:
+		      abort ();
+		    }
+		  j++;
+		  continue;
+		}
 	      break;
 	    case DW_FORM_flag_present:
 	      break;
