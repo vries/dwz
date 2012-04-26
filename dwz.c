@@ -305,7 +305,9 @@ static struct
   {
     const char *name;
     unsigned char *data;
+    unsigned char *new_data;
     size_t size;
+    size_t new_size;
     int sec;
   } debug_sections[] =
   {
@@ -324,22 +326,22 @@ static struct
 #define DEBUG_MACRO		12
 #define DEBUG_GDB_SCRIPTS	13
 #define GDB_INDEX		14
-    { ".debug_info", NULL, 0, 0 },
-    { ".debug_abbrev", NULL, 0, 0 },
-    { ".debug_line", NULL, 0, 0 },
-    { ".debug_aranges", NULL, 0, 0 },
-    { ".debug_pubnames", NULL, 0, 0 },
-    { ".debug_pubtypes", NULL, 0, 0 },
-    { ".debug_macinfo", NULL, 0, 0 },
-    { ".debug_loc", NULL, 0, 0 },
-    { ".debug_str", NULL, 0, 0 },
-    { ".debug_frame", NULL, 0, 0 },
-    { ".debug_ranges", NULL, 0, 0 },
-    { ".debug_types", NULL, 0, 0 },
-    { ".debug_macro", NULL, 0, 0 },
-    { ".debug_gdb_scripts", NULL, 0, 0 },
-    { ".gdb_index", NULL, 0, 0 },
-    { NULL, NULL, 0, 0 }
+    { ".debug_info", NULL, NULL, 0, 0, 0 },
+    { ".debug_abbrev", NULL, NULL, 0, 0, 0 },
+    { ".debug_line", NULL, NULL, 0, 0, 0 },
+    { ".debug_aranges", NULL, NULL, 0, 0, 0 },
+    { ".debug_pubnames", NULL, NULL, 0, 0, 0 },
+    { ".debug_pubtypes", NULL, NULL, 0, 0, 0 },
+    { ".debug_macinfo", NULL, NULL, 0, 0, 0 },
+    { ".debug_loc", NULL, NULL, 0, 0, 0 },
+    { ".debug_str", NULL, NULL, 0, 0, 0 },
+    { ".debug_frame", NULL, NULL, 0, 0, 0 },
+    { ".debug_ranges", NULL, NULL, 0, 0, 0 },
+    { ".debug_types", NULL, NULL, 0, 0, 0 },
+    { ".debug_macro", NULL, NULL, 0, 0, 0 },
+    { ".debug_gdb_scripts", NULL, NULL, 0, 0, 0 },
+    { ".gdb_index", NULL, NULL, 0, 0, 0 },
+    { NULL, NULL, NULL, 0, 0, 0 }
   };
 
 /* A single attribute in abbreviations.  */
@@ -1520,7 +1522,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_use_location:
 	case DW_AT_vtable_elem_location:
 	  if ((die->die_cu->cu_version < 4 && form == DW_FORM_data4)
-	       || form == DW_FORM_sec_offset)
+	      || form == DW_FORM_sec_offset)
 	    {
 	      if (read_loclist (dso, die, read_32 (ptr)))
 		return 1;
@@ -4925,12 +4927,9 @@ cu_abbrev_cmp (const void *p, const void *q)
 }
 
 /* Compute new abbreviations for all CUs, size the new
-   .debug_abbrev section and all new .debug_info CUs.
-   Store the size of new .debug_info section to *TOTAL_SIZEP
-   and size of new .debug_abbrev section into *ABBREV_SIZEP.  */
+   .debug_abbrev section and all new .debug_info CUs.  */
 static int
-compute_abbrevs (DSO *dso, unsigned long *total_sizep,
-		 unsigned long *abbrev_sizep)
+compute_abbrevs (DSO *dso)
 {
   unsigned long total_size = 0, abbrev_size = 0;
   struct dw_cu *cu, **cuarr;
@@ -5390,8 +5389,8 @@ compute_abbrevs (DSO *dso, unsigned long *total_sizep,
 	    owner = owner->u1.cu_new_abbrev_owner;
 	  }
       }
-  *total_sizep = total_size;
-  *abbrev_sizep = abbrev_size;
+  debug_sections[DEBUG_INFO].new_size = total_size;
+  debug_sections[DEBUG_ABBREV].new_size = abbrev_size;
   return 0;
 }
 
@@ -5410,13 +5409,13 @@ abbrev_entry_cmp (const void *p, const void *q)
   return 0;
 }
 
-/* Construct the new .debug_abbrev section of size
-   ABBREV_SIZE in malloced memory, return it.  */
-static unsigned char *
-write_abbrev (unsigned long abbrev_size)
+/* Construct the new .debug_abbrev section
+   in malloced memory, store it as debug_sections[DEBUG_ABBREV].new_data.  */
+static void
+write_abbrev (void)
 {
   struct dw_cu *cu;
-  unsigned char *abbrev = malloc (abbrev_size);
+  unsigned char *abbrev = malloc (debug_sections[DEBUG_ABBREV].new_size);
   unsigned char *ptr = abbrev;
 
   if (abbrev == NULL)
@@ -5451,8 +5450,8 @@ write_abbrev (unsigned long abbrev_size)
       htab_delete (cu->cu_new_abbrev);
       cu->cu_new_abbrev = NULL;
     }
-  assert (abbrev + abbrev_size == ptr);
-  return abbrev;
+  assert (abbrev + debug_sections[DEBUG_ABBREV].new_size == ptr);
+  debug_sections[DEBUG_ABBREV].new_data = abbrev;
 }
 
 /* Adjust DWARF expression starting at PTR, LEN bytes long, referenced by
@@ -5993,20 +5992,20 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
   return ptr;
 }
 
-/* Construct new .debug_info section of size INFO_SIZE in malloced memory,
-   return pointer to it.  */
-static unsigned char *
-write_info (unsigned long info_size)
+/* Construct new .debug_info section in malloced memory,
+   store it to debug_sections[DEBUG_INFO].new_data.  */
+static void
+write_info (void)
 {
   struct dw_cu *cu;
-  unsigned char *info = malloc (info_size);
+  unsigned char *info = malloc (debug_sections[DEBUG_INFO].new_size);
   unsigned char *ptr = info;
 
   if (info == NULL)
     dwz_oom ();
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
-      unsigned long next_off = info_size;
+      unsigned long next_off = debug_sections[DEBUG_INFO].new_size;
       /* Ignore .debug_types CUs.  */
       if (cu->cu_kind == CU_TYPES)
 	break;
@@ -6020,8 +6019,8 @@ write_info (unsigned long info_size)
       ptr = write_die (ptr, cu->cu_die, NULL);
       assert (info + next_off == ptr);
     }
-  assert (info + info_size == ptr);
-  return info;
+  assert (info + debug_sections[DEBUG_INFO].new_size == ptr);
+  debug_sections[DEBUG_INFO].new_data = info;
 }
 
 /* Adjust .debug_loc range determined by *SLOT, called through
@@ -6059,13 +6058,13 @@ adjust_loclist (void **slot, void *data __attribute__((unused)))
 }
 
 /* Create new .debug_loc section in malloced memory if .debug_loc
-   needs to be adjusted, return it, otherwise return NULL.  */
-static unsigned char *
+   needs to be adjusted.  */
+static void
 write_loc (void)
 {
   unsigned char *loc, *old;
   if (loc_htab == NULL)
-    return NULL;
+    return;
   loc = malloc (debug_sections[DEBUG_LOC].size);
   if (loc == NULL)
     dwz_oom ();
@@ -6074,20 +6073,19 @@ write_loc (void)
   debug_sections[DEBUG_LOC].data = loc;
   htab_traverse (loc_htab, adjust_loclist, NULL);
   debug_sections[DEBUG_LOC].data = old;
-  return loc;
+  debug_sections[DEBUG_LOC].new_data = loc;
 }
 
 /* Create new .debug_types section in malloced memory if abbrev
-   offsets in .debug_types need to be adjusted, return it, otherwise
-   return NULL.  */
-static unsigned char *
+   offsets in .debug_types need to be adjusted.  */
+static void
 write_types (void)
 {
   struct dw_cu *cu;
   unsigned char *types, *ptr;
 
   if (debug_sections[DEBUG_TYPES].data == NULL)
-    return NULL;
+    return;
   types = malloc (debug_sections[DEBUG_TYPES].size);
   if (types == NULL)
     dwz_oom ();
@@ -6101,27 +6099,27 @@ write_types (void)
       ptr = types + cu->cu_offset + 6;
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
     }
-  return types;
+  debug_sections[DEBUG_TYPES].new_data = types;
 }
 
-/* Construct new .gdb_index section in malloced memory,
-   return pointer to it.  */
-static unsigned char *
-write_gdb_index (unsigned long info_size, unsigned long *gdb_index_size)
+/* Construct new .gdb_index section in malloced memory
+   if it needs adjustment.  */
+static void
+write_gdb_index (void)
 {
   struct dw_cu *cu;
   unsigned char *gdb_index, *ptr, *inptr, *end;
   unsigned int ncus = 0, npus = 0, ver;
   unsigned int culistoff, cutypesoff, addressoff, symboloff, constoff;
 
-  *gdb_index_size = 0;
+  debug_sections[GDB_INDEX].new_size = 0;
   if (debug_sections[GDB_INDEX].data == NULL
       || debug_sections[GDB_INDEX].size < 0x18)
-    return NULL;
+    return;
   inptr = (unsigned char *) debug_sections[GDB_INDEX].data;
   ver = buf_read_ule32 (inptr);
   if (ver < 4 || ver > 6)
-    return NULL;
+    return;
 
   for (cu = first_cu; cu; cu = cu->cu_next)
     if (cu->cu_kind == CU_PU)
@@ -6145,18 +6143,19 @@ write_gdb_index (unsigned long info_size, unsigned long *gdb_index_size)
       || ((constoff - symboloff) & (constoff - symboloff - 1)) != 0
       || ((constoff - symboloff) & 7) != 0
       || debug_sections[GDB_INDEX].size < constoff)
-    return NULL;
+    return;
   inptr += 0x18;
   for (cu = first_cu; cu; cu = cu->cu_next)
     if (cu->cu_kind == CU_NORMAL)
       {
 	if (buf_read_ule64 (inptr) != cu->cu_offset)
-	  return NULL;
+	  return;
 	inptr += 16;
       }
 
-  *gdb_index_size = debug_sections[GDB_INDEX].size + npus * 16;
-  gdb_index = malloc (*gdb_index_size);
+  debug_sections[GDB_INDEX].new_size
+    = debug_sections[GDB_INDEX].size + npus * 16;
+  gdb_index = malloc (debug_sections[GDB_INDEX].new_size);
   if (gdb_index == NULL)
     dwz_oom ();
   /* Write new header.  */
@@ -6170,7 +6169,7 @@ write_gdb_index (unsigned long info_size, unsigned long *gdb_index_size)
   /* Write new CU list.  */
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
-      unsigned long next_off = info_size;
+      unsigned long next_off = debug_sections[DEBUG_INFO].new_size;
       if (cu->cu_kind == CU_TYPES)
 	break;
       if (cu->cu_next && cu->cu_next->cu_kind != CU_TYPES)
@@ -6214,8 +6213,8 @@ write_gdb_index (unsigned long info_size, unsigned long *gdb_index_size)
 	{
 	fail:
 	  free (gdb_index);
-	  *gdb_index_size = 0;
-	  return NULL;
+	  debug_sections[GDB_INDEX].new_size = 0;
+	  return;
 	}
       if (ptr[name] == '\0')
 	{
@@ -6241,7 +6240,7 @@ write_gdb_index (unsigned long info_size, unsigned long *gdb_index_size)
 			    buf_read_ule32 (end + cuvec + 4 + i) + npus);
 	}
     }
-  return gdb_index;
+  debug_sections[GDB_INDEX].new_data = gdb_index;
 }
 
 /* Return a string from section SEC at offset OFFSET.  */
@@ -6279,6 +6278,8 @@ read_dwarf (DSO *dso)
     {
       debug_sections[i].data = NULL;
       debug_sections[i].size = 0;
+      debug_sections[i].new_data = NULL;
+      debug_sections[i].new_size = 0;
       debug_sections[i].sec = 0;
     }
   ptr_size = 0;
@@ -6311,6 +6312,7 @@ read_dwarf (DSO *dso)
 		  assert (data->d_size == dso->shdr[i].sh_size);
 		  debug_sections[j].data = data->d_buf;
 		  debug_sections[j].size = data->d_size;
+		  debug_sections[j].new_size = data->d_size;
 		  debug_sections[j].sec = i;
 		  break;
 		}
@@ -6446,78 +6448,56 @@ error_out:
   return NULL;
 }
 
-/* Store new ELF into FILE.  ABBREV is the new .debug_abbrev
-   section (and ABBREV_SIZE its size), INFO is the new
-   .debug_info section (and INFO_SIZE its size), LOC and TYPES
-   are contents of new .debug_loc resp. debug_types sections if
-   any adjustments are needed.  */
+/* Store new ELF into FILE.  debug_sections array contains
+   new_data/new_size pairs where needed.  */
 static int
-write_dso (DSO *dso, const char *file, unsigned char *abbrev,
-	   unsigned long abbrev_size, unsigned char *info,
-	   unsigned long info_size, unsigned char *loc,
-	   unsigned char *types, unsigned char *gdb_index,
-	   unsigned long gdb_index_size, struct stat *st)
+write_dso (DSO *dso, const char *file, struct stat *st)
 {
   Elf *elf = NULL;
   GElf_Ehdr ehdr;
   char *e_ident;
-  int fd, i;
+  int fd, i, j;
   GElf_Off off, diff;
   char *filename = NULL;
   bool remove_gdb_index = false;
 
   ehdr = dso->ehdr;
-  diff = (GElf_Off) abbrev_size
-	 - (GElf_Off) dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_size;
-  off = dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_offset;
-  for (i = 1; i < dso->ehdr.e_shnum; ++i)
-    if (dso->shdr[i].sh_offset > off)
-      dso->shdr[i].sh_offset += diff;
-  if (ehdr.e_shoff > off)
-    ehdr.e_shoff += diff;
-  dso->shdr[debug_sections[DEBUG_ABBREV].sec].sh_size += diff;
-  diff = (GElf_Off) info_size
-	 - (GElf_Off) dso->shdr[debug_sections[DEBUG_INFO].sec].sh_size;
-  off = dso->shdr[debug_sections[DEBUG_INFO].sec].sh_offset;
-  for (i = 1; i < dso->ehdr.e_shnum; ++i)
-    if (dso->shdr[i].sh_offset > off)
-      dso->shdr[i].sh_offset += diff;
-  if (ehdr.e_shoff > off)
-    ehdr.e_shoff += diff;
-  dso->shdr[debug_sections[DEBUG_INFO].sec].sh_size += diff;
-  if (debug_sections[GDB_INDEX].data)
-    {
-      diff = (GElf_Off) gdb_index_size
-	     - (GElf_Off) dso->shdr[debug_sections[GDB_INDEX].sec].sh_size;
-      off = dso->shdr[debug_sections[GDB_INDEX].sec].sh_offset;
-      for (i = 1; i < dso->ehdr.e_shnum; ++i)
-	if (dso->shdr[i].sh_offset > off)
-	  dso->shdr[i].sh_offset += diff;
-      if (ehdr.e_shoff > off)
-	ehdr.e_shoff += diff;
-      dso->shdr[debug_sections[GDB_INDEX].sec].sh_size += diff;
-      remove_gdb_index = gdb_index == NULL;
-      if (remove_gdb_index)
-	{
-	  ehdr.e_shnum--;
-	  for (i = 1; i < dso->ehdr.e_shnum; ++i)
-	    {
-	      if (dso->shdr[i].sh_offset > ehdr.e_shoff)
-		dso->shdr[i].sh_offset -= ehdr.e_shentsize;
-	      if (dso->shdr[i].sh_link
-		  > (unsigned int) debug_sections[GDB_INDEX].sec)
-		dso->shdr[i].sh_link--;
-	      if ((dso->shdr[i].sh_type == SHT_REL
-		   || dso->shdr[i].sh_type == SHT_RELA
-		   || (dso->shdr[i].sh_flags & SHF_INFO_LINK))
-		  && dso->shdr[i].sh_info
-		     > (unsigned int) debug_sections[GDB_INDEX].sec)
-		dso->shdr[i].sh_info--;
-	    }
-	  if (ehdr.e_shstrndx > debug_sections[GDB_INDEX].sec)
-	    ehdr.e_shstrndx--;
-	}
-    }
+  for (i = 0; debug_sections[i].name; i++)
+    if (debug_sections[i].new_size != debug_sections[i].size)
+      {
+	diff = (GElf_Off) debug_sections[i].new_size
+	       - (GElf_Off) dso->shdr[debug_sections[i].sec].sh_size;
+	off = dso->shdr[debug_sections[i].sec].sh_offset;
+	for (j = 1; j < dso->ehdr.e_shnum; ++j)
+	  if (dso->shdr[j].sh_offset > off)
+	    dso->shdr[j].sh_offset += diff;
+	if (ehdr.e_shoff > off)
+	  ehdr.e_shoff += diff;
+	dso->shdr[debug_sections[i].sec].sh_size
+	  = debug_sections[i].new_size;
+	if (i == GDB_INDEX
+	    && debug_sections[i].new_size == 0)
+	  {
+	    remove_gdb_index = true;
+	    ehdr.e_shnum--;
+	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
+	      {
+		if (dso->shdr[j].sh_offset > ehdr.e_shoff)
+		  dso->shdr[j].sh_offset -= ehdr.e_shentsize;
+		if (dso->shdr[j].sh_link
+		    > (unsigned int) debug_sections[i].sec)
+		  dso->shdr[j].sh_link--;
+		if ((dso->shdr[j].sh_type == SHT_REL
+		     || dso->shdr[j].sh_type == SHT_RELA
+		     || (dso->shdr[j].sh_flags & SHF_INFO_LINK))
+		    && dso->shdr[j].sh_info
+		       > (unsigned int) debug_sections[i].sec)
+		  dso->shdr[j].sh_info--;
+	      }
+	    if (ehdr.e_shstrndx > debug_sections[i].sec)
+	      ehdr.e_shstrndx--;
+	  }
+      }
 
   if (file == NULL)
     {
@@ -6604,25 +6584,16 @@ write_dso (DSO *dso, const char *file, unsigned char *abbrev,
       data1 = elf_getdata (dso->scn[i], NULL);
       data2 = elf_newdata (scn);
       memcpy (data2, data1, sizeof (*data1));
-      if (i == debug_sections[DEBUG_ABBREV].sec)
-	{
-	  data2->d_buf = abbrev;
-	  data2->d_size = dso->shdr[i].sh_size;
-	}
-      else if (i == debug_sections[DEBUG_INFO].sec)
-	{
-	  data2->d_buf = info;
-	  data2->d_size = dso->shdr[i].sh_size;
-	}
-      else if (loc != NULL && i == debug_sections[DEBUG_LOC].sec)
-	data2->d_buf = loc;
-      else if (types != NULL && i == debug_sections[DEBUG_TYPES].sec)
-	data2->d_buf = types;
-      else if (i == debug_sections[GDB_INDEX].sec)
-	{
-	  data2->d_buf = gdb_index;
-	  data2->d_size = dso->shdr[i].sh_size;
-	}
+      for (j = 0; debug_sections[j].name; j++)
+	if (i == debug_sections[j].sec)
+	  {
+	    if (debug_sections[j].new_data != NULL)
+	      {
+		data2->d_buf = debug_sections[j].new_data;
+		data2->d_size = dso->shdr[i].sh_size;
+	      }
+	    break;
+	  }
     }
 
   if (elf_update (elf, ELF_C_WRITE_MMAP) == -1)
@@ -6706,12 +6677,6 @@ dwz (const char *file, const char *outfile)
   DSO *dso;
   int ret = 0, fd;
   unsigned int i;
-  unsigned long new_debug_info_size, new_debug_abbrev_size, new_gdb_index_size;
-  unsigned char * volatile new_debug_abbrev = NULL;
-  unsigned char * volatile new_debug_info = NULL;
-  unsigned char * volatile new_debug_loc = NULL;
-  unsigned char * volatile new_debug_types = NULL;
-  unsigned char * volatile new_gdb_index = NULL;
   struct stat st;
 
   fd = open (file, O_RDONLY);
@@ -6737,12 +6702,6 @@ dwz (const char *file, const char *outfile)
       error (0, ENOMEM, "%s: Could not allocate memory", dso->filename);
 
       cleanup ();
-
-      free (new_debug_info);
-      free (new_debug_abbrev);
-      free (new_debug_loc);
-      free (new_debug_types);
-      free (new_gdb_index);
       ret = 1;
     }
   else
@@ -6754,10 +6713,10 @@ dwz (const char *file, const char *outfile)
 	  || partition_dups ()
 	  || create_import_tree ()
 	  || read_debug_types (dso)
-	  || compute_abbrevs (dso, &new_debug_info_size,
-			      &new_debug_abbrev_size))
+	  || compute_abbrevs (dso))
 	ret = 1;
-      else if (new_debug_info_size + new_debug_abbrev_size
+      else if (debug_sections[DEBUG_INFO].new_size
+	       + debug_sections[DEBUG_ABBREV].new_size
 	       >= debug_sections[DEBUG_INFO].size
 		  + debug_sections[DEBUG_ABBREV].size)
 	{
@@ -6765,31 +6724,22 @@ dwz (const char *file, const char *outfile)
 		       "- old size %ld new size %ld", dso->filename,
 		 (unsigned long) (debug_sections[DEBUG_INFO].size
 				  + debug_sections[DEBUG_ABBREV].size),
-		 new_debug_info_size + new_debug_abbrev_size);
+		 (unsigned long) (debug_sections[DEBUG_INFO].new_size
+				  + debug_sections[DEBUG_ABBREV].new_size));
 	  ret = 1;
 	}
       else
 	{
-	  new_debug_abbrev = write_abbrev (new_debug_abbrev_size);
-	  new_debug_info = write_info (new_debug_info_size);
-	  new_debug_loc = write_loc ();
-	  new_debug_types = write_types ();
-	  new_gdb_index
-	    = write_gdb_index (new_debug_info_size, &new_gdb_index_size);
+	  write_abbrev ();
+	  write_info ();
+	  write_loc ();
+	  write_types ();
+	  write_gdb_index ();
 
 	  cleanup ();
 
-	  if (write_dso (dso, outfile, new_debug_abbrev, new_debug_abbrev_size,
-			 new_debug_info, new_debug_info_size, new_debug_loc,
-			 new_debug_types, new_gdb_index, new_gdb_index_size,
-			 &st))
+	  if (write_dso (dso, outfile, &st))
 	    ret = 1;
-
-	  free (new_debug_info);
-	  free (new_debug_abbrev);
-	  free (new_debug_loc);
-	  free (new_debug_types);
-	  free (new_gdb_index);
 	}
     }
 
@@ -6797,6 +6747,9 @@ dwz (const char *file, const char *outfile)
     {
       debug_sections[i].data = NULL;
       debug_sections[i].size = 0;
+      free (debug_sections[i].new_data);
+      debug_sections[i].new_data = NULL;
+      debug_sections[i].new_size = 0;
       debug_sections[i].sec = 0;
     }
 
