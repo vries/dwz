@@ -762,6 +762,7 @@ read_debug_line (DSO *dso, struct dw_cu *cu, uint32_t off)
   unsigned char *endsec = ptr + debug_sections[DEBUG_LINE].size;
   unsigned char *endcu, *endprol;
   unsigned char opcode_base;
+  unsigned int culen;
   uint32_t value, dirt_cnt, file_cnt;
 
   if (off >= debug_sections[DEBUG_LINE].size - 4)
@@ -774,12 +775,13 @@ read_debug_line (DSO *dso, struct dw_cu *cu, uint32_t off)
   ptr += off;
 
   endcu = ptr + 4;
-  endcu += read_32 (ptr);
-  if (endcu == ptr + 0xffffffff)
+  culen = read_32 (ptr);
+  if (culen >= 0xfffffff0)
     {
       error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
       return 1;
     }
+  endcu += culen;
 
   if (endcu > endsec)
     {
@@ -2809,7 +2811,7 @@ read_debug_info (DSO *dso)
   while (ptr < endsec)
     {
       unsigned int cu_offset = ptr - debug_sections[DEBUG_INFO].data;
-      unsigned int tick = 0;
+      unsigned int tick = 0, culen;
       int cu_version;
       struct dw_cu *cu;
       dw_die_ref *diep, parent, die;
@@ -2823,12 +2825,13 @@ read_debug_info (DSO *dso)
 	}
 
       endcu = ptr + 4;
-      endcu += read_32 (ptr);
-      if (endcu == ptr + 0xffffffff)
+      culen = read_32 (ptr);
+      if (culen >= 0xfffffff0)
 	{
 	  error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
 	  goto fail;
 	}
+      endcu += culen;
 
       if (endcu > endsec)
 	{
@@ -4214,7 +4217,7 @@ read_debug_types (DSO *dso)
   endsec = ptr + debug_sections[DEBUG_TYPES].size;
   while (ptr < endsec)
     {
-      unsigned int cu_offset = ptr - debug_sections[DEBUG_TYPES].data;
+      unsigned int cu_offset = ptr - debug_sections[DEBUG_TYPES].data, culen;
       int cu_version;
       struct dw_cu *cu;
 
@@ -4225,12 +4228,13 @@ read_debug_types (DSO *dso)
 	}
 
       endcu = ptr + 4;
-      endcu += read_32 (ptr);
-      if (endcu == ptr + 0xffffffff)
+      culen = read_32 (ptr);
+      if (culen >= 0xfffffff0)
 	{
 	  error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
 	  return 1;
 	}
+      endcu += culen;
 
       if (endcu > endsec)
 	{
@@ -6033,7 +6037,7 @@ adjust_loclist (void **slot, void *data __attribute__((unused)))
   GElf_Addr low, high;
   size_t len;
 
-  ptr = debug_sections[DEBUG_LOC].data + adj->start_offset;
+  ptr = debug_sections[DEBUG_LOC].new_data + adj->start_offset;
   endsec = ptr + debug_sections[DEBUG_LOC].size;
   while (ptr < endsec)
     {
@@ -6062,18 +6066,15 @@ adjust_loclist (void **slot, void *data __attribute__((unused)))
 static void
 write_loc (void)
 {
-  unsigned char *loc, *old;
+  unsigned char *loc;
   if (loc_htab == NULL)
     return;
   loc = malloc (debug_sections[DEBUG_LOC].size);
   if (loc == NULL)
     dwz_oom ();
-  old = debug_sections[DEBUG_LOC].data;
-  memcpy (loc, old, debug_sections[DEBUG_LOC].size);
-  debug_sections[DEBUG_LOC].data = loc;
-  htab_traverse (loc_htab, adjust_loclist, NULL);
-  debug_sections[DEBUG_LOC].data = old;
+  memcpy (loc, debug_sections[DEBUG_LOC].data, debug_sections[DEBUG_LOC].size);
   debug_sections[DEBUG_LOC].new_data = loc;
+  htab_traverse (loc_htab, adjust_loclist, NULL);
 }
 
 /* Create new .debug_types section in malloced memory if abbrev
@@ -6100,6 +6101,87 @@ write_types (void)
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
     }
   debug_sections[DEBUG_TYPES].new_data = types;
+}
+
+/* Construct new .debug_aranges section in malloced memory,
+   store it to debug_sections[DEBUG_ARANGES].new_data.  */
+static int
+write_aranges (DSO *dso)
+{
+  struct dw_cu *cu, *cufirst = NULL, *cucur;
+  unsigned char *aranges, *ptr, *end;
+
+  if (debug_sections[DEBUG_ARANGES].data == NULL)
+    return 0;
+
+  aranges = malloc (debug_sections[DEBUG_ARANGES].size);
+  if (aranges == NULL)
+    dwz_oom ();
+  memcpy (aranges, debug_sections[DEBUG_ARANGES].data,
+	  debug_sections[DEBUG_ARANGES].size);
+  debug_sections[DEBUG_ARANGES].new_data = aranges;
+  ptr = aranges;
+  end = aranges + debug_sections[DEBUG_ARANGES].size;
+  for (cu = first_cu; cu; cu = cu->cu_next)
+    if (cu->cu_kind != CU_PU)
+      break;
+  cufirst = cu;
+  while (ptr < end)
+    {
+      unsigned int culen, value, cuoff;
+
+      if (end - ptr < 12)
+	{
+	  error (0, 0, "%s: Corrupted .debug_aranges section",
+		 dso->filename);
+	  return 1;
+	}
+      culen = read_32 (ptr);
+      if (culen >= 0xfffffff0)
+	{
+	  error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
+	  return 1;
+	}
+
+      value = read_16 (ptr);
+      if (value != 2)
+	{
+	  error (0, 0, "%s: DWARF version %d in .debug_aranges unhandled",
+		 dso->filename, value);
+	  return 1;
+	}
+
+      cuoff = read_32 (ptr);
+      cucur = cu;
+      /* Optimistically assume that .debug_aranges CU offsets only increase,
+	 otherwise this might be too expensive and need a hash table.  */
+      for (; cu; cu = cu->cu_next)
+	{
+	  if (cu->cu_kind == CU_TYPES)
+	    {
+	      cu = NULL;
+	      break;
+	    }
+	  else if (cu->cu_offset == cuoff)
+	    break;
+	}
+      if (cu == NULL)
+	{
+	  for (cu = cufirst; cu != cucur; cu = cu->cu_next)
+	    if (cu->cu_offset == cuoff)
+	      break;
+	  if (cu == cucur)
+	    {
+	      error (0, 0, "%s: Couldn't find CU for .debug_aranges "
+			   "offset 0x%x", dso->filename, cuoff);
+	      return 1;
+	    }
+	}
+      ptr -= 4;
+      write_32 (ptr, cu->cu_new_offset);
+      ptr += culen - 6;
+    }
+  return 0;
 }
 
 /* Construct new .gdb_index section in malloced memory
@@ -6714,7 +6796,10 @@ dwz (const char *file, const char *outfile)
 	  || create_import_tree ()
 	  || read_debug_types (dso)
 	  || compute_abbrevs (dso))
-	ret = 1;
+	{
+	  cleanup ();
+	  ret = 1;
+	}
       else if (debug_sections[DEBUG_INFO].new_size
 	       + debug_sections[DEBUG_ABBREV].new_size
 	       >= debug_sections[DEBUG_INFO].size
@@ -6726,6 +6811,12 @@ dwz (const char *file, const char *outfile)
 				  + debug_sections[DEBUG_ABBREV].size),
 		 (unsigned long) (debug_sections[DEBUG_INFO].new_size
 				  + debug_sections[DEBUG_ABBREV].new_size));
+	  cleanup ();
+	  ret = 1;
+	}
+      else if (write_aranges (dso))
+	{
+	  cleanup ();
 	  ret = 1;
 	}
       else
