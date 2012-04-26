@@ -1514,6 +1514,10 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_ranges:
 	  die->die_ck_state = CK_BAD;
 	  break;
+        case DW_AT_start_scope:
+	  if (form == DW_FORM_sec_offset)
+	    die->die_ck_state = CK_BAD;
+	  break;
 	case DW_AT_location:
 	case DW_AT_string_length:
 	case DW_AT_return_addr:
