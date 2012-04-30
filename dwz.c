@@ -677,17 +677,11 @@ read_abbrev (DSO *dso, unsigned char *ptr, bool debug_types)
   void **slot;
 
   if (debug_types)
-    h = htab_try_create (20, abbrev_hash, abbrev_eq2, NULL);
+    h = htab_try_create (50, abbrev_hash, abbrev_eq2, NULL);
   else
     h = htab_try_create (50, abbrev_hash, abbrev_eq, NULL);
   if (h == NULL)
-    {
-no_memory:
-      error (0, ENOMEM, "%s: Could not read .debug_abbrev", dso->filename);
-      if (h)
-	htab_delete (h);
-      return NULL;
-    }
+    dwz_oom ();
 
   while ((attr = read_uleb128 (ptr)) != 0)
     {
@@ -738,7 +732,10 @@ no_memory:
 	compute_abbrev_hash (t);
       slot = htab_find_slot_with_hash (h, t, t->hash, INSERT);
       if (slot == NULL)
-	goto no_memory;
+	{
+	  htab_delete (h);
+	  dwz_oom ();
+	}
       if (*slot != NULL)
 	{
 	  error (0, 0, "%s: Duplicate DWARF abbreviation %d", dso->filename,
@@ -926,16 +923,12 @@ off_htab_add_die (dw_die_ref die)
     {
       off_htab = htab_try_create (100000, off_hash, off_eq, NULL);
       if (off_htab == NULL)
-	{
-	no_memory:
-	  error (0, ENOMEM, "Not enough memory");
-	  return 1;
-	}
+	dwz_oom ();
     }
 
   slot = htab_find_slot (off_htab, die, INSERT);
   if (slot == NULL)
-    goto no_memory;
+    dwz_oom ();
   assert (*slot == NULL);
   *slot = die;
   return 0;
@@ -1267,7 +1260,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	case DW_OP_GNU_entry_value:
 	  {
 	    uint32_t leni = read_uleb128 (ptr);
-	    if ((end - ptr) < leni)
+	    if ((uint64_t) (end - ptr) < leni)
 	      {
 		error (0, 0, "%s: DWARF DW_OP_GNU_entry_value with too large"
 		       " length", dso->filename);
@@ -1416,16 +1409,11 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
 	{
 	  loc_htab = htab_try_create (50, loc_hash, loc_eq, NULL);
 	  if (loc_htab == NULL)
-	    {
-	    no_memory:
-	      error (0, ENOMEM, "%s: can't record .debug_loc adjustments",
-		     dso->filename);
-	      return 1;
-	    }
+	    dwz_oom ();
 	}
       slot = htab_find_slot_with_hash (loc_htab, &adj, adj.end_offset, INSERT);
       if (slot == NULL)
-	goto no_memory;
+	dwz_oom ();
       if (*slot == NULL)
 	{
 	  a = pool_alloc (debug_loc_adjust, sizeof (*a));
@@ -1514,7 +1502,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_ranges:
 	  die->die_ck_state = CK_BAD;
 	  break;
-        case DW_AT_start_scope:
+	case DW_AT_start_scope:
 	  if (form == DW_FORM_sec_offset)
 	    die->die_ck_state = CK_BAD;
 	  break;
@@ -2761,10 +2749,7 @@ find_dups (dw_die_ref parent)
 					   child->u.p1.die_ref_hash,
 					   INSERT);
 	  if (slot == NULL)
-	    {
-	      error (0, ENOMEM, "Not enough memory to find duplicates");
-	      return 1;
-	    }
+	    dwz_oom ();
 	  if (*slot == NULL)
 	    *slot = child;
 	}
@@ -2805,10 +2790,7 @@ read_debug_info (DSO *dso)
 
   dup_htab = htab_try_create (100000, die_hash, die_eq, NULL);
   if (dup_htab == NULL)
-    {
-      error (0, ENOMEM, "Not enough memory");
-      return 1;
-    }
+    dwz_oom ();
 
   ptr = debug_sections[DEBUG_INFO].data;
   endsec = ptr + debug_sections[DEBUG_INFO].size;
@@ -4660,10 +4642,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
   compute_abbrev_hash (t);
   slot = htab_find_slot_with_hash (h, t, t->hash, INSERT);
   if (slot == NULL)
-    {
-      error (0, ENOMEM, "Could not compute .debug_abbrev");
-      return 1;
-    }
+    dwz_oom ();
   if (*slot)
     {
       ((struct abbrev_tag *)*slot)->nusers++;
@@ -4703,10 +4682,7 @@ build_abbrevs (struct dw_cu *cu, struct abbrev_tag *t, unsigned int *ndies,
   htab_t h = htab_try_create (50, abbrev_hash, abbrev_eq2, NULL);
 
   if (h == NULL)
-    {
-      error (0, ENOMEM, "Could not compute .debug_abbrev");
-      return 1;
-    }
+    dwz_oom ();
 
   if (build_abbrevs_for_die (h, cu->cu_die, NULL, t, ndies, vec))
     return 1;
@@ -4949,7 +4925,7 @@ compute_abbrevs (DSO *dso)
       obstack_alloc (&alt_ob,
 		     sizeof (*t)
 		     + (max_nattr + 4) * sizeof (struct abbrev_attr));
-  for (cu = first_cu, ncus = 0; cu; cu = cu->cu_next, ncus++)
+  for (cu = first_cu, ncus = 0; cu; cu = cu->cu_next)
     {
       unsigned int intracu, ndies = 0, tagsize = 0, nchildren = 0;
       unsigned int nabbrevs, diesize, cusize, off, intracusize;
@@ -4961,10 +4937,8 @@ compute_abbrevs (DSO *dso)
       if (cu->cu_kind == CU_TYPES)
 	{
 	  if (cu->u1.cu_new_abbrev_owner != NULL)
-	    {
-	      ncus--;
-	      continue;
-	    }
+	    continue;
+	  ncus++;
 	  if (htab_elements (cu->cu_new_abbrev) >= 128)
 	    nlargeabbrevs++;
 	  cu->u2.cu_largest_entry = 0;
@@ -4972,6 +4946,7 @@ compute_abbrevs (DSO *dso)
 			 &cu->u2.cu_largest_entry);
 	  continue;
 	}
+      ncus++;
       if (build_abbrevs (cu, t, &ndies, &alt_ob))
 	return 1;
       nabbrevs = htab_elements (cu->cu_new_abbrev);
@@ -5117,10 +5092,7 @@ compute_abbrevs (DSO *dso)
 	      slot = htab_find_slot_with_hash (cu->cu_new_abbrev, arr[i],
 					       arr[i]->hash, INSERT);
 	      if (slot == NULL)
-		{
-		  error (0, ENOMEM, "Could not compute .debug_abbrev");
-		  return 1;
-		}
+		dwz_oom ();
 	      assert (slot != NULL && *slot == NULL);
 	      *slot = arr[i];
 	    }
@@ -5200,10 +5172,7 @@ compute_abbrevs (DSO *dso)
 						arr[k], arr[k]->hash,
 						INSERT);
 		  if (slot == NULL)
-		    {
-		      error (0, ENOMEM, "Could not compute .debug_abbrev");
-		      return 1;
-		    }
+		    dwz_oom ();
 		  if (*slot != NULL)
 		    arr[k]->entry = ((struct abbrev_tag *) *slot)->entry;
 		  else
@@ -5322,10 +5291,7 @@ compute_abbrevs (DSO *dso)
 						arr[k], arr[k]->hash,
 						INSERT);
 		  if (slot == NULL)
-		    {
-		      error (0, ENOMEM, "Could not compute .debug_abbrev");
-		      return 1;
-		    }
+		    dwz_oom ();
 		  if (*slot != NULL)
 		    arr[k]->entry = ((struct abbrev_tag *) *slot)->entry;
 		  else
@@ -5428,6 +5394,7 @@ write_abbrev (void)
 
   if (abbrev == NULL)
     dwz_oom ();
+  debug_sections[DEBUG_ABBREV].new_data = abbrev;
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       struct abbrev_tag **arr;
@@ -5459,7 +5426,6 @@ write_abbrev (void)
       cu->cu_new_abbrev = NULL;
     }
   assert (abbrev + debug_sections[DEBUG_ABBREV].new_size == ptr);
-  debug_sections[DEBUG_ABBREV].new_data = abbrev;
 }
 
 /* Adjust DWARF expression starting at PTR, LEN bytes long, referenced by
@@ -5601,7 +5567,7 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	  break;
 	case DW_OP_GNU_entry_value:
 	  leni = read_uleb128 (ptr);
-	  assert ((end - ptr) >= leni);
+	  assert ((uint64_t) (end - ptr) >= leni);
 	  adjust_exprloc (die, ref, ptr, leni);
 	  ptr += leni;
 	  break;
@@ -5660,6 +5626,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 {
   uint64_t low_pc = 0;
   dw_die_ref child, sib = NULL;
+  struct abbrev_tag *t;
+
   if (die->die_remove)
     return ptr;
   if (die->die_offset == -1U)
@@ -5675,7 +5643,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
     for (sib = die->die_sib; sib; sib = sib->die_sib)
       if (!sib->die_remove)
 	break;
-  write_uleb128 (ptr, die->u.p2.die_new_abbrev->entry);
+  t = die->u.p2.die_new_abbrev;
+  write_uleb128 (ptr, t->entry);
   if (ref)
     {
       unsigned char *inptr = debug_sections[DEBUG_INFO].data
@@ -5699,6 +5668,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	    case DW_FORM_ref_addr:
 	      {
 		dw_die_ref refd, refdt;
+		memcpy (ptr, orig_ptr, inptr - orig_ptr);
+		ptr += inptr - orig_ptr;
 		value = read_size (inptr, ref->die_cu->cu_version == 2
 					  ? ptr_size : 4);
 		inptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
@@ -5722,11 +5693,10 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      if (reft->attr[i].attr == DW_AT_low_pc)
 		low_pc = read_size (inptr - ptr_size, ptr_size);
 	      if (reft->attr[i].attr == DW_AT_high_pc
-		  && die->u.p2.die_new_abbrev->attr[j].form
-		     != reft->attr[i].form)
+		  && t->attr[j].form != reft->attr[i].form)
 		{
 		  uint64_t high_pc = read_size (inptr - ptr_size, ptr_size);
-		  switch (die->u.p2.die_new_abbrev->attr[j].form)
+		  switch (t->attr[j].form)
 		    {
 		    case DW_FORM_udata:
 		      write_uleb128 (ptr, high_pc - low_pc);
@@ -5804,9 +5774,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		}
 	      if (reft->attr[i].attr == DW_AT_sibling)
 		{
-		  if (j == die->u.p2.die_new_abbrev->nattr
-		      || die->u.p2.die_new_abbrev->attr[j].attr
-			 != DW_AT_sibling)
+		  if (j == t->nattr
+		      || t->attr[j].attr != DW_AT_sibling)
 		    continue;
 		  assert (sib);
 		  value = sib->u.p2.die_new_offset;
@@ -5827,13 +5796,12 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		  else if (refdt->die_dup)
 		    refd = die_find_dup (refdt, refdt->die_dup, refd);
 		  value = refd->u.p2.die_new_offset;
-		  if (die->u.p2.die_new_abbrev->attr[j].form
-		      == DW_FORM_ref_addr)
+		  if (t->attr[j].form == DW_FORM_ref_addr)
 		    value += refd->die_cu->cu_new_offset;
 		  else
 		    assert (refd->die_cu == die->die_cu);
 		}
-	      switch (die->u.p2.die_new_abbrev->attr[j].form)
+	      switch (t->attr[j].form)
 		{
 		case DW_FORM_ref1: write_8 (ptr, value); break;
 		case DW_FORM_ref2: write_16 (ptr, value); break;
@@ -5894,15 +5862,15 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	    adjust_exprloc (die, ref, ptr - len, len);
 	  j++;
 	}
-      assert (j == die->u.p2.die_new_abbrev->nattr);
+      assert (j == t->nattr);
     }
   else
     switch (die->die_tag)
       {
       case DW_TAG_partial_unit:
-	if (die->u.p2.die_new_abbrev->nattr == 0)
+	if (t->nattr == 0)
 	  break;
-	if (die->u.p2.die_new_abbrev->attr[0].attr == DW_AT_stmt_list)
+	if (t->attr[0].attr == DW_AT_stmt_list)
 	  {
 	    enum dwarf_form form;
 	    unsigned char *p = get_AT (die->die_nextdup,
@@ -5912,17 +5880,13 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	    memcpy (ptr, p, 4);
 	    ptr += 4;
 	  }
-	if (die->u.p2.die_new_abbrev->attr[die->u.p2.die_new_abbrev->nattr
-					   - 1].attr
-	    == DW_AT_comp_dir)
+	if (t->attr[t->nattr - 1].attr == DW_AT_comp_dir)
 	  {
 	    enum dwarf_form form;
 	    unsigned char *p = get_AT (die->die_nextdup,
 				       DW_AT_comp_dir, &form);
 	    assert (p);
-	    assert (form
-		    == die->u.p2.die_new_abbrev->attr
-		       [die->u.p2.die_new_abbrev->nattr - 1].form);
+	    assert (form == t->attr[t->nattr - 1].form);
 	    if (form == DW_FORM_strp)
 	      {
 		memcpy (ptr, p, 4);
@@ -5941,7 +5905,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	{
 	  enum dwarf_form form;
 	  unsigned char *p = get_AT (die->die_nextdup, DW_AT_name, &form);
-	  assert (p && (form == die->u.p2.die_new_abbrev->attr[0].form));
+	  assert (p && (form == t->attr[0].form));
 	  if (form == DW_FORM_strp)
 	    {
 	      memcpy (ptr, p, 4);
@@ -5953,10 +5917,10 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      memcpy (ptr, p, len);
 	      ptr += len;
 	    }
-	  if (die->u.p2.die_new_abbrev->nattr > 1)
+	  if (t->nattr > 1)
 	    {
 	      assert (sib);
-	      switch (die->u.p2.die_new_abbrev->attr[1].form)
+	      switch (t->attr[1].form)
 		{
 		case DW_FORM_ref1:
 		  write_8 (ptr, sib->u.p2.die_new_offset);
@@ -6011,6 +5975,7 @@ write_info (void)
 
   if (info == NULL)
     dwz_oom ();
+  debug_sections[DEBUG_INFO].new_data = info;
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       unsigned long next_off = debug_sections[DEBUG_INFO].new_size;
@@ -6028,7 +5993,6 @@ write_info (void)
       assert (info + next_off == ptr);
     }
   assert (info + debug_sections[DEBUG_INFO].new_size == ptr);
-  debug_sections[DEBUG_INFO].new_data = info;
 }
 
 /* Adjust .debug_loc range determined by *SLOT, called through
@@ -6094,6 +6058,7 @@ write_types (void)
   types = malloc (debug_sections[DEBUG_TYPES].size);
   if (types == NULL)
     dwz_oom ();
+  debug_sections[DEBUG_TYPES].new_data = types;
   memcpy (types, debug_sections[DEBUG_TYPES].data,
 	  debug_sections[DEBUG_TYPES].size);
   for (cu = first_cu; cu; cu = cu->cu_next)
@@ -6104,7 +6069,6 @@ write_types (void)
       ptr = types + cu->cu_offset + 6;
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
     }
-  debug_sections[DEBUG_TYPES].new_data = types;
 }
 
 /* Construct new .debug_aranges section in malloced memory,
@@ -6244,6 +6208,7 @@ write_gdb_index (void)
   gdb_index = malloc (debug_sections[GDB_INDEX].new_size);
   if (gdb_index == NULL)
     dwz_oom ();
+  debug_sections[GDB_INDEX].new_data = gdb_index;
   /* Write new header.  */
   buf_write_le32 (gdb_index + 0x00, ver);
   buf_write_le32 (gdb_index + 0x04, culistoff);
@@ -6326,7 +6291,6 @@ write_gdb_index (void)
 			    buf_read_ule32 (end + cuvec + 4 + i) + npus);
 	}
     }
-  debug_sections[GDB_INDEX].new_data = gdb_index;
 }
 
 /* Return a string from section SEC at offset OFFSET.  */
