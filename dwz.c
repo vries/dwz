@@ -360,8 +360,14 @@ static int multi_line_fd = -1, multi_str_fd = -1;
 /* Copy of one of the input file's ehdr.  */
 static GElf_Ehdr multi_ehdr;
 
+static int multi_ptr_size;
+static int multi_endian;
+
 /* True while in write_multifile.  */
-static bool do_multifile;
+static bool wr_multifile;
+
+/* True while in optimize_multifile.  */
+static bool op_multifile;
 
 /* Filename if inter-file size optimization should be performed.  */
 static const char *multifile;
@@ -2775,7 +2781,7 @@ calc_sizes (dw_die_ref die)
 {
   unsigned long ret = die->die_size;
   dw_die_ref child;
-  if (do_multifile ? die->die_no_multifile : die->die_remove)
+  if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return 0;
   for (child = die->die_child; child; child = child->die_sib)
     ret += calc_sizes (child);
@@ -2868,6 +2874,8 @@ note_strp_offset (unsigned int off)
     return;
   if (strp_htab == NULL)
     {
+      if (multifile == NULL)
+	return;
       strp_htab = htab_try_create (50, strp_hash, strp_eq, NULL);
       if (strp_htab == NULL)
 	dwz_oom ();
@@ -2914,7 +2922,7 @@ lookup_strp_offset (unsigned int off)
    for each CU in it construct internal represetnation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
 static int
-read_debug_info (DSO *dso)
+read_debug_info (DSO *dso, bool note_strp_forms)
 {
   unsigned char *ptr, *endcu, *endsec;
   unsigned int value;
@@ -3136,7 +3144,7 @@ read_debug_info (DSO *dso)
 		      && (die->die_parent->die_parent == NULL
 			  || die->die_parent->die_named_namespace))
 		    die->die_named_namespace = 1;
-		  if (multifile)
+		  if (note_strp_forms)
 		    note_strp_offset (read_32 (ptr));
 		  else
 		    ptr += 4;
@@ -4549,7 +4557,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
   die->u.p2.die_new_offset = 0;
   die->u.p2.die_intracu_udata_size = 0;
 
-  if (do_multifile ? die->die_no_multifile : die->die_remove)
+  if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return 0;
   t->entry = 0;
   t->tag = die->die_tag;
@@ -4568,13 +4576,13 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
   else
     {
       ref = die;
-      if (do_multifile
+      if (wr_multifile
 	  && (die->die_parent == NULL || die->die_named_namespace))
 	origin = die;
     }
   if (die->die_child && die->die_sib)
     for (sib = die->die_sib; sib; sib = sib->die_sib)
-      if (do_multifile ? !sib->die_no_multifile : !sib->die_remove)
+      if (wr_multifile ? !sib->die_no_multifile : !sib->die_remove)
 	break;
   if (ref != NULL && origin == NULL)
     {
@@ -4585,7 +4593,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
       read_uleb128 (ptr);
       /* No longer count the abbrev uleb128 size in die_size.
 	 We'll add it back after determining the new abbrevs.  */
-      if (do_multifile)
+      if (wr_multifile)
 	i = -1U;
       else
 	for (i = 0; i < reft->nattr; i++)
@@ -4636,7 +4644,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      while (form == DW_FORM_indirect)
 		form = read_uleb128 (ptr);
 
-	      if (do_multifile
+	      if (wr_multifile
 		  && (reft->attr[i].attr == DW_AT_decl_file
 		      || reft->attr[i].attr == DW_AT_call_file))
 		{
@@ -5032,7 +5040,7 @@ init_new_die_offsets (dw_die_ref die, unsigned int off,
   dw_die_ref child;
   unsigned int i;
   struct abbrev_tag *t = die->u.p2.die_new_abbrev;
-  if (do_multifile ? die->die_no_multifile : die->die_remove)
+  if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return off;
   die->u.p2.die_new_offset = off;
   die->die_size += size_of_uleb128 (die->u.p2.die_new_abbrev->entry);
@@ -5062,7 +5070,7 @@ update_new_die_offsets (dw_die_ref die, unsigned int off,
 			dw_die_ref **intracuvec)
 {
   dw_die_ref child;
-  if (do_multifile ? die->die_no_multifile : die->die_remove)
+  if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return off;
   assert (off <= die->u.p2.die_new_offset);
   die->u.p2.die_new_offset = off;
@@ -5098,7 +5106,7 @@ finalize_new_die_offsets (dw_die_ref die, unsigned int off,
 			  unsigned int intracusize, dw_die_ref **intracuvec)
 {
   dw_die_ref child;
-  if (do_multifile ? die->die_no_multifile : die->die_remove)
+  if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return off;
   die->u.p2.die_new_offset = off;
   /* As we aren't adjusting sizes of exprloc, if in the new layout
@@ -5114,7 +5122,7 @@ finalize_new_die_offsets (dw_die_ref die, unsigned int off,
      beginning of the CU and we try to preserve that, so this shouldn't
      trigger for GCC generated code.  */
   if (die->die_op_type_referenced
-      && !do_multifile
+      && !wr_multifile
       && size_of_uleb128 (off)
 	 > size_of_uleb128 (die->die_offset - die->die_cu->cu_offset))
     return -1U;
@@ -5184,6 +5192,7 @@ compute_abbrevs (DSO *dso)
   struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
   unsigned char *to_free = obstack_alloc (&alt_ob, 1);
+  bool saw_cu_normal = false;
 
   t = (struct abbrev_tag *)
       obstack_alloc (&alt_ob,
@@ -5225,7 +5234,7 @@ compute_abbrevs (DSO *dso)
 	  unsigned int limit, uleb128_size;
 
 	  for (child = cu->cu_die->die_child; child; child = child->die_sib)
-	    if (child->die_op_type_referenced && !do_multifile)
+	    if (child->die_op_type_referenced && !wr_multifile)
 	      {
 		child->u.p2.die_new_abbrev->op_type_referenced = 1;
 		/* If the old offset was close to uleb128 boundary, ensure
@@ -5363,9 +5372,16 @@ compute_abbrevs (DSO *dso)
 	}
       obstack_free (&ob, (void *) arr);
       obstack_free (&alt_ob, (void *) intracuarr);
-      cu->cu_new_offset = (do_multifile ? multi_info_off : 0) + total_size;
+      if (wr_multifile && cu->cu_kind == CU_NORMAL && !saw_cu_normal)
+	{
+	  total_size += 11;
+	  saw_cu_normal = true;
+	}
+      cu->cu_new_offset = (wr_multifile ? multi_info_off : 0) + total_size;
       total_size += cusize;
     }
+  if (wr_multifile)
+    total_size += saw_cu_normal ? 11 : 22;
   obstack_free (&alt_ob, (void *) t);
   cuarr = (struct dw_cu **) obstack_alloc (&alt_ob,
 					   ncus * sizeof (struct dw_cu *));
@@ -5593,7 +5609,7 @@ compute_abbrevs (DSO *dso)
 	  continue;
 	}
       cu->u2.cu_new_abbrev_offset
-	= (do_multifile ? multi_abbrev_off : 0) + abbrev_size;
+	= (wr_multifile ? multi_abbrev_off : 0) + abbrev_size;
       nabbrevs = htab_elements (cu->cu_new_abbrev);
       htab_traverse (cu->cu_new_abbrev, list_abbrevs, &ob);
       assert (obstack_object_size (&ob) == nabbrevs * sizeof (void *));
@@ -5893,7 +5909,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
   dw_die_ref child, sib = NULL, origin = NULL;
   struct abbrev_tag *t;
 
-  if (do_multifile ? die->die_no_multifile : die->die_remove)
+  if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return ptr;
   if (die->die_offset == -1U)
     {
@@ -5907,13 +5923,13 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
   else
     {
       ref = die;
-      if (do_multifile
+      if (wr_multifile
 	  && (die->die_parent == NULL || die->die_named_namespace))
 	origin = die;
     }
   if (die->die_child && die->die_sib)
     for (sib = die->die_sib; sib; sib = sib->die_sib)
-      if (do_multifile ? !sib->die_no_multifile : !sib->die_remove)
+      if (wr_multifile ? !sib->die_no_multifile : !sib->die_remove)
 	break;
   t = die->u.p2.die_new_abbrev;
   write_uleb128 (ptr, t->entry);
@@ -5935,7 +5951,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	  while (form == DW_FORM_indirect)
 	    form = read_uleb128 (inptr);
 
-	  if (do_multifile
+	  if (wr_multifile
 	      && (reft->attr[i].attr == DW_AT_decl_file
 		  || reft->attr[i].attr == DW_AT_call_file))
 	    {
@@ -6030,7 +6046,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      read_uleb128 (inptr);
 	      break;
 	    case DW_FORM_strp:
-	      if (do_multifile)
+	      if (wr_multifile)
 		{
 		  unsigned int strp = lookup_strp_offset (read_32 (inptr));
 		  memcpy (ptr, orig_ptr, inptr - 4 - orig_ptr);
@@ -6184,7 +6200,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	    unsigned char *p = get_AT (origin, DW_AT_stmt_list, &form);
 	    assert (p && (form == DW_FORM_sec_offset
 			  || form == DW_FORM_data4));
-	    if (do_multifile)
+	    if (wr_multifile)
 	      write_32 (ptr, multi_line_off);
 	    else
 	      {
@@ -6283,6 +6299,7 @@ write_info (void)
   struct dw_cu *cu;
   unsigned char *info = malloc (debug_sections[DEBUG_INFO].new_size);
   unsigned char *ptr = info;
+  bool saw_cu_normal = false;
 
   if (info == NULL)
     dwz_oom ();
@@ -6293,17 +6310,43 @@ write_info (void)
       /* Ignore .debug_types CUs.  */
       if (cu->cu_kind == CU_TYPES)
 	break;
+      if (wr_multifile && !saw_cu_normal && cu->cu_kind == CU_NORMAL)
+	{
+	  /* Emit a barrier separating CU_PUs from CU_NORMAL.  */
+	  write_32 (ptr, 7);
+	  write_16 (ptr, 2);
+	  write_32 (ptr, 0);
+	  write_8 (ptr, ptr_size);
+	  saw_cu_normal = true;
+	}
       if (cu->cu_next && cu->cu_next->cu_kind != CU_TYPES)
-	next_off = cu->cu_next->cu_new_offset;
-      else if (do_multifile)
-	next_off += multi_info_off;
+	{
+	  next_off = cu->cu_next->cu_new_offset;
+	  if (wr_multifile && !saw_cu_normal
+	      && cu->cu_next->cu_kind == CU_NORMAL)
+	    next_off -= 11L;
+	}
+      else if (wr_multifile)
+	next_off += multi_info_off - (saw_cu_normal ? 11L : 22L);
       /* Write CU header.  */
       write_32 (ptr, next_off - cu->cu_new_offset - 4);
       write_16 (ptr, cu->cu_version);
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
       write_8 (ptr, ptr_size);
       ptr = write_die (ptr, cu->cu_die, NULL);
-      assert (info + (next_off - (do_multifile ? multi_info_off : 0)) == ptr);
+      assert (info + (next_off - (wr_multifile ? multi_info_off : 0)) == ptr);
+    }
+  if (wr_multifile)
+    {
+      unsigned int i;
+      /* And terminate the contribution by the current object file.  */
+      for (i = 0; i < (saw_cu_normal ? 1 : 2); i++)
+	{
+	  write_32 (ptr, 7);
+	  write_16 (ptr, 2);
+	  write_32 (ptr, 0);
+	  write_8 (ptr, ptr_size);
+	}
     }
   assert (info + debug_sections[DEBUG_INFO].new_size == ptr);
 }
@@ -6637,16 +6680,6 @@ read_dwarf (DSO *dso)
   Elf_Scn *scn;
   int i, j;
 
-  for (i = 0; debug_sections[i].name; ++i)
-    {
-      debug_sections[i].data = NULL;
-      debug_sections[i].size = 0;
-      debug_sections[i].new_data = NULL;
-      debug_sections[i].new_size = 0;
-      debug_sections[i].sec = 0;
-    }
-  ptr_size = 0;
-
   for (i = 1; i < dso->ehdr.e_shnum; ++i)
     if (! (dso->shdr[i].sh_flags & (SHF_ALLOC | SHF_WRITE | SHF_EXECINSTR))
 	&& dso->shdr[i].sh_size)
@@ -6733,7 +6766,7 @@ read_dwarf (DSO *dso)
       return 1;
     }
 
-  if (read_debug_info (dso))
+  if (read_debug_info (dso, multifile != NULL))
     return 1;
 
   return 0;
@@ -7044,7 +7077,7 @@ cleanup (void)
   do_write_32 = NULL;
   do_write_64 = NULL;
   edge_freelist = NULL;
-  do_multifile = false;
+  wr_multifile = false;
   max_strp_off = 0;
   max_line_id = 0;
 }
@@ -7309,6 +7342,7 @@ write_multifile_line (void)
 	  filetbllen += size_of_uleb128 (filearr[i]->file->time);
 	  filetbllen += size_of_uleb128 (filearr[i]->file->size);
 	}
+      dirarr = (unsigned int *) obstack_finish (&ob);
     }
 
   len = 17 + filetbllen + dirtbllen;
@@ -7382,6 +7416,20 @@ write_multifile (void)
   bool any_cus = false;
   unsigned int i;
   int ret = 0;
+
+  if ((multi_ptr_size && ptr_size != multi_ptr_size)
+      || (multi_endian
+	  && multi_endian != (do_read_32 == buf_read_ule32
+			      ? ELFDATA2LSB : ELFDATA2MSB)))
+    {
+      error (0, 0, "Multi-file optimization not allowed for different"
+		   "pointer sizes or endianity");
+      multifile = NULL;
+      return 1;
+    }
+  multi_ptr_size = ptr_size;
+  multi_endian = do_read_32 == buf_read_ule32 ? ELFDATA2LSB : ELFDATA2MSB;
+
   for (i = 0; debug_sections[i].name; i++)
     {
       saved_new_data[i] = debug_sections[i].new_data;
@@ -7408,7 +7456,7 @@ write_multifile (void)
 	else
 	  *cup = (*cup)->cu_next;
       *cup = NULL;
-      do_multifile = true;
+      wr_multifile = true;
       if (compute_abbrevs (NULL))
 	ret = 1;
       else if ((unsigned int) (multi_info_off
@@ -7460,7 +7508,7 @@ write_multifile (void)
 	    }
 	}
     }
-  do_multifile = false;
+  wr_multifile = false;
   for (i = 0; debug_sections[i].name; i++)
     {
       free (debug_sections[i].new_data);
@@ -7588,6 +7636,7 @@ dwz (const char *file, const char *outfile)
 static int
 optimize_multifile (void)
 {
+  DSO dsobuf, *dso;
   int fd = -1;
   unsigned int i;
   Elf *elf = NULL;
@@ -7599,7 +7648,9 @@ optimize_multifile (void)
     = "\0.shstrtab\0.debug_info\0.debug_abbrev\0.debug_line\0.debug_str";
   const char *p;
 
-  if (multi_ehdr.e_ident[0] == '\0')
+  if (multi_ehdr.e_ident[0] == '\0'
+      || multi_ptr_size == 0
+      || multi_endian == 0)
     return 1;
 
   if ((multi_line_off == 0 && write_multifile_line ()))
@@ -7628,6 +7679,8 @@ optimize_multifile (void)
     {
       error (0, 0, "Error mmapping multi-file temporary files");
     fail:
+      op_multifile = false;
+      cleanup ();
       if (elf)
 	elf_end (elf);
       if (fd != -1)
@@ -7650,6 +7703,50 @@ optimize_multifile (void)
       return 1;
     }
 
+  if (multi_endian == ELFDATA2LSB)
+    {
+      do_read_16 = buf_read_ule16;
+      do_read_32 = buf_read_ule32;
+      do_read_64 = buf_read_ule64;
+      do_write_16 = buf_write_le16;
+      do_write_32 = buf_write_le32;
+      do_write_64 = buf_write_le64;
+    }
+  else if (multi_endian == ELFDATA2MSB)
+    {
+      do_read_16 = buf_read_ube16;
+      do_read_32 = buf_read_ube32;
+      do_read_64 = buf_read_ube64;
+      do_write_16 = buf_write_be16;
+      do_write_32 = buf_write_be32;
+      do_write_64 = buf_write_be64;
+    }
+  else
+    abort ();
+  ptr_size = multi_ptr_size;
+  memset (&dsobuf, '\0', sizeof (dsobuf));
+  dso = &dsobuf;
+  dso->filename = multifile;
+  op_multifile = true;
+
+  obstack_alloc_failed_handler = dwz_oom;
+  if (setjmp (oom_buf))
+    {
+      error (0, ENOMEM, "%s: Could not allocate memory", dso->filename);
+      op_multifile = false;
+      goto fail;
+    }
+  else
+    {
+      obstack_init (&ob);
+      obstack_init (&alt_ob);
+
+      if (0 && read_debug_info (dso, false))
+	goto fail;
+    }
+
+  op_multifile = false;
+  cleanup ();
   fd = open (multifile, O_RDWR | O_CREAT, 0600);
   if (fd < 0)
     {
@@ -7673,8 +7770,8 @@ optimize_multifile (void)
   for (i = 0; debug_sections[i].name; i++)
     if (debug_sections[i].size)
       {
-        multi_ehdr.e_shoff += debug_sections[i].size;
-        multi_ehdr.e_shnum++;
+	multi_ehdr.e_shoff += debug_sections[i].size;
+	multi_ehdr.e_shnum++;
       }
   multi_ehdr.e_shstrndx = multi_ehdr.e_shnum - 1;
 
