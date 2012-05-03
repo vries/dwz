@@ -6152,7 +6152,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		value = read_size (inptr, ref->die_cu->cu_version == 2
 					  ? ptr_size : 4);
 		inptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
-		refd = off_htab_lookup (ref->die_cu->cu_offset + value);
+		refd = off_htab_lookup (value);
 		assert (refd != NULL);
 		refdt = refd;
 		while (refdt->die_toplevel == 0)
