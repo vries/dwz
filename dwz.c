@@ -1,4 +1,5 @@
 /* Copyright (C) 2001-2012 Red Hat, Inc.
+   Copyright (C) 2003 Free Software Foundation, Inc.
    Written by Jakub Jelinek <jakub@redhat.com>, 2012.
 
    This program is free software; you can redistribute it and/or modify
@@ -39,6 +40,14 @@
 
 #ifndef IGNORE_LOCUS
 # define IGNORE_LOCUS 0
+#endif
+
+#if defined __GNUC__ && __GNUC__ >= 3
+#define likely(x) __builtin_expect (!!x, 1)
+#define unlikely(x) __builtin_expect (!!x, 0)
+#else
+#define likely(x) x
+#define unlikely(x) x
 #endif
 
 #define obstack_chunk_alloc     malloc
@@ -463,6 +472,11 @@ struct dw_cu
     } u2;
   /* Offset into the new .debug_info section.  */
   unsigned int cu_new_offset;
+  /* When op_multifile, record which object this came from here.
+     The least significant bit is clear for partial units added
+     by dwz, set for compilation units/partial units from original
+     debug info.  */
+  unsigned int cu_chunk;
 };
 
 /* Internal representation of a debugging information entry (DIE).
@@ -519,8 +533,8 @@ struct dw_die
   unsigned int die_ref_seen;
   union dw_die_phase
     {
-      /* Fields used in the first phase (read_debug_info and functions
-	 it calls).  */
+      /* Fields used in the first phase (read_debug_info and partition_dups
+	 and functions they call).  */
       struct dw_die_p1
 	{
 	  /* Iterative hash value of the tag, attributes other than
@@ -1500,7 +1514,8 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
   if (die->die_tag == DW_TAG_compile_unit
       || die->die_tag == DW_TAG_partial_unit
       || die->die_tag == DW_TAG_namespace
-      || die->die_tag == DW_TAG_module)
+      || die->die_tag == DW_TAG_module
+      || die->die_tag == DW_TAG_imported_unit)
     die->die_ck_state = CK_BAD;
   t = die->die_abbrev;
   ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
@@ -1655,6 +1670,32 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
       switch (form)
 	{
 	case DW_FORM_ref_addr:
+	  if (unlikely (op_multifile))
+	    {
+	      dw_die_ref ref;
+
+	      value = read_size (ptr, die->die_cu->cu_version == 2
+				      ? ptr_size : 4);
+	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	      if (die->die_ck_state != CK_BAD)
+		{
+		  s = t->attr[i].attr;
+		  die->u.p1.die_hash
+		    = iterative_hash_object (s, die->u.p1.die_hash);
+		}
+	      ref = off_htab_lookup (value);
+	      if (ref == NULL)
+		{
+		  error (0, 0, "%s: Couldn't find DIE referenced by DW_AT_%d",
+			 dso->filename, t->attr[i].attr);
+		  return 1;
+		}
+	      assert (die->die_cu != ref->die_cu
+		      && (die->die_cu->cu_chunk | 1)
+			 == (ref->die_cu->cu_chunk | 1));
+	      handled = true;
+	      break;
+	    }
 	  die->die_no_multifile = 1;
 	  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
 	  break;
@@ -1673,7 +1714,6 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	  break;
 	case DW_FORM_data4:
 	case DW_FORM_sec_offset:
-	case DW_FORM_strp:
 	  ptr += 4;
 	  break;
 	case DW_FORM_data8:
@@ -1731,6 +1771,27 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 		}
 	      handled = true;
 	    }
+	  break;
+	case DW_FORM_strp:
+	  if (unlikely (op_multifile) && die->die_ck_state != CK_BAD)
+	    {
+	      value = read_32 (ptr);
+	      if (value >= debug_sections[DEBUG_STR].size)
+		die->die_ck_state = CK_BAD;
+	      else
+		{
+		  unsigned char *p = debug_sections[DEBUG_STR].data + value;
+		  unsigned int l = strlen ((char *) p) + 1;
+		  s = t->attr[i].attr;
+		  die->u.p1.die_hash
+		    = iterative_hash_object (s, die->u.p1.die_hash);
+		  die->u.p1.die_hash
+		    = iterative_hash (p, l, die->u.p1.die_hash);
+		  handled = true;
+		}
+	    }
+	  else
+	    ptr += 4;
 	  break;
 	case DW_FORM_string:
 	  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
@@ -1983,6 +2044,10 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
     if (t->attr[i].attr != DW_AT_sibling)
       switch (t->attr[i].form)
 	{
+	case DW_FORM_ref_addr:
+	  if (unlikely (op_multifile))
+	    i = -2U;
+	  break;
 	case DW_FORM_ref_udata:
 	case DW_FORM_ref1:
 	case DW_FORM_ref2:
@@ -2009,6 +2074,17 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 	  switch (form)
 	    {
 	    case DW_FORM_ref_addr:
+	      if (unlikely (op_multifile))
+		{
+		  value = read_size (ptr, die->die_cu->cu_version == 2
+					  ? ptr_size : 4);
+		  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		  assert (t->attr[i].attr != DW_AT_sibling);
+		  if (top_die == NULL)
+		    break;
+		  ref = off_htab_lookup (value);
+		  goto finish_ref;
+		}
 	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    case DW_FORM_addr:
@@ -2056,6 +2132,7 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
 		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
 		break;
+	    finish_ref:
 	      reft = ref;
 	      while (reft->die_parent != NULL
 		     && reft->die_parent->die_tag != DW_TAG_compile_unit
@@ -2564,15 +2641,45 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  break;
 	}
 
-      if (form1 != form2)
-	FAIL;
-
       switch (form1)
 	{
 	case DW_FORM_ref_addr:
-	  ptr1 += die1->die_cu->cu_version == 2 ? ptr_size : 4;
-	  ptr2 += die2->die_cu->cu_version == 2 ? ptr_size : 4;
+	  if (likely (!op_multifile))
+	    {
+	      if (form1 != form2)
+		FAIL;
+	      break;
+	    }
+	  /* FALLTHRU */
+	case DW_FORM_ref_udata:
+	case DW_FORM_ref1:
+	case DW_FORM_ref2:
+	case DW_FORM_ref4:
+	case DW_FORM_ref8:
+	  switch (form2)
+	    {
+	    case DW_FORM_ref_addr:
+	      if (likely (!op_multifile))
+		FAIL;
+	      break;
+	    case DW_FORM_ref_udata:
+	    case DW_FORM_ref1:
+	    case DW_FORM_ref2:
+	    case DW_FORM_ref4:
+	    case DW_FORM_ref8:
+	      break;
+	    default:
+	      FAIL;
+	    }
 	  break;
+	default:
+	  if (form1 != form2)
+	    FAIL;
+	  break;
+	}
+
+      switch (form1)
+	{
 	case DW_FORM_addr:
 	  ptr1 += ptr_size;
 	  ptr2 += ptr_size;
@@ -2604,6 +2711,18 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  read_uleb128 (ptr2);
 	  break;
 	case DW_FORM_strp:
+	  if (unlikely (op_multifile))
+	    {
+	      value1 = read_32 (ptr1);
+	      value2 = read_32 (ptr2);
+	      if (strcmp ((char *) debug_sections[DEBUG_STR].data + value1,
+			  (char *) debug_sections[DEBUG_STR].data + value2)
+		  != 0)
+		FAIL;
+	      i++;
+	      j++;
+	      continue;
+	    }
 	  ptr1 += 4;
 	  ptr2 += 4;
 	  break;
@@ -2638,6 +2757,14 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  len = read_uleb128 (ptr2);
 	  ptr2 += len;
 	  break;
+	case DW_FORM_ref_addr:
+	  if (likely (!op_multifile))
+	    {
+	      ptr1 += die1->die_cu->cu_version == 2 ? ptr_size : 4;
+	      ptr2 += die2->die_cu->cu_version == 2 ? ptr_size : 4;
+	      break;
+	    }
+	  /* FALLTHRU */
 	case DW_FORM_ref_udata:
 	case DW_FORM_ref1:
 	case DW_FORM_ref2:
@@ -2645,37 +2772,65 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	case DW_FORM_ref8:
 	  switch (form1)
 	    {
+	    case DW_FORM_ref_addr:
+	      value1 = read_size (ptr1, die1->die_cu->cu_version == 2
+					? ptr_size : 4)
+		       - die1->die_cu->cu_offset;
+	      ptr1 += die1->die_cu->cu_version == 2 ? ptr_size : 4;
+	      break;
 	    case DW_FORM_ref_udata:
 	      value1 = read_uleb128 (ptr1);
-	      value2 = read_uleb128 (ptr2);
 	      break;
 	    case DW_FORM_ref1:
 	      value1 = read_8 (ptr1);
-	      value2 = read_8 (ptr2);
 	      break;
 	    case DW_FORM_ref2:
 	      value1 = read_16 (ptr1);
-	      value2 = read_16 (ptr2);
 	      break;
 	    case DW_FORM_ref4:
 	      value1 = read_32 (ptr1);
-	      value2 = read_32 (ptr2);
 	      break;
 	    case DW_FORM_ref8:
 	      value1 = read_64 (ptr1);
-	      value2 = read_64 (ptr2);
 	      break;
 	    default: abort ();
 	    }
 	  ref1 = off_htab_lookup (die1->die_cu->cu_offset + value1);
+	  switch (form2)
+	    {
+	    case DW_FORM_ref_addr:
+	      value2 = read_size (ptr2, die2->die_cu->cu_version == 2
+					? ptr_size : 4)
+		       - die2->die_cu->cu_offset;
+	      ptr2 += die2->die_cu->cu_version == 2 ? ptr_size : 4;
+	      break;
+	    case DW_FORM_ref_udata:
+	      value2 = read_uleb128 (ptr2);
+	      break;
+	    case DW_FORM_ref1:
+	      value2 = read_8 (ptr2);
+	      break;
+	    case DW_FORM_ref2:
+	      value2 = read_16 (ptr2);
+	      break;
+	    case DW_FORM_ref4:
+	      value2 = read_32 (ptr2);
+	      break;
+	    case DW_FORM_ref8:
+	      value2 = read_64 (ptr2);
+	      break;
+	    default: abort ();
+	    }
 	  ref2 = off_htab_lookup (die2->die_cu->cu_offset + value2);
 	  assert (ref1 != NULL && ref2 != NULL);
-	  if (ref1->u.p1.die_enter >= top_die1->u.p1.die_enter
+	  if (ref1->die_cu == top_die1->die_cu
+	      && ref1->u.p1.die_enter >= top_die1->u.p1.die_enter
 	      && ref1->u.p1.die_exit <= top_die1->u.p1.die_exit)
 	    {
 	      /* A reference into a subdie of the DIE being compared.  */
-	      if (ref1->u.p1.die_enter - top_die1->u.p1.die_enter
-		  != ref2->u.p1.die_enter - top_die2->u.p1.die_enter
+	      if (ref2->die_cu != top_die2->die_cu
+		  || ref1->u.p1.die_enter - top_die1->u.p1.die_enter
+		     != ref2->u.p1.die_enter - top_die2->u.p1.die_enter
 		  || top_die1->u.p1.die_exit - ref1->u.p1.die_exit
 		     != top_die2->u.p1.die_exit - ref2->u.p1.die_exit)
 		FAIL;
@@ -2693,7 +2848,8 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      /* If reft1 (die1 or whatever refers to it is already
 		 in the hash table) already has a dup, follow to that
 		 dup.  Don't do the same for reft2, {{top_,}die,reft,child}2
-		 should always be from the current CU.  */
+		 should always be from the current CU (or for
+		 op_multifile from the current chunk of CUs).  */
 	      if (reft1->die_dup)
 		reft1 = reft1->die_dup;
 	      if (die_eq_1 (reft1, reft2, reft1, reft2) == 0)
@@ -2909,13 +3065,47 @@ lookup_strp_offset (unsigned int off)
 {
   struct strp_entry *s, se;
 
+  if (unlikely (op_multifile))
+    {
+      unsigned char *p;
+      unsigned int len;
+      hashval_t hash;
+
+      assert (strp_htab);
+      p = debug_sections[DEBUG_STR].data + off;
+      len = strlen ((char *) p);
+      hash = iterative_hash (p, len, 0);
+      p = (unsigned char *) htab_find_with_hash (strp_htab, p, hash);
+      assert (p != NULL);
+      return p - debug_sections[DEBUG_STR].new_data;
+    }
   if (off >= debug_sections[DEBUG_STR].size || off == 0)
-    return off;
+    return off + multi_str_off;
   if (debug_sections[DEBUG_STR].data[off - 1] == '\0')
-    return off;
+    return off + multi_str_off;
   se.off = off;
   s = (struct strp_entry *) htab_find_with_hash (strp_htab, &se, off);
-  return s->new_off;
+  return s->new_off + multi_str_off;
+}
+
+static void
+note_strp_offset2 (unsigned int off)
+{
+  hashval_t hash;
+  struct strp_entry se;
+  unsigned char *p, *q;
+
+  if (off >= debug_sections[DEBUG_STR].size || off == 0)
+    return;
+  p = debug_sections[DEBUG_STR].data + off;
+  q = (unsigned char *) strchr ((char *) p, '\0');
+  hash = iterative_hash (p, q - p, 0);
+  se.off = off;
+  se.new_off = hash & ~1U;
+  struct strp_entry *s = (struct strp_entry *)
+			 htab_find_with_hash (strp_htab, &se, se.new_off);
+  assert (s != NULL);
+  s->new_off |= 1;
 }
 
 /* First phase of the DWARF compression.  Parse .debug_info section,
@@ -2929,6 +3119,8 @@ read_debug_info (DSO *dso, bool note_strp_forms)
   htab_t abbrev = NULL;
   unsigned int last_abbrev_offset = 0;
   struct abbrev_tag tag, *t;
+  unsigned int cu_chunk = 0;
+  struct dw_cu *cu_tail = NULL;
 
   dup_htab = htab_try_create (100000, die_hash, die_eq, NULL);
   if (dup_htab == NULL)
@@ -3003,6 +3195,36 @@ read_debug_info (DSO *dso, bool note_strp_forms)
 	  goto fail;
 	}
 
+      if (unlikely (op_multifile) && ptr == endcu)
+	{
+	  if ((cu_chunk++ & 1) == 1)
+	    {
+	      struct dw_cu *cuf = cu_tail ? cu_tail->cu_next : first_cu;
+	      /* Inside of optimize_multifile, DIE hashes are computed
+		 only after all the CUs from a particular DSO or
+		 executable have been parsed, as we follow
+		 DW_FORM_ref_addr then.  */
+	      for (cu = cuf; cu; cu = cu->cu_next)
+		if (checksum_die (dso, NULL, cu->cu_die))
+		  goto fail;
+
+	      for (cu = cuf; cu; cu = cu->cu_next)
+		checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
+
+#ifdef DEBUG_DUMP_DIES
+	      for (cu = cuf; cu; cu = cu->cu_next)
+		dump_dies (0, cu->cu_die);
+#endif
+
+	      for (cu = cuf; cu; cu = cu->cu_next)
+		if (find_dups (cu->cu_die))
+		  goto fail;
+
+	      cu_tail = last_cu;
+	    }
+	  continue;
+	}
+
       if (abbrev == NULL || value != last_abbrev_offset)
 	{
 	  if (abbrev)
@@ -3019,6 +3241,7 @@ read_debug_info (DSO *dso, bool note_strp_forms)
       cu->cu_kind = CU_NORMAL;
       cu->cu_offset = cu_offset;
       cu->cu_version = cu_version;
+      cu->cu_chunk = cu_chunk;
       diep = &cu->cu_die;
       parent = NULL;
       if (first_cu == NULL)
@@ -3236,16 +3459,19 @@ read_debug_info (DSO *dso, bool note_strp_forms)
       if (present && read_debug_line (dso, cu, debug_line_off))
 	goto fail;
 
-      if (checksum_die (dso, NULL, cu->cu_die))
-	goto fail;
-      checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
+      if (likely (!op_multifile))
+	{
+	  if (checksum_die (dso, NULL, cu->cu_die))
+	    goto fail;
+	  checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
 
 #ifdef DEBUG_DUMP_DIES
-      dump_dies (0, cu->cu_die);
+	  dump_dies (0, cu->cu_die);
 #endif
 
-      if (find_dups (cu->cu_die))
-	goto fail;
+	  if (find_dups (cu->cu_die))
+	    goto fail;
+	}
     }
 
   if (abbrev)
@@ -3271,7 +3497,7 @@ partition_cmp (const void *p, const void *q)
   dw_die_ref die2 = *(dw_die_ref *) q;
   dw_die_ref ref1, ref2;
   struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
-  for (ref1 = die1->die_nextdup, ref2 = die2->die_nextdup;;
+  for (ref1 = die1, ref2 = die2;;
        ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
     {
       while (ref1 && ref1->die_cu == last_cu1)
@@ -3367,6 +3593,10 @@ mark_refs (dw_die_ref top_die, dw_die_ref die)
     if (t->attr[i].attr != DW_AT_sibling)
       switch (t->attr[i].form)
 	{
+	case DW_FORM_ref_addr:
+	  if (unlikely (op_multifile))
+	    i = -2U;
+	  break;
 	case DW_FORM_ref_udata:
 	case DW_FORM_ref1:
 	case DW_FORM_ref2:
@@ -3393,6 +3623,15 @@ mark_refs (dw_die_ref top_die, dw_die_ref die)
 	  switch (form)
 	    {
 	    case DW_FORM_ref_addr:
+	      if (unlikely (op_multifile))
+		{
+		  value = read_size (ptr, die->die_cu->cu_version == 2
+					  ? ptr_size : 4);
+		  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		  assert (t->attr[i].attr != DW_AT_sibling);
+		  ref = off_htab_lookup (value);
+		  goto finish_ref;
+		}
 	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    case DW_FORM_addr:
@@ -3440,6 +3679,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die)
 	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
 		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
 		break;
+	    finish_ref:
 	      reft = ref;
 	      while (reft->die_parent != NULL
 		     && reft->die_parent->die_tag != DW_TAG_compile_unit
@@ -3512,7 +3752,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  dw_die_ref ref1, ref2;
 	  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
 	  size_t this_cnt = 0;
-	  for (ref1 = arr[i]->die_nextdup, ref2 = arr[j]->die_nextdup;;
+	  for (ref1 = arr[i], ref2 = arr[j];;
 	       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
 	    {
 	      while (ref1 && ref1->die_cu == last_cu1)
@@ -3535,7 +3775,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       if (cnt == 0)
 	{
 	  struct dw_cu *last_cu1 = NULL;
-	  for (ref = arr[i]->die_nextdup;; ref = ref->die_nextdup)
+	  for (ref = arr[i];; ref = ref->die_nextdup)
 	    {
 	      while (ref && ref->die_cu == last_cu1)
 		ref = ref->die_nextdup;
@@ -3565,7 +3805,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		 ref = ref->die_parent)
 	      ref->die_dup = NULL;
 	}
-      orig_size = size * (cnt + 1);
+      orig_size = size * cnt;
       /* Estimated size of CU header and DW_TAG_partial_unit
 	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
 	 21 (also child end byte), plus in each CU referencing it
@@ -3577,8 +3817,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	 DW_AT_sibling attribute and child end.  */
       new_size = size + 21
 		 + (arr[i]->die_cu->cu_version == 2
-		    ? 1 + ptr_size : 5) * (cnt + 1)
-		 + 10 * namespaces;
+		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
       if (orig_size > new_size || force)
 	{
 	  dw_die_ref die, *diep;
@@ -3685,6 +3924,15 @@ partition_dups (void)
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
       partition_find_dups (&alt_ob, cu->cu_die);
+      if (unlikely (op_multifile))
+	{
+	  unsigned int cu_chunk = cu->cu_chunk | 1;
+	  while (cu->cu_next && (cu->cu_next->cu_chunk | 1) == cu_chunk)
+	    {
+	      partition_find_dups (&alt_ob, cu->cu_next->cu_die);
+	      cu = cu->cu_next;
+	    }
+	}
       vec_size = obstack_object_size (&alt_ob) / sizeof (void *);
       if (vec_size != 0)
 	{
@@ -4759,7 +5007,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
       read_uleb128 (ptr);
       /* No longer count the abbrev uleb128 size in die_size.
 	 We'll add it back after determining the new abbrevs.  */
-      if (wr_multifile)
+      if (wr_multifile || op_multifile)
 	i = -1U;
       else
 	for (i = 0; i < reft->nattr; i++)
@@ -4810,7 +5058,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      while (form == DW_FORM_indirect)
 		form = read_uleb128 (ptr);
 
-	      if (wr_multifile
+	      if ((wr_multifile || op_multifile)
 		  && (reft->attr[i].attr == DW_AT_decl_file
 		      || reft->attr[i].attr == DW_AT_call_file))
 		{
@@ -4914,7 +5162,10 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 		  read_uleb128 (ptr);
 		  break;
 		case DW_FORM_strp:
-		  ptr += 4;
+		  if (unlikely (op_multifile))
+		    note_strp_offset2 (read_32 (ptr));
+		  else
+		    ptr += 4;
 		  break;
 		case DW_FORM_string:
 		  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
@@ -5037,7 +5288,11 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	    t->attr[t->nattr].attr = DW_AT_comp_dir;
 	    t->attr[t->nattr].form = form;
 	    if (form == DW_FORM_strp)
-	      die->die_size += 4;
+	      {
+		if (unlikely (op_multifile))
+		  note_strp_offset2 (read_32 (ptr));
+		die->die_size += 4;
+	      }
 	    else
 	      die->die_size
 		= strlen (origin->die_cu->cu_comp_dir) + 1;
@@ -5053,7 +5308,11 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	  t->attr[0].attr = DW_AT_name;
 	  t->attr[0].form = form;
 	  if (form == DW_FORM_strp)
-	    die->die_size = 4;
+	    {
+	      if (unlikely (op_multifile))
+		note_strp_offset2 (read_32 (ptr));
+	      die->die_size = 4;
+	    }
 	  else
 	    die->die_size = strlen ((char *) ptr) + 1;
 	  t->nattr = 1;
@@ -6117,7 +6376,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	  while (form == DW_FORM_indirect)
 	    form = read_uleb128 (inptr);
 
-	  if (wr_multifile
+	  if ((wr_multifile || op_multifile)
 	      && (reft->attr[i].attr == DW_AT_decl_file
 		  || reft->attr[i].attr == DW_AT_call_file))
 	    {
@@ -6212,12 +6471,11 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      read_uleb128 (inptr);
 	      break;
 	    case DW_FORM_strp:
-	      if (wr_multifile)
+	      if (wr_multifile || op_multifile)
 		{
 		  unsigned int strp = lookup_strp_offset (read_32 (inptr));
 		  memcpy (ptr, orig_ptr, inptr - 4 - orig_ptr);
 		  ptr += inptr - 4 - orig_ptr;
-		  strp += multi_str_off;
 		  write_32 (ptr, strp);
 		  j++;
 		  continue;
@@ -6368,6 +6626,8 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 			  || form == DW_FORM_data4));
 	    if (wr_multifile)
 	      write_32 (ptr, multi_line_off);
+	    else if (op_multifile)
+	      write_32 (ptr, 0);
 	    else
 	      {
 		memcpy (ptr, p, 4);
@@ -6382,8 +6642,16 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	    assert (form == t->attr[t->nattr - 1].form);
 	    if (form == DW_FORM_strp)
 	      {
-		memcpy (ptr, p, 4);
-		ptr += 4;
+		if (wr_multifile || op_multifile)
+		  {
+		    unsigned int strp = lookup_strp_offset (read_32 (p));
+		    write_32 (ptr, strp);
+		  }
+		else
+		  {
+		    memcpy (ptr, p, 4);
+		    ptr += 4;
+		  }
 	      }
 	    else
 	      {
@@ -6401,8 +6669,16 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	  assert (p && (form == t->attr[0].form));
 	  if (form == DW_FORM_strp)
 	    {
-	      memcpy (ptr, p, 4);
-	      ptr += 4;
+	      if (wr_multifile || op_multifile)
+		{
+		  unsigned int strp = lookup_strp_offset (read_32 (p));
+		  write_32 (ptr, strp);
+		}
+	      else
+		{
+		  memcpy (ptr, p, 4);
+		  ptr += 4;
+		}
 	    }
 	  else
 	    {
@@ -7514,14 +7790,25 @@ write_multifile_line (void)
     }
 
   len = 17 + filetbllen + dirtbllen;
-  if (multi_line_off + len < multi_line_off)
+  if (unlikely (op_multifile))
     {
-      if (line_htab)
-	obstack_free (&ob, (void *) filearr);
-      return 1;
+      debug_sections[DEBUG_LINE].new_size = len;
+      debug_sections[DEBUG_LINE].new_data = malloc (len);
+      if (debug_sections[DEBUG_LINE].new_data == NULL)
+	dwz_oom ();
+      line = debug_sections[DEBUG_LINE].new_data;
     }
+  else
+    {
+      if (multi_line_off + len < multi_line_off)
+	{
+	  if (line_htab)
+	    obstack_free (&ob, (void *) filearr);
+	  return 1;
+	}
 
-  line = (unsigned char *) obstack_alloc (&ob, len);
+      line = (unsigned char *) obstack_alloc (&ob, len);
+    }
   ptr = line;
   write_32 (ptr, len - 4);	/* Total length.  */
   write_16 (ptr, 2);		/* DWARF version.  */
@@ -7569,11 +7856,16 @@ write_multifile_line (void)
   write_8 (ptr, 0);		/* Terminate file table.  */
   assert (ptr == line + len);
 
-  if (write (multi_line_fd, line, len) != (ssize_t) len)
-    ret = 1;
-  else
-    multi_line_off += len;
-  obstack_free (&ob, line_htab ? (void *) filearr : (void *) line);
+  if (likely (!op_multifile))
+    {
+      if (write (multi_line_fd, line, len) != (ssize_t) len)
+	ret = 1;
+      else
+	multi_line_off += len;
+      obstack_free (&ob, line_htab ? (void *) filearr : (void *) line);
+    }
+  else if (line_htab)
+    obstack_free (&ob, (void *) filearr);
   return ret;
 }
 
@@ -7801,6 +8093,186 @@ dwz (const char *file, const char *outfile)
   return ret;
 }
 
+/* Hash function in strp_htab.  */
+static hashval_t
+strp_hash2 (const void *p)
+{
+  struct strp_entry *s = (struct strp_entry *)p;
+
+  return s->new_off & ~1U;
+}
+
+/* Equality function in strp_htab.  */
+static int
+strp_eq2 (const void *p, const void *q)
+{
+  struct strp_entry *s1 = (struct strp_entry *)p;
+  struct strp_entry *s2 = (struct strp_entry *)q;
+
+  return strcmp ((char *) debug_sections[DEBUG_STR].data + s1->off,
+		 (char *) debug_sections[DEBUG_STR].data + s2->off) == 0;
+}
+
+/* Adapted from bfd/merge.c strrevcmp.  */
+static int
+strrevcmp (const void *p, const void *q)
+{
+  struct strp_entry *s1 = *(struct strp_entry **)p;
+  struct strp_entry *s2 = *(struct strp_entry **)q;
+  unsigned int len1 = s1->new_off & ~1U;
+  unsigned int len2 = s2->new_off & ~1U;
+  unsigned int len;
+  unsigned char *p1 = debug_sections[DEBUG_STR].data + s1->off;
+  unsigned char *p2 = debug_sections[DEBUG_STR].data + s2->off;
+
+  if (p1[len1])
+    len1++;
+  if (p2[len2])
+    len2++;
+  p1 += len1;
+  p2 += len2;
+  len = len1;
+  if (len2 < len)
+    len = len2;
+  while (len)
+    {
+      p1--;
+      p2--;
+      if (*p1 != *p2)
+	{
+	  if (*p1 < *p2)
+	    return -1;
+	  return 1;
+	}
+      len--;
+    }
+  if (len1 < len2)
+    return 1;
+  if (len1 > len2)
+    return -1;
+  assert (s1->off == s2->off);
+  return 0;
+}
+
+/* Hash function in strp_htab.  */
+static hashval_t
+strp_hash3 (const void *p)
+{
+  return iterative_hash (p, strlen (p), 0);
+}
+
+/* Equality function in strp_htab.  */
+static int
+strp_eq3 (const void *p, const void *q)
+{
+  return strcmp (p, q) == 0;
+}
+
+static void
+finalize_strp (void)
+{
+  unsigned int count, new_count, i;
+  unsigned int strp_index = 0;
+  struct strp_entry **arr, **end;
+  unsigned char *p;
+
+  if (strp_htab == NULL)
+    return;
+  count = htab_elements (strp_htab);
+  arr = (struct strp_entry **)
+	obstack_alloc (&ob, count * sizeof (struct strp_entry *));
+  end = arr;
+  htab_traverse (strp_htab, list_strp_entries, (void *) &end);
+  for (i = 0; i < count; i++)
+    {
+      unsigned int len = strlen ((char *) debug_sections[DEBUG_STR].data
+				 + arr[i]->off);
+      arr[i]->new_off = (len & ~1U) | (arr[i]->new_off & 1);
+    }
+  qsort (arr, count, sizeof (struct strp_entry *), strrevcmp);
+  htab_delete (strp_htab);
+  strp_htab = NULL;
+  new_count = count;
+  for (i = 0; i < count; i++)
+    if ((arr[i]->new_off & 1) == 0)
+      {
+	arr[i]->off = -1U;
+	arr[i]->new_off = -1U;
+	new_count--;
+      }
+    else
+      {
+	unsigned int len1, len2, lastlen, j;
+	unsigned char *p1, *p2;
+	len1 = arr[i]->new_off & ~1U;
+	p1 = debug_sections[DEBUG_STR].data + arr[i]->off;
+	if (p1[len1])
+	  len1++;
+	lastlen = len1;
+	arr[i]->new_off = strp_index;
+	strp_index += len1 + 1;
+	for (j = i + 1; j < count; j++)
+	  {
+	    len2 = arr[j]->new_off & ~1U;
+	    p2 = debug_sections[DEBUG_STR].data + arr[j]->off;
+	    if (p2[len2])
+	      len2++;
+	    if (len2 >= lastlen)
+	      break;
+	    if (memcmp (p1 + len1 - len2, p2, len2 + 1) != 0)
+	      break;
+	    arr[j]->new_off = arr[i]->new_off + len1 - len2;
+	    lastlen = len2;
+	  }
+	i = j - 1;
+      }
+  debug_sections[DEBUG_STR].new_data = malloc (strp_index);
+  if (debug_sections[DEBUG_STR].new_data == NULL)
+    dwz_oom ();
+  debug_sections[DEBUG_STR].new_size = strp_index;
+  strp_htab = htab_try_create (new_count, strp_hash3, strp_eq3, NULL);
+  if (strp_htab == NULL)
+    dwz_oom ();
+  for (i = 0, p = debug_sections[DEBUG_STR].new_data; i < count; i++)
+    if (arr[i]->off == -1U && arr[i]->new_off == -1U)
+      continue;
+    else
+      {
+	unsigned int len = strlen ((char *) debug_sections[DEBUG_STR].data
+				   + arr[i]->off) + 1;
+	unsigned int j;
+	void **slot;
+
+	memcpy (p, debug_sections[DEBUG_STR].data + arr[i]->off, len);
+	slot = htab_find_slot_with_hash (strp_htab, p,
+					 iterative_hash (p, len - 1, 0),
+					 INSERT);
+	if (slot == NULL)
+	  dwz_oom ();
+	assert (*slot == NULL);
+	*slot = (void *) p;
+	for (j = i + 1; j < count; j++)
+	  if (arr[j]->new_off >= arr[i]->new_off + len)
+	    break;
+	  else
+	    {
+	      unsigned char *q = p + arr[j]->new_off - arr[i]->new_off;
+	      unsigned int l = len + arr[i]->new_off - arr[j]->new_off;
+	      slot = htab_find_slot_with_hash (strp_htab, q,
+					       iterative_hash (q, l - 1, 0),
+					       INSERT);
+	      if (slot == NULL)
+		dwz_oom ();
+	      assert (*slot == NULL);
+	      *slot = (void *) q;
+	    }
+	p += len;
+	i = j - 1;
+      }
+  assert (p == debug_sections[DEBUG_STR].new_data + strp_index);
+  obstack_free (&ob, (void *) arr);
+}
+
 static int
 optimize_multifile (void)
 {
@@ -7906,11 +8378,66 @@ optimize_multifile (void)
     }
   else
     {
+      struct dw_cu **cup;
+      unsigned char *p, *q;
+
       obstack_init (&ob);
       obstack_init (&alt_ob);
 
-      if (0 && read_debug_info (dso, false))
+      if (read_debug_info (dso, false)
+	  || partition_dups ())
 	goto fail;
+
+      for (cup = &first_cu; *cup && (*cup)->cu_kind == CU_PU;
+	   cup = &(*cup)->cu_next)
+	;
+
+      *cup = NULL;
+
+      strp_htab = htab_try_create (debug_sections[DEBUG_STR].size / 64,
+				   strp_hash2, strp_eq2, NULL);
+      if (strp_htab == NULL)
+	dwz_oom ();
+
+      for (p = debug_sections[DEBUG_STR].data;
+	   p < debug_sections[DEBUG_STR].data + debug_sections[DEBUG_STR].size;
+	   p = q + 1)
+	{
+	  void **slot;
+	  struct strp_entry se;
+	  hashval_t hash;
+
+	  q = (unsigned char *) strchr ((char *) p, '\0');
+	  hash = iterative_hash (p, q - p, 0);
+	  se.off = p - debug_sections[DEBUG_STR].data;
+	  se.new_off = hash & ~1U;
+	  slot = htab_find_slot_with_hash (strp_htab, &se, se.new_off, INSERT);
+	  if (slot == NULL)
+	    dwz_oom ();
+	  if (*slot == NULL)
+	    {
+	      struct strp_entry *s = pool_alloc (strp_entry, sizeof (*s));
+	      *s = se;
+	      *slot = (void *) s;
+	    }
+	  else
+	    ((struct strp_entry *) *slot)->new_off |= 1;
+	}
+
+      if (first_cu != NULL)
+	{
+	  if (compute_abbrevs (dso))
+	    goto fail;
+
+	  finalize_strp ();
+
+	  write_abbrev ();
+	  write_info ();
+	  if (write_multifile_line ())
+	    goto fail;
+	}
+      else
+	finalize_strp ();
     }
 
   op_multifile = false;
@@ -7936,9 +8463,9 @@ optimize_multifile (void)
   multi_ehdr.e_shoff = multi_ehdr.e_ehsize;
   multi_ehdr.e_shnum = 2;
   for (i = 0; debug_sections[i].name; i++)
-    if (debug_sections[i].size)
+    if (debug_sections[i].new_size)
       {
-	multi_ehdr.e_shoff += debug_sections[i].size;
+	multi_ehdr.e_shoff += debug_sections[i].new_size;
 	multi_ehdr.e_shnum++;
       }
   multi_ehdr.e_shstrndx = multi_ehdr.e_shnum - 1;
@@ -7977,7 +8504,7 @@ optimize_multifile (void)
   for (i = 0; debug_sections[i].name; i++)
     {
 
-      if (debug_sections[i].size == 0)
+      if (debug_sections[i].new_size == 0)
 	continue;
       scn = elf_newscn (elf);
       elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
@@ -7988,7 +8515,7 @@ optimize_multifile (void)
 	    shdr.sh_name = p - shstrtab;
 	    break;
 	  }
-      shdr.sh_size = debug_sections[i].size;
+      shdr.sh_size = debug_sections[i].new_size;
       if (i == DEBUG_STR)
 	{
 	  shdr.sh_flags = SHF_MERGE | SHF_STRINGS;
@@ -8001,7 +8528,7 @@ optimize_multifile (void)
 	}
       gelf_update_shdr (scn, &shdr);
       data = elf_newdata (scn);
-      data->d_buf = debug_sections[i].data;
+      data->d_buf = debug_sections[i].new_data;
       data->d_type = ELF_T_BYTE;
       data->d_version = EV_CURRENT;
       data->d_size = shdr.sh_size;
