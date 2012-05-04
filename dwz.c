@@ -7618,7 +7618,6 @@ static bool
 check_multifile (dw_die_ref die)
 {
   dw_die_ref child;
-  bool unresolved = false;
 
   die->die_no_multifile = 1;
   for (child = die->die_child; child; child = child->die_sib)
@@ -7640,24 +7639,6 @@ check_multifile (dw_die_ref die)
 	    else
 	      child->die_no_multifile = 1;
 	  }
-	else if (child->die_tag == DW_TAG_imported_unit)
-	  {
-	    if (child->die_nextdup->die_ck_state == CK_KNOWN)
-	      {
-		if (child->die_nextdup->die_no_multifile == 0)
-		  {
-		    child->die_no_multifile = 0;
-		    die->die_no_multifile = 0;
-		  }
-		else
-		  child->die_no_multifile = 1;
-	      }
-	    else
-	      {
-		unresolved = true;
-		child->die_no_multifile = 1;
-	      }
-	  }
 	else
 	  child->die_no_multifile = 1;
       }
@@ -7671,32 +7652,7 @@ check_multifile (dw_die_ref die)
 	else
 	  child->die_no_multifile = 1;
       }
-  if (die->die_parent == NULL && !unresolved)
-    die->die_ck_state = CK_KNOWN;
   return die->die_no_multifile == 0;
-}
-
-static void
-check_multifile_imports (dw_die_ref die)
-{
-  dw_die_ref child;
-
-  if (die->die_ck_state == CK_KNOWN)
-    return;
-  for (child = die->die_child; child; child = child->die_sib)
-    if (child->die_tag == DW_TAG_imported_unit
-	&& child->die_offset == -1U
-	&& child->die_nextdup
-	&& child->die_nextdup->die_dup != child)
-      {
-	check_multifile_imports (child->die_nextdup);
-	if (child->die_nextdup->die_no_multifile == 0)
-	  {
-	    child->die_no_multifile = 0;
-	    die->die_no_multifile = 0;
-	  }
-      }
-  die->die_ck_state = CK_KNOWN;
 }
 
 /* Helper to record all strp_entry entries from strp_htab.
@@ -7990,18 +7946,16 @@ write_multifile (void)
       debug_sections[i].new_size = debug_sections[i].size;
     }
   for (cu = first_cu; cu && cu->cu_kind != CU_TYPES; cu = cu->cu_next)
-    any_cus |= check_multifile (cu->cu_die);
+    {
+      cu->u1.cu_new_abbrev_owner = NULL;
+      cu->u2.cu_new_abbrev_offset = 0;
+      cu->cu_new_offset = 0;
+      any_cus |= check_multifile (cu->cu_die);
+    }
   if (any_cus)
     {
       struct dw_cu **cup;
 
-      for (cu = first_cu; cu && cu->cu_kind != CU_TYPES; cu = cu->cu_next)
-	{
-	  cu->u1.cu_new_abbrev_owner = NULL;
-	  cu->u2.cu_new_abbrev_offset = 0;
-	  cu->cu_new_offset = 0;
-	  check_multifile_imports (cu->cu_die);
-	}
       for (cup = &first_cu; *cup && (*cup)->cu_kind != CU_TYPES; )
 	if ((*cup)->cu_die->die_no_multifile == 0)
 	  cup = &(*cup)->cu_next;
