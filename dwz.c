@@ -2780,7 +2780,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 		  i++;
 		  j++;
 		  continue;
-	        }
+		}
 	      if (strcmp ((char *) debug_sections[DEBUG_STR].data + value1,
 			  (char *) debug_sections[DEBUG_STR].data + value2)
 		  != 0)
@@ -3696,11 +3696,11 @@ remove_unneeded (dw_die_ref die, unsigned int phase)
   for (child = die->die_child; child; child = child->die_sib)
     {
       if (child->die_named_namespace)
-        {
+	{
 	  remove_unneeded (child, phase);
 	  if (phase == 2)
 	    child->die_ref_seen = 0;
-        }
+	}
       else
 	switch (phase)
 	  {
@@ -8656,7 +8656,7 @@ remove_empty_pu (dw_die_ref die)
   for (; child; child = child->die_sib)
     if (!child->die_named_namespace)
       {
-        if (!child->die_remove)
+	if (!child->die_remove)
 	  /* Signal that DIE can't be removed, but
 	     perhaps we could still remove_empty_pu
 	     some named namespaces that are children of DIE.  */
@@ -8908,6 +8908,17 @@ optimize_multifile (void)
   multifile_mode = MULTIFILE_MODE_OP;
 
   obstack_alloc_failed_handler = dwz_oom;
+#ifdef DEBUG_OP_MULTIFILE
+  if (1)
+    {
+      for (i = 0; i < SAVED_SECTIONS; i++)
+	{
+	  debug_sections[i].new_data = debug_sections[i].data;
+	  debug_sections[i].new_size = debug_sections[i].size;
+	}
+    }
+  else
+#endif
   if (setjmp (oom_buf))
     {
       error (0, ENOMEM, "%s: Could not allocate memory", dso->filename);
@@ -9147,6 +9158,9 @@ optimize_multifile (void)
     {
       debug_sections[i].data = NULL;
       debug_sections[i].size = 0;
+#ifndef DEBUG_OP_MULTIFILE
+      free (debug_sections[i].new_data);
+#endif
       debug_sections[i].new_data = NULL;
       debug_sections[i].new_size = 0;
       debug_sections[i].sec = 0;
@@ -9250,10 +9264,10 @@ read_multifile (int fd)
       memset (&ob, '\0', sizeof (ob));
       memset (&ob2, '\0', sizeof (ob2));
       for (i = 0; i < SAVED_SECTIONS; i++)
-        {
-          alt_data[i] = debug_sections[i].data;
-          alt_size[i] = debug_sections[i].size;
-        }
+	{
+	  alt_data[i] = debug_sections[i].data;
+	  alt_size[i] = debug_sections[i].size;
+	}
     }
 
   cleanup ();
@@ -9399,7 +9413,7 @@ main (int argc, char *argv[])
 	  cleanup ();
 	  strp_htab = alt_strp_htab;
 	  off_htab = alt_off_htab;
-          dup_htab = alt_dup_htab;
+	  dup_htab = alt_dup_htab;
 	  pool = alt_pool;
 	  ob = alt_ob;
 	  ob2 = alt_ob2;
