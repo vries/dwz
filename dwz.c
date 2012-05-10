@@ -4219,7 +4219,24 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
       if (child->die_nextdup != NULL
 	  && child->die_dup == NULL
 	  && child->die_offset != -1U)
-	obstack_ptr_grow (vec, child);
+	{
+	  if (unlikely (op_multifile))
+	    {
+	      /* Due to the if (die1->die_cu == die2->die_cu) return 0;
+		 in die_eq_1, the first pass might actually not detect
+		 some dups when the compiler did a bad job.  Reject
+		 those here, because otherwise we would fail on assertions
+		 later on.  */
+	      unsigned int cu_chunk = child->die_cu->cu_chunk & ~1U;
+	      dw_die_ref dup;
+	      for (dup = child->die_nextdup; dup; dup = dup->die_nextdup)
+		if ((dup->die_cu->cu_chunk & ~1U) != cu_chunk)
+		  break;
+	      if (dup == NULL)
+		continue;
+	    }
+	  obstack_ptr_grow (vec, child);
+	}
       else if (child->die_named_namespace)
 	partition_find_dups (vec, child);
     }
