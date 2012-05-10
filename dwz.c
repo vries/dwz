@@ -8734,7 +8734,8 @@ dwz (const char *file, const char *outfile)
 	  || create_import_tree ()
 	  || (unlikely (fi_multifile) && remove_empty_pus ())
 	  || read_debug_types (dso)
-	  || compute_abbrevs (dso))
+	  || compute_abbrevs (dso)
+	  || (unlikely (fi_multifile) && (finalize_strp (false), 0)))
 	{
 	  cleanup ();
 	  ret = 1;
@@ -8749,9 +8750,11 @@ dwz (const char *file, const char *outfile)
 	  error (0, 0, "%s: DWARF compression not beneficial "
 		       "- old size %ld new size %ld", dso->filename,
 		 (unsigned long) (debug_sections[DEBUG_INFO].size
-				  + debug_sections[DEBUG_ABBREV].size),
+				  + debug_sections[DEBUG_ABBREV].size
+				  + debug_sections[DEBUG_STR].size),
 		 (unsigned long) (debug_sections[DEBUG_INFO].new_size
-				  + debug_sections[DEBUG_ABBREV].new_size));
+				  + debug_sections[DEBUG_ABBREV].new_size
+				  + debug_sections[DEBUG_STR].new_size));
 
 	  if (multifile && !fi_multifile)
 	    write_multifile ();
@@ -8767,8 +8770,6 @@ dwz (const char *file, const char *outfile)
 	}
       else
 	{
-	  if (fi_multifile)
-	    finalize_strp (false);
 	  write_abbrev ();
 	  write_info ();
 	  write_loc ();
