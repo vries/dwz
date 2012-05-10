@@ -37,6 +37,7 @@
 #include <gelf.h>
 #include "dwarf2.h"
 #include "hashtab.h"
+#include "sha1.h"
 
 #define DW_FORM_GNU_ref_alt	0x1f20
 #define DW_FORM_GNU_strp_alt	0x1f21
@@ -400,6 +401,8 @@ static unsigned char multifile_mode;
 
 /* Filename if inter-file size optimization should be performed.  */
 static const char *multifile;
+
+static unsigned char multifile_sha1[0x14];
 
 /* A single attribute in abbreviations.  */
 struct abbrev_attr
@@ -8817,8 +8820,11 @@ optimize_multifile (void)
   Elf_Data *data;
   char *e_ident;
   const char shstrtab[]
-    = "\0.shstrtab\0.debug_info\0.debug_abbrev\0.debug_line\0.debug_str";
+    = "\0.shstrtab\0.note.gnu.build-id\0"
+      ".debug_info\0.debug_abbrev\0.debug_line\0.debug_str";
   const char *p;
+  unsigned char note[0x24], *np;
+  struct sha1_ctx ctx;
 
   if (multi_ehdr.e_ident[0] == '\0'
       || multi_ptr_size == 0
@@ -8970,6 +8976,11 @@ optimize_multifile (void)
 	strp_tail_off_list = finalize_strp (true);
     }
 
+  np = note;
+  write_32 (np, sizeof ("GNU"));
+  write_32 (np, 0x14);
+  write_32 (np, NT_GNU_BUILD_ID);
+
   cleanup ();
   fd = open (multifile, O_RDWR | O_CREAT, 0600);
   if (fd < 0)
@@ -8989,8 +9000,8 @@ optimize_multifile (void)
   multi_ehdr.e_entry = 0;
   multi_ehdr.e_phoff = 0;
   multi_ehdr.e_phnum = 0;
-  multi_ehdr.e_shoff = multi_ehdr.e_ehsize;
-  multi_ehdr.e_shnum = 2;
+  multi_ehdr.e_shoff = multi_ehdr.e_ehsize + 0x24;
+  multi_ehdr.e_shnum = 3;
   for (i = 0; debug_sections[i].name; i++)
     if (debug_sections[i].new_size)
       {
@@ -9026,9 +9037,38 @@ optimize_multifile (void)
     }
   elf_flagelf (elf, ELF_C_SET, ELF_F_LAYOUT | ELF_F_PERMISSIVE);
 
+  sha1_init_ctx (&ctx);
+  for (i = 0; debug_sections[i].name; i++)
+    {
+      if (debug_sections[i].new_size == 0)
+	continue;
+      sha1_process_bytes (debug_sections[i].new_data,
+			  debug_sections[i].new_size, &ctx);
+    }
+  sha1_finish_ctx (&ctx, multifile_sha1);
+
+  memcpy (np, "GNU", sizeof ("GNU"));
+  memcpy (np + 4, multifile_sha1, 0x14);
+
   memset (&shdr, '\0', sizeof (shdr));
-  shdr.sh_type = SHT_PROGBITS;
+  shdr.sh_type = SHT_NOTE;
   shdr.sh_offset = multi_ehdr.e_ehsize;
+  shdr.sh_addralign = 4;
+  shdr.sh_size = 0x24;
+  scn = elf_newscn (elf);
+  elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
+  shdr.sh_name = (strchr (shstrtab + 1, '\0') + 1) - shstrtab;
+  gelf_update_shdr (scn, &shdr);
+  data = elf_newdata (scn);
+  data->d_buf = (char *) note;
+  data->d_type = ELF_T_BYTE;
+  data->d_version = EV_CURRENT;
+  data->d_size = shdr.sh_size;
+  data->d_off = 0;
+  data->d_align = 1;
+
+  shdr.sh_type = SHT_PROGBITS;
+  shdr.sh_offset += shdr.sh_size;
   shdr.sh_addralign = 1;
   for (i = 0; debug_sections[i].name; i++)
     {
