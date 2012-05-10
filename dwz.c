@@ -3210,7 +3210,7 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
 /* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
    unless already marked.  */
 static void
-mark_refs (dw_die_ref top_die, dw_die_ref die)
+mark_refs (dw_die_ref top_die, dw_die_ref die, bool follow_dups)
 {
   struct abbrev_tag *t;
   unsigned int i;
@@ -3301,10 +3301,16 @@ mark_refs (dw_die_ref top_die, dw_die_ref die)
 		     && reft->die_parent->die_tag != DW_TAG_partial_unit
 		     && !reft->die_parent->die_named_namespace)
 		reft = reft->die_parent;
+	      if (follow_dups && reft->die_dup != NULL)
+		{
+		  reft = reft->die_dup;
+		  if (reft->die_cu->cu_kind == CU_PU)
+		    break;
+		}
 	      if (reft->die_ref_seen == 0)
 		{
 		  reft->die_ref_seen = 1;
-		  mark_refs (reft, reft);
+		  mark_refs (reft, reft, follow_dups);
 		}
 	      break;
 	    case DW_FORM_string:
@@ -3338,7 +3344,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die)
     }
 
   for (child = die->die_child; child; child = child->die_sib)
-    mark_refs (top_die, child);
+    mark_refs (top_die, child, follow_dups);
 }
 
 /* Helper function of partition_dups_1.  Decide what DIEs matching in multiple
@@ -3538,28 +3544,26 @@ partition_dups (void)
   size_t vec_size, i;
   unsigned char *to_free = obstack_alloc (&alt_ob, 1);
   for (cu = first_cu; cu; cu = cu->cu_next)
+    partition_find_dups (&alt_ob, cu->cu_die);
+  vec_size = obstack_object_size (&alt_ob) / sizeof (void *);
+  if (vec_size != 0)
     {
-      partition_find_dups (&alt_ob, cu->cu_die);
-      vec_size = obstack_object_size (&alt_ob) / sizeof (void *);
-      if (vec_size != 0)
+      dw_die_ref *arr = (dw_die_ref *) obstack_finish (&alt_ob);
+      qsort (arr, vec_size, sizeof (dw_die_ref), partition_cmp);
+      if (partition_dups_1 (arr, vec_size, &first_partial_cu,
+			    &last_partial_cu, false))
 	{
-	  dw_die_ref *arr = (dw_die_ref *) obstack_finish (&alt_ob);
-	  qsort (arr, vec_size, sizeof (dw_die_ref), partition_cmp);
-	  if (partition_dups_1 (arr, vec_size, &first_partial_cu,
-				&last_partial_cu, false))
-	    {
-	      for (i = 0; i < vec_size; i++)
-		arr[i]->die_ref_seen = arr[i]->die_dup != NULL;
-	      for (i = 0; i < vec_size; i++)
-		if (arr[i]->die_dup != NULL)
-		  mark_refs (arr[i], arr[i]);
-	      partition_dups_1 (arr, vec_size, &first_partial_cu,
-				&last_partial_cu, true);
-	      for (i = 0; i < vec_size; i++)
-		arr[i]->die_ref_seen = 0;
-	    }
-	  obstack_free (&alt_ob, (void *) arr);
+	  for (i = 0; i < vec_size; i++)
+	    arr[i]->die_ref_seen = arr[i]->die_dup != NULL;
+	  for (i = 0; i < vec_size; i++)
+	    if (arr[i]->die_dup != NULL)
+	      mark_refs (arr[i], arr[i], true);
+	  partition_dups_1 (arr, vec_size, &first_partial_cu,
+			    &last_partial_cu, true);
+	  for (i = 0; i < vec_size; i++)
+	    arr[i]->die_ref_seen = 0;
 	}
+      obstack_free (&alt_ob, (void *) arr);
     }
   if (first_partial_cu)
     {
