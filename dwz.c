@@ -1028,7 +1028,12 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
 {
   struct abbrev_tag *t = die->die_abbrev;
   unsigned int i;
-  unsigned char *ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
+  unsigned char *ptr;
+  if (unlikely (fi_multifile) && die->die_cu->cu_kind == CU_ALT)
+    ptr = alt_data[DEBUG_INFO];
+  else
+    ptr = debug_sections[DEBUG_INFO].data;
+  ptr += die->die_offset;
   read_uleb128 (ptr);
   for (i = 0; i < t->nattr; ++i)
     {
@@ -1171,6 +1176,12 @@ get_AT_string (dw_die_ref die, enum dwarf_attribute at)
     case DW_FORM_strp:
       {
 	unsigned int strp = read_32 (ptr);
+	if (unlikely (fi_multifile) && die->die_cu->cu_kind == CU_ALT)
+	  {
+	    if (strp >= alt_size[DEBUG_STR])
+	      return NULL;
+	    return (char *) alt_data[DEBUG_STR] + strp;
+	  }
 	if (strp >= debug_sections[DEBUG_STR].size)
 	  return NULL;
 	return (char *) debug_sections[DEBUG_STR].data + strp;
