@@ -3317,7 +3317,7 @@ note_strp_offset2 (unsigned int off)
 	}
       return DW_FORM_strp;
     }
-  if (off >= debug_sections[DEBUG_STR].size || off == 0)
+  if (off >= debug_sections[DEBUG_STR].size)
     return DW_FORM_strp;
   p = debug_sections[DEBUG_STR].data + off;
   q = (unsigned char *) strchr ((char *) p, '\0');
