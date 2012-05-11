@@ -3112,7 +3112,7 @@ partition_cmp (const void *p, const void *q)
   dw_die_ref die2 = *(dw_die_ref *) q;
   dw_die_ref ref1, ref2;
   struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
-  for (ref1 = die1->die_nextdup, ref2 = die2->die_nextdup;;
+  for (ref1 = die1, ref2 = die2;;
        ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
     {
       while (ref1 && ref1->die_cu == last_cu1)
@@ -3359,7 +3359,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  dw_die_ref ref1, ref2;
 	  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
 	  size_t this_cnt = 0;
-	  for (ref1 = arr[i]->die_nextdup, ref2 = arr[j]->die_nextdup;;
+	  for (ref1 = arr[i], ref2 = arr[j];;
 	       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
 	    {
 	      while (ref1 && ref1->die_cu == last_cu1)
@@ -3382,7 +3382,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       if (cnt == 0)
 	{
 	  struct dw_cu *last_cu1 = NULL;
-	  for (ref = arr[i]->die_nextdup;; ref = ref->die_nextdup)
+	  for (ref = arr[i];; ref = ref->die_nextdup)
 	    {
 	      while (ref && ref->die_cu == last_cu1)
 		ref = ref->die_nextdup;
@@ -3412,7 +3412,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		 ref = ref->die_parent)
 	      ref->die_dup = NULL;
 	}
-      orig_size = size * (cnt + 1);
+      orig_size = size * cnt;
       /* Estimated size of CU header and DW_TAG_partial_unit
 	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
 	 21 (also child end byte), plus in each CU referencing it
@@ -3424,8 +3424,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	 DW_AT_sibling attribute and child end.  */
       new_size = size + 21
 		 + (arr[i]->die_cu->cu_version == 2
-		    ? 1 + ptr_size : 5) * (cnt + 1)
-		 + 10 * namespaces;
+		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
       if (orig_size > new_size || force)
 	{
 	  dw_die_ref die, *diep;
