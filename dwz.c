@@ -2434,7 +2434,6 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   unsigned char *ptr1, *ptr2;
   dw_die_ref ref1, ref2;
   dw_die_ref child1, child2;
-  bool inside1, inside2;
 
 #define FAIL goto fail
   if (die1 == die2 || die_safe_dup (die2) == die1)
@@ -2453,39 +2452,6 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   assert (die1->die_parent != NULL
 	  && die2->die_parent != NULL);
 
-  inside1 = die1->u.p1.die_enter >= top_die1->u.p1.die_enter
-	    && die1->u.p1.die_exit <= top_die1->u.p1.die_exit;
-  inside2 = die2->u.p1.die_enter >= top_die2->u.p1.die_enter
-	    && die2->u.p1.die_exit <= top_die2->u.p1.die_exit;
-  if (inside1 ^ inside2)
-    return 0;
-  if (inside1
-      && die1->u.p1.die_enter - top_die1->u.p1.die_enter
-	 != die2->u.p1.die_enter - top_die2->u.p1.die_enter)
-    return 0;
-  if (!inside1)
-    {
-      for (ref1 = die1->die_parent, ref2 = die2->die_parent;
-	   ref1 && ref2; ref1 = ref1->die_parent, ref2 = ref2->die_parent)
-	{
-	  const char *name1, *name2;
-	  if ((ref1->die_tag == DW_TAG_compile_unit
-	       || ref1->die_tag == DW_TAG_partial_unit)
-	      && (ref2->die_tag == DW_TAG_compile_unit
-		  || ref2->die_tag == DW_TAG_partial_unit))
-	    break;
-	  if (ref1->die_tag != ref2->die_tag)
-	    return 0;
-	  if (!ref1->die_named_namespace || !ref2->die_named_namespace)
-	    return 0;
-	  name1 = get_AT_string (ref1, DW_AT_name);
-	  name2 = get_AT_string (ref2, DW_AT_name);
-	  if (strcmp (name1, name2))
-	    return 0;
-	}
-      if (ref1 == NULL || ref2 == NULL)
-	return 0;
-    }
   t1 = die1->die_abbrev;
   t2 = die2->die_abbrev;
   if (likely (!fi_multifile))
@@ -2512,6 +2478,26 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   j = 0;
   if (die1->die_toplevel)
     {
+      for (ref1 = die1->die_parent, ref2 = die2->die_parent;
+	   ref1 && ref2; ref1 = ref1->die_parent, ref2 = ref2->die_parent)
+	{
+	  const char *name1, *name2;
+	  if ((ref1->die_tag == DW_TAG_compile_unit
+	       || ref1->die_tag == DW_TAG_partial_unit)
+	      && (ref2->die_tag == DW_TAG_compile_unit
+		  || ref2->die_tag == DW_TAG_partial_unit))
+	    break;
+	  if (ref1->die_tag != ref2->die_tag)
+	    return 0;
+	  if (!ref1->die_named_namespace || !ref2->die_named_namespace)
+	    return 0;
+	  name1 = get_AT_string (ref1, DW_AT_name);
+	  name2 = get_AT_string (ref2, DW_AT_name);
+	  if (strcmp (name1, name2))
+	    return 0;
+	}
+      if (ref1 == NULL || ref2 == NULL)
+	return 0;
       /* For each toplevel die seen, record optimistically
 	 that we expect them to match, to avoid recursing
 	 on it again.  If non-match is determined later,
