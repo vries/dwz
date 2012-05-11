@@ -3505,10 +3505,13 @@ finalize_strp (bool build_tail_offset_list)
   return tail_offset_list;
 }
 
+#define MARK_REFS_FOLLOW_DUPS	1
+#define MARK_REFS_RETURN_VAL	2
+
 /* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
    unless already marked.  */
-static void
-mark_refs (dw_die_ref top_die, dw_die_ref die, bool follow_dups)
+static bool
+mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 {
   struct abbrev_tag *t;
   unsigned int i;
@@ -3614,7 +3617,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, bool follow_dups)
 		     && reft->die_parent->die_tag != DW_TAG_partial_unit
 		     && !reft->die_parent->die_named_namespace)
 		reft = reft->die_parent;
-	      if (follow_dups && reft->die_dup != NULL)
+	      if ((mode & MARK_REFS_FOLLOW_DUPS) && reft->die_dup != NULL)
 		{
 		  reft = reft->die_dup;
 		  if (reft->die_cu->cu_kind == CU_PU)
@@ -3622,8 +3625,10 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, bool follow_dups)
 		}
 	      if (reft->die_ref_seen == 0)
 		{
+		  if ((mode & MARK_REFS_RETURN_VAL))
+		    return false;
 		  reft->die_ref_seen = 1;
-		  mark_refs (reft, reft, follow_dups);
+		  mark_refs (reft, reft, mode);
 		}
 	      break;
 	    case DW_FORM_string:
@@ -3657,7 +3662,9 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, bool follow_dups)
     }
 
   for (child = die->die_child; child; child = child->die_sib)
-    mark_refs (top_die, child, follow_dups);
+    if (!mark_refs (top_die, child, mode))
+      return false;
+  return true;
 }
 
 static dw_die_ref die_nontoplevel_freelist;
@@ -3706,7 +3713,7 @@ remove_unneeded (dw_die_ref die, unsigned int phase)
 	    break;
 	  case 1:
 	    if (child->die_dup == NULL)
-	      mark_refs (child, child, false);
+	      mark_refs (child, child, 0);
 	    break;
 	  case 2:
 	    if (child->die_ref_seen == 0)
@@ -4290,7 +4297,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
     {
       dw_die_ref ref;
       size_t cnt = 0, size = 0, k, orig_size, new_size, namespaces = 0;
-      bool force = false;
+      unsigned int force = 0;
       if (arr[i]->die_dup != NULL)
 	{
 	  j = i + 1;
@@ -4337,7 +4344,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       for (k = i; k < j; k++)
 	{
 	  if (second_phase && arr[k]->die_ref_seen)
-	    force = true;
+	    force++;
 	  size += calc_sizes (arr[k]);
 	  for (ref = arr[k]->die_parent;
 	       ref->die_named_namespace && ref->die_dup == NULL;
@@ -4345,6 +4352,46 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	    {
 	      ref->die_dup = arr[k];
 	      namespaces++;
+	    }
+	}
+      /* If during second_phase there are some DIEs we want to force
+	 into a partial unit because they are referenced from something
+	 already forced into a partial unit, but also some DIEs with
+	 the same set of referrers, try to see if we can put also those
+	 into the partial unit.  They can be put there only if they
+	 don't refer to DIEs that won't be put into partial units.  */
+      if (second_phase && force && force < j - k)
+	{
+	  /* First optimistically assume all such DIEs can be put there,
+	     thus mark all such DIEs as going to be included, so that
+	     even if one of those DIEs references another one from those
+	     DIEs it can be included.  */
+	  for (k = i; k < j; k++)
+	    {
+	      assert (arr[k]->die_ref_seen < 2);
+	      if (arr[k]->die_ref_seen == 0)
+		arr[k]->die_ref_seen = 2;
+	    }
+	  for (k = i; k < j; k++)
+	    if (arr[k]->die_ref_seen == 2
+		&& !mark_refs (arr[k], arr[k], (MARK_REFS_FOLLOW_DUPS
+						| MARK_REFS_RETURN_VAL)))
+	      break;
+	  /* If that is not possible and some DIEs couldn't be included,
+	     fallback to assume other DIEs won't be included.  */
+	  if (k < j)
+	    {
+	      for (k = i; k < j; k++)
+		if (arr[k]->die_ref_seen == 2)
+		  arr[k]->die_ref_seen = 0;
+	      for (k = i; k < j; k++)
+		if (arr[k]->die_ref_seen == 0)
+		  {
+		    arr[k]->die_ref_seen = 2;
+		    if (!mark_refs (arr[k], arr[k], (MARK_REFS_FOLLOW_DUPS
+						     | MARK_REFS_RETURN_VAL)))
+		      arr[k]->die_ref_seen = 0;
+		  }
 	    }
 	}
       if (namespaces)
@@ -4367,7 +4414,9 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       new_size = size + 21
 		 + (arr[i]->die_cu->cu_version == 2
 		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
-      if (orig_size > new_size || force)
+      if (!second_phase)
+	force = orig_size > new_size;
+      if (force)
 	{
 	  dw_die_ref die, *diep;
 	  struct dw_cu *partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
@@ -4395,7 +4444,10 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  diep = &die->die_child;
 	  for (k = i; k < j; k++)
 	    {
-	      dw_die_ref child = copy_die_tree (die, arr[k]);
+	      dw_die_ref child;
+	      if (second_phase && !arr[k]->die_ref_seen)
+		continue;
+	      child = copy_die_tree (die, arr[k]);
 	      for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
 		ref->die_dup = child;
 	      if (namespaces)
@@ -4437,18 +4489,24 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  if (namespaces)
 	    {
 	      for (k = i; k < j; k++)
-		for (ref = arr[k]->die_parent;
-		     ref->die_named_namespace; ref = ref->die_parent)
-		  ref->die_dup = NULL;
+		{
+		  if (second_phase && !arr[k]->die_ref_seen)
+		    continue;
+		  for (ref = arr[k]->die_parent;
+		       ref->die_named_namespace; ref = ref->die_parent)
+		    ref->die_dup = NULL;
+		}
 	    }
 	}
       else if (!second_phase)
 	ret = true;
-      else
+      if (second_phase)
 	{
 	  dw_die_ref next;
 	  for (k = i; k < j; k++)
 	    {
+	      if (arr[k]->die_dup != NULL)
+		continue;
 	      for (ref = arr[k]; ref; ref = next)
 		{
 		  next = ref->die_nextdup;
@@ -4489,7 +4547,7 @@ partition_dups (void)
 	    arr[i]->die_ref_seen = arr[i]->die_dup != NULL;
 	  for (i = 0; i < vec_size; i++)
 	    if (arr[i]->die_dup != NULL)
-	      mark_refs (arr[i], arr[i], true);
+	      mark_refs (arr[i], arr[i], MARK_REFS_FOLLOW_DUPS);
 	  partition_dups_1 (arr, vec_size, &first_partial_cu,
 			    &last_partial_cu, true);
 	  for (i = 0; i < vec_size; i++)
