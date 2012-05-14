@@ -8895,10 +8895,8 @@ cleanup (void)
     htab_delete (off_htab);
   off_htab = NULL;
   if (loc_htab != NULL)
-    {
-      htab_delete (loc_htab);
-      loc_htab = NULL;
-    }
+    htab_delete (loc_htab);
+  loc_htab = NULL;
   if (dup_htab != NULL)
     htab_delete (dup_htab);
   dup_htab = NULL;
@@ -8908,6 +8906,9 @@ cleanup (void)
   if (line_htab != NULL)
     htab_delete (line_htab);
   line_htab = NULL;
+  if (macro_htab != NULL)
+    htab_delete (macro_htab);
+  macro_htab = NULL;
 
   for (i = 0; i < SAVED_SECTIONS; ++i)
     {
