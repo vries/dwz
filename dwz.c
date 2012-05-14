@@ -346,6 +346,7 @@ static struct
 #define DEBUG_TYPES		12
 #define DEBUG_GDB_SCRIPTS	13
 #define GDB_INDEX		14
+#define GNU_DEBUGALTLINK	15
     { ".debug_info", NULL, NULL, 0, 0, 0 },
     { ".debug_abbrev", NULL, NULL, 0, 0, 0 },
     { ".debug_line", NULL, NULL, 0, 0, 0 },
@@ -361,6 +362,7 @@ static struct
     { ".debug_types", NULL, NULL, 0, 0, 0 },
     { ".debug_gdb_scripts", NULL, NULL, 0, 0, 0 },
     { ".gdb_index", NULL, NULL, 0, 0, 0 },
+    { ".gnu_debugaltlink", NULL, NULL, 0, 0, 0 },
     { NULL, NULL, NULL, 0, 0, 0 }
   };
 #define SAVED_SECTIONS (DEBUG_MACRO + 1)
@@ -5700,7 +5702,7 @@ read_macro (DSO *dso)
     {
       macro_htab = htab_try_create (50, macro_hash2, macro_eq2, NULL);
       if (macro_htab == NULL)
-        dwz_oom ();
+	dwz_oom ();
     }
 
   while (ptr < endsec)
@@ -5719,11 +5721,11 @@ read_macro (DSO *dso)
 
       version = read_16 (ptr);
       if (version != 4)
-        {
+	{
 	  error (0, 0, "%s: Unhandled .debug_macro version %d", dso->filename,
 		 version);
 	  return 1;
-        }
+	}
       flags = read_8 (ptr);
       if ((flags & ~2U) != 0)
 	{
@@ -5986,7 +5988,7 @@ handle_macro (void)
   macro_htab = htab_try_create (50, macro_hash, macro_eq, NULL);
   if (macro_htab == NULL)
     dwz_oom ();
-  
+
   endsec = debug_sections[DEBUG_MACRO].data + debug_sections[DEBUG_MACRO].size;
   if (op_multifile)
     {
@@ -8539,7 +8541,8 @@ read_dwarf (DSO *dso)
 				   dso->shdr[i].sh_name);
 
 	if (strncmp (name, ".debug_", sizeof (".debug_") - 1) == 0
-	    || strcmp (name, ".gdb_index") == 0)
+	    || strcmp (name, ".gdb_index") == 0
+	    || strcmp (name, ".gnu_debugaltlink") == 0)
 	  {
 	    for (j = 0; debug_sections[j].name; ++j)
 	      if (strcmp (name, debug_sections[j].name) == 0)
@@ -8613,6 +8616,13 @@ read_dwarf (DSO *dso)
   if (debug_sections[DEBUG_INFO].data == NULL)
     {
       error (0, 0, "%s: .debug_info section not present",
+	     dso->filename);
+      return 1;
+    }
+
+  if (debug_sections[GNU_DEBUGALTLINK].data != NULL)
+    {
+      error (0, 0, "%s: .gnu_debugaltlink section already present",
 	     dso->filename);
       return 1;
     }
@@ -8704,9 +8714,11 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   Elf *elf = NULL;
   GElf_Ehdr ehdr;
   char *e_ident;
-  int fd, i, j;
+  int fd, i, j, addsec = -1;
   GElf_Off off, diff;
   char *filename = NULL;
+  GElf_Word shstrtabadd = 0;
+  char *shstrtab = NULL;
   bool remove_gdb_index = false;
 
   ehdr = dso->ehdr;
@@ -8716,9 +8728,48 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   for (i = 0; debug_sections[i].name; i++)
     if (debug_sections[i].new_size != debug_sections[i].size)
       {
-	diff = (GElf_Off) debug_sections[i].new_size
-	       - (GElf_Off) dso->shdr[debug_sections[i].sec].sh_size;
-	off = dso->shdr[debug_sections[i].sec].sh_offset;
+	if (debug_sections[i].size == 0
+	    && debug_sections[i].sec == 0)
+	  {
+	    unsigned int len;
+	    if (addsec == -1)
+	      for (j = 0; debug_sections[j].name; j++)
+		if (debug_sections[j].new_size
+		    && debug_sections[j].sec
+		    && debug_sections[j].sec > addsec)
+		  addsec = debug_sections[j].sec;
+	    ehdr.e_shnum++;
+	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
+	      {
+		if (dso->shdr[j].sh_offset > ehdr.e_shoff)
+		  dso->shdr[j].sh_offset += ehdr.e_shentsize;
+		if (dso->shdr[j].sh_link > (unsigned int) addsec)
+		  dso->shdr[j].sh_link++;
+		if ((dso->shdr[j].sh_type == SHT_REL
+		     || dso->shdr[j].sh_type == SHT_RELA
+		     || (dso->shdr[j].sh_flags & SHF_INFO_LINK))
+		    && dso->shdr[j].sh_info
+		       > (unsigned int) addsec)
+		  dso->shdr[j].sh_info++;
+	      }
+	    if (ehdr.e_shstrndx > addsec)
+	      ehdr.e_shstrndx++;
+	    len = strlen (debug_sections[i].name) + 1;
+	    dso->shdr[dso->ehdr.e_shstrndx].sh_size += len;
+	    for (j = dso->ehdr.e_shstrndx + 1; j < dso->ehdr.e_shnum; ++j)
+	      dso->shdr[j].sh_offset += len;
+	    if (ehdr.e_shoff > dso->shdr[dso->ehdr.e_shstrndx].sh_offset)
+	      ehdr.e_shoff += len;
+	    shstrtabadd += len;
+	    diff = debug_sections[i].new_size;
+	    off = dso->shdr[addsec].sh_offset;
+	  }
+	else
+	  {
+	    diff = (GElf_Off) debug_sections[i].new_size
+		   - (GElf_Off) dso->shdr[debug_sections[i].sec].sh_size;
+	    off = dso->shdr[debug_sections[i].sec].sh_offset;
+	  }
 	for (j = 1; j < dso->ehdr.e_shnum; ++j)
 	  if (dso->shdr[j].sh_offset > off)
 	    dso->shdr[j].sh_offset += diff;
@@ -8750,6 +8801,17 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  }
       }
 
+  if (shstrtabadd != 0)
+    {
+      shstrtab = (char *) malloc (dso->shdr[dso->ehdr.e_shstrndx].sh_size);
+      if (shstrtab == NULL)
+	{
+	  error (0, ENOMEM, "Failed to adjust .shstrtab for %s",
+		 dso->filename);
+	  return 1;
+	}
+    }
+
   if (file == NULL)
     {
       size_t len = strlen (dso->filename);
@@ -8762,6 +8824,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	{
 	  error (0, errno, "Failed to create temporary file for %s",
 		 dso->filename);
+	  free (shstrtab);
 	  return 1;
 	}
     }
@@ -8771,6 +8834,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       if (fd == -1)
 	{
 	  error (0, errno, "Failed to open %s for writing", file);
+	  free (shstrtab);
 	  return 1;
 	}
     }
@@ -8781,6 +8845,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       error (0, 0, "cannot open ELF file: %s", elf_errmsg (-1));
       unlink (file);
       close (fd);
+      free (shstrtab);
       return 1;
     }
 
@@ -8811,6 +8876,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       unlink (file);
       elf_end (elf);
       close (fd);
+      free (shstrtab);
       return 1;
     }
   elf_flagelf (elf, ELF_C_SET, ELF_F_LAYOUT | ELF_F_PERMISSIVE);
@@ -8845,6 +8911,47 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	      }
 	    break;
 	  }
+      if (i == dso->ehdr.e_shstrndx && shstrtabadd)
+	{
+	  memcpy (shstrtab, data1->d_buf,
+		  dso->shdr[dso->ehdr.e_shstrndx].sh_size
+		  - shstrtabadd);
+	  data2->d_buf = shstrtab;
+	  data2->d_size = dso->shdr[i].sh_size;
+	}
+      if (i == addsec)
+	{
+	  GElf_Word sh_name = dso->shdr[dso->ehdr.e_shstrndx].sh_size
+			      - shstrtabadd;
+	  GElf_Shdr shdr;
+
+	  off = dso->shdr[i].sh_offset + dso->shdr[i].sh_size;
+	  for (j = 0; debug_sections[j].name; j++)
+	    if (debug_sections[j].new_size
+		&& debug_sections[j].size == 0
+		&& debug_sections[j].sec == 0)
+	      {
+		scn = elf_newscn (elf);
+		elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
+		memset (&shdr, '\0', sizeof (shdr));
+		shdr.sh_name = sh_name;
+		sh_name += strlen (debug_sections[j].name) + 1;
+		strcpy (shstrtab + shdr.sh_name, debug_sections[j].name);
+		shdr.sh_type = SHT_PROGBITS;
+		shdr.sh_offset = off;
+		shdr.sh_size = debug_sections[j].new_size;
+		shdr.sh_addralign = 1;
+		off += shdr.sh_size;
+		gelf_update_shdr (scn, &shdr);
+		data2 = elf_newdata (scn);
+		data2->d_buf = debug_sections[j].new_data;
+		data2->d_type = ELF_T_BYTE;
+		data2->d_version = EV_CURRENT;
+		data2->d_size = shdr.sh_size;
+		data2->d_off = 0;
+		data2->d_align = 1;
+	      }
+	}
     }
 
   if (elf_update (elf, ELF_C_WRITE_MMAP) == -1)
@@ -8853,6 +8960,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       unlink (file);
       elf_end (elf);
       close (fd);
+      free (shstrtab);
       return 1;
     }
 
@@ -8862,9 +8970,11 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       unlink (file);
       elf_end (elf);
       close (fd);
+      free (shstrtab);
       return 1;
     }
 
+  free (shstrtab);
   fchown (fd, st->st_uid, st->st_gid);
   fchmod (fd, st->st_mode & 07777);
   close (fd);
@@ -9506,7 +9616,19 @@ dwz (const char *file, const char *outfile)
       else
 	{
 	  if (unlikely (fi_multifile))
-	    write_macro ();
+	    {
+	      size_t len = strlen (multifile) + 1;
+	      debug_sections[GNU_DEBUGALTLINK].new_size = len + 0x14;
+	      debug_sections[GNU_DEBUGALTLINK].new_data
+		= malloc (debug_sections[GNU_DEBUGALTLINK].new_size);
+	      if (debug_sections[GNU_DEBUGALTLINK].new_data == NULL)
+		dwz_oom ();
+	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data, multifile,
+		      len);
+	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data + len,
+		      multifile_sha1, 0x14);
+	      write_macro ();
+	    }
 	  write_abbrev ();
 	  write_info ();
 	  write_loc ();
