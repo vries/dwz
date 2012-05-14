@@ -42,6 +42,10 @@
 #define DW_FORM_GNU_ref_alt	0x1f20
 #define DW_FORM_GNU_strp_alt	0x1f21
 
+#define DW_MACRO_GNU_define_indirect_alt	8
+#define DW_MACRO_GNU_undef_indirect_alt		9
+#define DW_MACRO_GNU_transparent_include_alt	10
+
 #ifndef IGNORE_LOCUS
 # define IGNORE_LOCUS 0
 #endif
@@ -331,21 +335,22 @@ static struct
 #define DEBUG_ABBREV		1
 #define DEBUG_LINE		2
 #define DEBUG_STR		3
-#define DEBUG_ARANGES		4
-#define DEBUG_PUBNAMES		5
-#define DEBUG_PUBTYPES		6
-#define DEBUG_MACINFO		7
-#define DEBUG_LOC		8
-#define DEBUG_FRAME		9
-#define DEBUG_RANGES		10
-#define DEBUG_TYPES		11
-#define DEBUG_MACRO		12
+#define DEBUG_MACRO		4
+#define DEBUG_ARANGES		5
+#define DEBUG_PUBNAMES		6
+#define DEBUG_PUBTYPES		7
+#define DEBUG_MACINFO		8
+#define DEBUG_LOC		9
+#define DEBUG_FRAME		10
+#define DEBUG_RANGES		11
+#define DEBUG_TYPES		12
 #define DEBUG_GDB_SCRIPTS	13
 #define GDB_INDEX		14
     { ".debug_info", NULL, NULL, 0, 0, 0 },
     { ".debug_abbrev", NULL, NULL, 0, 0, 0 },
     { ".debug_line", NULL, NULL, 0, 0, 0 },
     { ".debug_str", NULL, NULL, 0, 0, 0 },
+    { ".debug_macro", NULL, NULL, 0, 0, 0 },
     { ".debug_aranges", NULL, NULL, 0, 0, 0 },
     { ".debug_pubnames", NULL, NULL, 0, 0, 0 },
     { ".debug_pubtypes", NULL, NULL, 0, 0, 0 },
@@ -354,12 +359,11 @@ static struct
     { ".debug_frame", NULL, NULL, 0, 0, 0 },
     { ".debug_ranges", NULL, NULL, 0, 0, 0 },
     { ".debug_types", NULL, NULL, 0, 0, 0 },
-    { ".debug_macro", NULL, NULL, 0, 0, 0 },
     { ".debug_gdb_scripts", NULL, NULL, 0, 0, 0 },
     { ".gdb_index", NULL, NULL, 0, 0, 0 },
     { NULL, NULL, NULL, 0, 0, 0 }
   };
-#define SAVED_SECTIONS (DEBUG_STR + 1)
+#define SAVED_SECTIONS (DEBUG_MACRO + 1)
 /* Pointers that might need cleaning up during write_multifile.  */
 static unsigned char *saved_new_data[SAVED_SECTIONS];
 static size_t saved_new_size[SAVED_SECTIONS];
@@ -371,8 +375,10 @@ static size_t alt_size[SAVED_SECTIONS];
    already.  */
 static unsigned int multi_info_off, multi_abbrev_off;
 static unsigned int multi_line_off, multi_str_off;
+static unsigned int multi_macro_off;
 static int multi_info_fd = -1, multi_abbrev_fd = -1;
 static int multi_line_fd = -1, multi_str_fd = -1;
+static int multi_macro_fd = -1;
 
 /* Copy of one of the input file's ehdr.  */
 static GElf_Ehdr multi_ehdr;
@@ -3739,7 +3745,6 @@ read_debug_info (DSO *dso)
   struct dw_file *cu_files = NULL;
   unsigned int cu_nfiles = 0;
   bool note_strp_forms = multifile != NULL && !op_multifile && !rd_multifile;
-
   struct abbrev_tag tag, *t;
   unsigned int cu_chunk = 0;
   struct dw_cu *cu_tail = NULL;
@@ -5585,6 +5590,600 @@ line_htab_lookup (struct dw_cu *cu, unsigned int id)
     return ((struct line_entry *) *slot)->new_id;
 }
 
+static htab_t macro_htab;
+
+static htab_t alt_macro_htab;
+
+struct macro_entry
+{
+  unsigned char *ptr;
+  unsigned int hash;
+  unsigned int len;
+};
+ALIGN_STRUCT (macro_entry)
+
+/* Hash function in macro_htab.  */
+static hashval_t
+macro_hash (const void *p)
+{
+  struct macro_entry *m = (struct macro_entry *)p;
+
+  return m->hash & ~1U;
+}
+
+/* Equality function in macro_htab.  */
+static int
+macro_eq (const void *p, const void *q)
+{
+  struct macro_entry *m1 = (struct macro_entry *)p;
+  struct macro_entry *m2 = (struct macro_entry *)q;
+  unsigned char *p1, *p2, *s1, op;
+  unsigned int strp1, strp2;
+
+  if (m1->hash != m2->hash || m1->len != m2->len)
+    return 0;
+  if (rd_multifile)
+    return 0;
+
+  s1 = m1->ptr;
+  p2 = m2->ptr;
+  p1 = s1 + 3;
+
+  while (1)
+    {
+      op = read_8 (p1);
+      if (op == 0)
+	break;
+
+      switch (op)
+	{
+	case DW_MACRO_GNU_define:
+	case DW_MACRO_GNU_undef:
+	  read_uleb128 (p1);
+	  p1 = (unsigned char *) strchr ((char *) p1, '\0') + 1;
+	  break;
+	case DW_MACRO_GNU_define_indirect:
+	case DW_MACRO_GNU_undef_indirect:
+	  read_uleb128 (p1);
+	  if (memcmp (s1, p2, p1 - s1) != 0)
+	    return 0;
+	  p2 += p1 - s1;
+	  strp1 = read_32 (p1);
+	  strp2 = read_32 (p2);
+	  if (op_multifile)
+	    {
+	      if (strcmp ((char *) debug_sections[DEBUG_STR].data + strp1,
+			  (char *) debug_sections[DEBUG_STR].data + strp2)
+		  != 0)
+		return 0;
+	    }
+	  else if (lookup_strp_offset (strp2) != strp1)
+	    return 0;
+	  s1 = p1;
+	  break;
+	default:
+	  abort ();
+	}
+    }
+  return memcmp (s1, p2, p1 - s1) == 0;
+}
+
+/* Hash function in macro_htab.  */
+static hashval_t
+macro_hash2 (const void *p)
+{
+  struct macro_entry *m = (struct macro_entry *)p;
+
+  return m->ptr - debug_sections[DEBUG_MACRO].data;
+}
+
+/* Equality function in macro_htab.  */
+static int
+macro_eq2 (const void *p, const void *q)
+{
+  struct macro_entry *m1 = (struct macro_entry *)p;
+  struct macro_entry *m2 = (struct macro_entry *)q;
+  return m1->ptr == m2->ptr;
+}
+
+static int
+read_macro (DSO *dso)
+{
+  unsigned char *ptr, *endsec, *dst = NULL;
+  unsigned int version, flags, op, strp;
+  struct macro_entry me, *m;
+
+  ptr = debug_sections[DEBUG_MACRO].data;
+  endsec = ptr + debug_sections[DEBUG_MACRO].size;
+  debug_sections[DEBUG_MACRO].new_size = 0;
+  if (!wr_multifile)
+    {
+      macro_htab = htab_try_create (50, macro_hash2, macro_eq2, NULL);
+      if (macro_htab == NULL)
+        dwz_oom ();
+    }
+
+  while (ptr < endsec)
+    {
+      unsigned char *start = ptr, *s = ptr;
+      bool can_share = true;
+      hashval_t hash = 0;
+      unsigned int strp;
+      void **slot;
+
+      if (ptr + 4 > endsec)
+	{
+	  error (0, 0, "%s: .debug_macro header too small", dso->filename);
+	  return 1;
+	}
+
+      version = read_16 (ptr);
+      if (version != 4)
+        {
+	  error (0, 0, "%s: Unhandled .debug_macro version %d", dso->filename,
+		 version);
+	  return 1;
+        }
+      flags = read_8 (ptr);
+      if ((flags & ~2U) != 0)
+	{
+	  error (0, 0, "%s: Unhandled .debug_macro flags %d", dso->filename,
+		 flags);
+	  return 1;
+	}
+      if ((flags & 2) != 0)
+	{
+	  ptr += 4;
+	  can_share = false;
+	}
+      if (fi_multifile && alt_macro_htab == NULL)
+	can_share = false;
+
+      op = -1U;
+      while (ptr < endsec)
+	{
+	  op = read_8 (ptr);
+	  if (op == 0)
+	    break;
+
+	  switch (op)
+	    {
+	    case DW_MACRO_GNU_define:
+	    case DW_MACRO_GNU_undef:
+	      read_uleb128 (ptr);
+	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
+	      break;
+	    case DW_MACRO_GNU_start_file:
+	      read_uleb128 (ptr);
+	      read_uleb128 (ptr);
+	      can_share = false;
+	      break;
+	    case DW_MACRO_GNU_end_file:
+	      can_share = false;
+	      break;
+	    case DW_MACRO_GNU_define_indirect:
+	    case DW_MACRO_GNU_undef_indirect:
+	      read_uleb128 (ptr);
+	      strp = read_32 (ptr);
+	      note_strp_offset (strp);
+	      if (wr_multifile)
+		{
+		  break;
+		}
+	      if (can_share)
+		hash = iterative_hash (s, ptr - 4 - s, hash);
+	      if (can_share)
+		{
+		  unsigned char *p = debug_sections[DEBUG_STR].data + strp;
+		  unsigned int len = strlen ((char *) p);
+		  hash = iterative_hash (p, len, hash);
+		  s = ptr;
+		}
+	      break;
+	    case DW_MACRO_GNU_transparent_include:
+	      ptr += 4;
+	      can_share = false;
+	      break;
+	    default:
+	      error (0, 0, "%s: Unhandled .debug_macro opcode 0x%x",
+		     dso->filename, op);
+	      return 1;
+	    }
+	}
+      if (op != 0)
+	{
+	  error (0, 0, "%s: .debug_macro section not zero terminated",
+		 dso->filename);
+	  return 1;
+	}
+      if (wr_multifile)
+	{
+	  if (can_share)
+	    debug_sections[DEBUG_MACRO].new_size += ptr - start;
+	  continue;
+	}
+
+      me.ptr = start;
+      if (can_share)
+	{
+	  hash = iterative_hash (s, ptr - s, hash);
+	  me.hash = hash & ~1U;
+	  me.len = ptr - start;
+	  m = (struct macro_entry *)
+	      htab_find_with_hash (alt_macro_htab, &me, me.hash);
+	  if (m == NULL)
+	    can_share = false;
+	  else
+	    me.hash = m->ptr - alt_data[DEBUG_MACRO];
+	}
+      if (!can_share)
+	{
+	  me.len = 0;
+	  me.hash = debug_sections[DEBUG_MACRO].new_size;
+	  debug_sections[DEBUG_MACRO].new_size += ptr - start;
+	}
+      slot
+	= htab_find_slot_with_hash (macro_htab, &me,
+				    me.ptr - debug_sections[DEBUG_MACRO].data,
+				    INSERT);
+      if (slot == NULL)
+	dwz_oom ();
+      else
+	{
+	  assert (*slot == NULL);
+	  m = pool_alloc (macro_entry, sizeof (*m));
+	  *m = me;
+	  *slot = (void *) m;
+	}
+    }
+
+  if (!wr_multifile)
+    return 0;
+
+  debug_sections[DEBUG_MACRO].new_data
+    = (unsigned char *) malloc (debug_sections[DEBUG_MACRO].new_size);
+  if (debug_sections[DEBUG_MACRO].new_data == NULL)
+    dwz_oom ();
+  dst = debug_sections[DEBUG_MACRO].new_data;
+  for (ptr = debug_sections[DEBUG_MACRO].data; ptr < endsec; )
+    {
+      unsigned char *start = ptr;
+      bool can_share = true;
+
+      ptr += 2;
+      flags = read_8 (ptr);
+      if ((flags & 2) != 0)
+	{
+	  ptr += 4;
+	  can_share = false;
+	}
+
+      while (1)
+	{
+	  op = read_8 (ptr);
+	  if (op == 0)
+	    break;
+
+	  switch (op)
+	    {
+	    case DW_MACRO_GNU_define:
+	    case DW_MACRO_GNU_undef:
+	      read_uleb128 (ptr);
+	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
+	      break;
+	    case DW_MACRO_GNU_start_file:
+	      read_uleb128 (ptr);
+	      read_uleb128 (ptr);
+	      can_share = false;
+	      break;
+	    case DW_MACRO_GNU_end_file:
+	      can_share = false;
+	      break;
+	    case DW_MACRO_GNU_define_indirect:
+	    case DW_MACRO_GNU_undef_indirect:
+	      read_uleb128 (ptr);
+	      ptr += 4;
+	      break;
+	    case DW_MACRO_GNU_transparent_include:
+	      ptr += 4;
+	      can_share = false;
+	      break;
+	    default:
+	      abort ();
+	    }
+	}
+      if (can_share)
+	{
+	  ptr = start + 3;
+
+	  while (1)
+	    {
+	      op = read_8 (ptr);
+	      if (op == 0)
+		break;
+
+	      switch (op)
+		{
+		case DW_MACRO_GNU_define:
+		case DW_MACRO_GNU_undef:
+		  read_uleb128 (ptr);
+		  ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
+		  break;
+		case DW_MACRO_GNU_define_indirect:
+		case DW_MACRO_GNU_undef_indirect:
+		  read_uleb128 (ptr);
+		  memcpy (dst, start, ptr - start);
+		  dst += ptr - start;
+		  strp = lookup_strp_offset (read_32 (ptr));
+		  write_32 (dst, strp);
+		  start = ptr;
+		  break;
+		default:
+		  abort ();
+		}
+	    }
+	  memcpy (dst, start, ptr - start);
+	  dst += ptr - start;
+	}
+    }
+  assert (dst == debug_sections[DEBUG_MACRO].new_data
+		 + debug_sections[DEBUG_MACRO].new_size);
+
+  return 0;
+}
+
+static int
+optimize_write_macro (void **slot, void *data)
+{
+  struct macro_entry *m = (struct macro_entry *) *slot;
+  unsigned char **pp = (unsigned char **) data;
+  unsigned char *s = m->ptr;
+  unsigned char *p = s + 3, *q, op;
+  unsigned int strp;
+
+  if ((m->hash & 1) == 0)
+    return 1;
+  while (1)
+    {
+      op = read_8 (p);
+      if (op == 0)
+	break;
+
+      switch (op)
+	{
+	case DW_MACRO_GNU_define:
+	case DW_MACRO_GNU_undef:
+	  read_uleb128 (p);
+	  p = (unsigned char *) strchr ((char *) p, '\0') + 1;
+	  break;
+	case DW_MACRO_GNU_define_indirect:
+	case DW_MACRO_GNU_undef_indirect:
+	  read_uleb128 (p);
+	  memcpy (*pp, s, p - s);
+	  *pp += p - s;
+	  strp = read_32 (p);
+	  q = *pp;
+	  write_32 (q, lookup_strp_offset (strp));
+	  *pp += 4;
+	  s = p;
+	  break;
+	default:
+	  abort ();
+	}
+    }
+  memcpy (*pp, s, p - s);
+  *pp += p - s;
+  return 1;
+}
+
+static void
+handle_macro (void)
+{
+  unsigned char *ptr, *endsec, op;
+  unsigned char *to_free = NULL;
+  struct macro_entry me, *m;
+
+  macro_htab = htab_try_create (50, macro_hash, macro_eq, NULL);
+  if (macro_htab == NULL)
+    dwz_oom ();
+  
+  endsec = debug_sections[DEBUG_MACRO].data + debug_sections[DEBUG_MACRO].size;
+  if (op_multifile)
+    {
+      debug_sections[DEBUG_MACRO].new_size = 0;
+      to_free = obstack_alloc (&ob, 1);
+    }
+
+  for (ptr = debug_sections[DEBUG_MACRO].data; ptr < endsec; )
+    {
+      unsigned char *start = ptr, *s = ptr, *p;
+      hashval_t hash = 0;
+      unsigned int len;
+      void **slot;
+      bool can_share = true;
+
+      ptr += 3;
+      while (1)
+	{
+	  op = read_8 (ptr);
+	  if (op == 0)
+	    break;
+
+	  switch (op)
+	    {
+	    case DW_MACRO_GNU_define:
+	    case DW_MACRO_GNU_undef:
+	      read_uleb128 (ptr);
+	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
+	      break;
+	    case DW_MACRO_GNU_define_indirect:
+	    case DW_MACRO_GNU_undef_indirect:
+	      read_uleb128 (ptr);
+	      hash = iterative_hash (s, ptr - s, hash);
+	      p = debug_sections[DEBUG_STR].data + read_32 (ptr);
+	      len = strlen ((char *) p);
+	      hash = iterative_hash (p, len, hash);
+	      if (op_multifile
+		  /* This should only happen if there were multiple
+		     same transparent units within a single object file.  */
+		  && htab_find_with_hash (strp_htab, p,
+					  iterative_hash (p, len, 0)) == NULL)
+		can_share = false;
+	      s = ptr;
+	      break;
+	    default:
+	      abort ();
+	    }
+	}
+      if (!can_share)
+	continue;
+      hash = iterative_hash (s, ptr - s, hash);
+      me.ptr = start;
+      me.hash = hash & ~1U;
+      me.len = ptr - start;
+      slot = htab_find_slot_with_hash (macro_htab, &me, me.hash, INSERT);
+      if (slot == NULL)
+	dwz_oom ();
+      else if (*slot != NULL)
+	{
+	  m = (struct macro_entry *) *slot;
+	  if (op_multifile && (m->hash & 1) == 0)
+	    {
+	      m->hash |= 1;
+	      debug_sections[DEBUG_MACRO].new_size += me.len;
+	    }
+	}
+      else if (op_multifile)
+	{
+	  m = (struct macro_entry *) obstack_alloc (&ob, sizeof (*m));
+	  *m = me;
+	  *slot = (void *) m;
+	}
+      else
+	{
+	  m = pool_alloc (macro_entry, sizeof (*m));
+	  *m = me;
+	  *slot = (void *) m;
+	}
+    }
+
+  if (op_multifile)
+    {
+      if (debug_sections[DEBUG_MACRO].new_size)
+	{
+	  unsigned char *p;
+	  debug_sections[DEBUG_MACRO].new_data
+	    = malloc (debug_sections[DEBUG_MACRO].new_size);
+	  p = debug_sections[DEBUG_MACRO].new_data;
+	  htab_traverse (macro_htab, optimize_write_macro, &p);
+	  assert (p == debug_sections[DEBUG_MACRO].new_data
+		       + debug_sections[DEBUG_MACRO].new_size);
+	  htab_delete (macro_htab);
+	  macro_htab = NULL;
+	}
+      obstack_free (&ob, (void *) to_free);
+    }
+}
+
+static void
+write_macro (void)
+{
+  unsigned char *ptr, *endsec, *dst;
+  unsigned int op, strp;
+  struct macro_entry me, *m;
+
+  endsec = debug_sections[DEBUG_MACRO].data + debug_sections[DEBUG_MACRO].size;
+  debug_sections[DEBUG_MACRO].new_data
+    = (unsigned char *) malloc (debug_sections[DEBUG_MACRO].new_size);
+  if (debug_sections[DEBUG_MACRO].new_data == NULL)
+    dwz_oom ();
+  dst = debug_sections[DEBUG_MACRO].new_data;
+  for (ptr = debug_sections[DEBUG_MACRO].data; ptr < endsec; )
+    {
+      unsigned char *s = ptr;
+      unsigned char flags;
+
+      me.ptr = ptr;
+      m = (struct macro_entry *)
+	  htab_find_with_hash (macro_htab, &me,
+			       me.ptr - debug_sections[DEBUG_MACRO].data);
+      if (m->len)
+	{
+	  ptr += m->len;
+	  continue;
+	}
+
+      ptr += 2;
+      flags = read_8 (ptr);
+      if ((flags & 2) != 0)
+	ptr += 4;
+
+      while (1)
+	{
+	  op = read_8 (ptr);
+	  if (op == 0)
+	    break;
+
+	  switch (op)
+	    {
+	    case DW_MACRO_GNU_define:
+	    case DW_MACRO_GNU_undef:
+	      read_uleb128 (ptr);
+	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
+	      break;
+	    case DW_MACRO_GNU_start_file:
+	      read_uleb128 (ptr);
+	      read_uleb128 (ptr);
+	      break;
+	    case DW_MACRO_GNU_end_file:
+	      break;
+	    case DW_MACRO_GNU_define_indirect:
+	    case DW_MACRO_GNU_undef_indirect:
+	      memcpy (dst, s, ptr - 1 - s);
+	      dst += ptr - 1 - s;
+	      s = ptr - 1;
+	      read_uleb128 (ptr);
+	      strp = read_32 (ptr);
+	      if (note_strp_offset2 (strp) == DW_FORM_GNU_strp_alt)
+		{
+		  *dst = op == DW_MACRO_GNU_define_indirect
+			 ? DW_MACRO_GNU_define_indirect_alt
+			 : DW_MACRO_GNU_undef_indirect_alt;
+		  dst++;
+		  s++;
+		}
+	      memcpy (dst, s, ptr - 4 - s);
+	      dst += ptr - 4 - s;
+	      write_32 (dst, lookup_strp_offset (strp));
+	      s = ptr;
+	      break;
+	    case DW_MACRO_GNU_transparent_include:
+	      memcpy (dst, s, ptr - 1 - s);
+	      dst += ptr - 1 - s;
+	      me.ptr = debug_sections[DEBUG_MACRO].data + read_32 (ptr);
+	      m = (struct macro_entry *)
+		  htab_find_with_hash (macro_htab, &me,
+				       me.ptr
+				       - debug_sections[DEBUG_MACRO].data);
+	      if (m->len)
+		*dst = DW_MACRO_GNU_transparent_include_alt;
+	      else
+		*dst = DW_MACRO_GNU_transparent_include;
+	      dst++;
+	      write_32 (dst, m->hash);
+	      s = ptr;
+	      break;
+	    default:
+	      abort ();
+	    }
+	}
+      memcpy (dst, s, ptr - s);
+      dst += ptr - s;
+    }
+  assert (dst == debug_sections[DEBUG_MACRO].new_data
+		 + debug_sections[DEBUG_MACRO].new_size);
+}
+
 /* Compute new abbreviations for DIE (with reference DIE REF).
    T is a temporary buffer.  Fill in *NDIES - number of DIEs
    in the tree, and record pairs of referrer/referree DIEs for
@@ -5725,6 +6324,35 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 		  t->attr[j].attr = reft->attr[i].attr;
 		  t->attr[j++].form = form;
 		  continue;
+		}
+
+	      if (unlikely (fi_multifile)
+		  && reft->attr[i].attr == DW_AT_GNU_macros
+		  && alt_macro_htab != NULL)
+		{
+		  struct macro_entry me, *m;
+
+		  switch (form)
+		    {
+		    case DW_FORM_data4:
+		    case DW_FORM_sec_offset:
+		      value = read_32 (ptr);
+		      break;
+		    default:
+		      error (0, 0, "Unhandled DW_FORM_%d for DW_AT_GNU_macros",
+			     form);
+		      return 1;
+		    }
+		  me.ptr = debug_sections[DEBUG_MACRO].data + value;
+		  m = (struct macro_entry *)
+		    htab_find_with_hash (macro_htab, &me, value);
+		  if (m->len)
+		    {
+		      error (0, 0, "DW_AT_GNU_macros referencing "
+				   "transparent include");
+		      return 1;
+		    }
+		  ptr -= 4;
 		}
 
 	      switch (form)
@@ -7093,6 +7721,23 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		case DW_FORM_data4: write_32 (ptr, value); break;
 		default: abort ();
 		}
+	      j++;
+	      continue;
+	    }
+
+	  if (unlikely (fi_multifile)
+	      && reft->attr[i].attr == DW_AT_GNU_macros
+	      && alt_macro_htab != NULL)
+	    {
+	      struct macro_entry me, *m;
+
+	      memcpy (ptr, orig_ptr, inptr - orig_ptr);
+	      ptr += inptr - orig_ptr;
+	      value = read_32 (inptr);
+	      me.ptr = debug_sections[DEBUG_MACRO].data + value;
+	      m = (struct macro_entry *)
+		  htab_find_with_hash (macro_htab, &me, value);
+	      write_32 (ptr, m->hash);
 	      j++;
 	      continue;
 	    }
@@ -8585,7 +9230,7 @@ write_multifile_line (void)
 }
 
 static int
-write_multifile (void)
+write_multifile (DSO *dso)
 {
   struct dw_cu *cu;
   bool any_cus = false;
@@ -8632,6 +9277,8 @@ write_multifile (void)
       multifile_mode = MULTIFILE_MODE_WR;
       if (compute_abbrevs (NULL))
 	ret = 1;
+      else if (debug_sections[DEBUG_MACRO].data && read_macro (dso))
+	ret = 1;
       else if ((unsigned int) (multi_info_off
 			       + debug_sections[DEBUG_INFO].new_size)
 	       < multi_info_off
@@ -8641,7 +9288,10 @@ write_multifile (void)
 	       || (unsigned int) (multi_str_off
 				  + (max_strp_off ? max_strp_off
 				     : debug_sections[DEBUG_ABBREV].size))
-		  < multi_str_off)
+		  < multi_str_off
+	       || (unsigned int) (multi_macro_off
+				  + debug_sections[DEBUG_MACRO].new_size)
+		  < multi_macro_off)
 	{
 	  error (0, 0, "Multifile temporary files too large");
 	  multifile = NULL;
@@ -8665,6 +9315,11 @@ write_multifile (void)
 	      || write (multi_str_fd, debug_sections[DEBUG_STR].data,
 			debug_sections[DEBUG_STR].size)
 		 != (ssize_t) debug_sections[DEBUG_STR].size
+	      || (debug_sections[DEBUG_MACRO].new_data
+		  && write (multi_macro_fd,
+			    debug_sections[DEBUG_MACRO].new_data,
+			    debug_sections[DEBUG_MACRO].new_size)
+		     != (ssize_t) debug_sections[DEBUG_MACRO].new_size)
 	      || (strp_htab != NULL && write_multifile_strp ())
 	      || (line_htab != NULL && write_multifile_line ()))
 	    {
@@ -8677,6 +9332,7 @@ write_multifile (void)
 	      multi_abbrev_off += debug_sections[DEBUG_ABBREV].new_size;
 	      multi_str_off += max_strp_off ? max_strp_off
 			       : debug_sections[DEBUG_STR].size;
+	      multi_macro_off += debug_sections[DEBUG_MACRO].new_size;
 	      multifile = mfile;
 	    }
 	}
@@ -8804,7 +9460,9 @@ dwz (const char *file, const char *outfile)
       if (read_dwarf (dso)
 	  || partition_dups ()
 	  || create_import_tree ()
-	  || (unlikely (fi_multifile) && remove_empty_pus ())
+	  || (unlikely (fi_multifile)
+	      && (remove_empty_pus ()
+		  || read_macro (dso)))
 	  || read_debug_types (dso)
 	  || compute_abbrevs (dso)
 	  || (unlikely (fi_multifile) && (finalize_strp (false), 0)))
@@ -8815,21 +9473,25 @@ dwz (const char *file, const char *outfile)
       else if (debug_sections[DEBUG_INFO].new_size
 	       + debug_sections[DEBUG_ABBREV].new_size
 	       + debug_sections[DEBUG_STR].new_size
+	       + debug_sections[DEBUG_MACRO].new_size
 	       >= debug_sections[DEBUG_INFO].size
 		  + debug_sections[DEBUG_ABBREV].size
-		  + debug_sections[DEBUG_STR].size)
+		  + debug_sections[DEBUG_STR].size
+		  + debug_sections[DEBUG_MACRO].size)
 	{
 	  error (0, 0, "%s: DWARF compression not beneficial "
 		       "- old size %ld new size %ld", dso->filename,
 		 (unsigned long) (debug_sections[DEBUG_INFO].size
 				  + debug_sections[DEBUG_ABBREV].size
-				  + debug_sections[DEBUG_STR].size),
+				  + debug_sections[DEBUG_STR].size
+				  + debug_sections[DEBUG_MACRO].size),
 		 (unsigned long) (debug_sections[DEBUG_INFO].new_size
 				  + debug_sections[DEBUG_ABBREV].new_size
-				  + debug_sections[DEBUG_STR].new_size));
+				  + debug_sections[DEBUG_STR].new_size
+				  + debug_sections[DEBUG_MACRO].new_size));
 
 	  if (multifile && !fi_multifile)
-	    write_multifile ();
+	    write_multifile (dso);
 
 	  cleanup ();
 	  if (outfile != NULL)
@@ -8842,6 +9504,8 @@ dwz (const char *file, const char *outfile)
 	}
       else
 	{
+	  if (unlikely (fi_multifile))
+	    write_macro ();
 	  write_abbrev ();
 	  write_info ();
 	  write_loc ();
@@ -8849,7 +9513,7 @@ dwz (const char *file, const char *outfile)
 	  write_gdb_index ();
 
 	  if (multifile && !fi_multifile)
-	    write_multifile ();
+	    write_multifile (dso);
 
 	  cleanup ();
 
@@ -8894,7 +9558,7 @@ optimize_multifile (void)
   char *e_ident;
   const char shstrtab[]
     = "\0.shstrtab\0.note.gnu.build-id\0"
-      ".debug_info\0.debug_abbrev\0.debug_line\0.debug_str";
+      ".debug_info\0.debug_abbrev\0.debug_line\0.debug_str\0.debug_macro";
   const char *p;
   unsigned char note[0x24], *np;
   struct sha1_ctx ctx;
@@ -8923,10 +9587,16 @@ optimize_multifile (void)
   debug_sections[DEBUG_STR].size = multi_str_off;
   debug_sections[DEBUG_STR].data
     = mmap (NULL, multi_str_off, PROT_READ, MAP_PRIVATE, multi_str_fd, 0);
+  debug_sections[DEBUG_MACRO].size = multi_macro_off;
+  debug_sections[DEBUG_MACRO].data
+    = multi_macro_off
+      ? mmap (NULL, multi_macro_off, PROT_READ, MAP_PRIVATE, multi_macro_fd, 0)
+      : NULL;
   if (debug_sections[DEBUG_INFO].data == MAP_FAILED
       || debug_sections[DEBUG_ABBREV].data == MAP_FAILED
       || debug_sections[DEBUG_LINE].data == MAP_FAILED
-      || debug_sections[DEBUG_STR].data == MAP_FAILED)
+      || debug_sections[DEBUG_STR].data == MAP_FAILED
+      || debug_sections[DEBUG_MACRO].data == MAP_FAILED)
     {
       error (0, 0, "Error mmapping multi-file temporary files");
     fail:
@@ -8950,6 +9620,10 @@ optimize_multifile (void)
       if (debug_sections[DEBUG_STR].data != MAP_FAILED)
 	munmap (debug_sections[DEBUG_STR].data,
 		debug_sections[DEBUG_STR].size);
+      if (debug_sections[DEBUG_MACRO].data != MAP_FAILED
+	  && debug_sections[DEBUG_MACRO].data != NULL)
+	munmap (debug_sections[DEBUG_MACRO].data,
+		debug_sections[DEBUG_MACRO].size);
       return -1;
     }
 
@@ -9058,6 +9732,9 @@ optimize_multifile (void)
 	}
       else
 	strp_tail_off_list = finalize_strp (true);
+
+      if (debug_sections[DEBUG_MACRO].data)
+	handle_macro ();
     }
 
   np = note;
@@ -9225,6 +9902,9 @@ optimize_multifile (void)
 	  debug_sections[DEBUG_ABBREV].size);
   munmap (debug_sections[DEBUG_LINE].data, debug_sections[DEBUG_LINE].size);
   munmap (debug_sections[DEBUG_STR].data, debug_sections[DEBUG_STR].size);
+  if (debug_sections[DEBUG_MACRO].data)
+    munmap (debug_sections[DEBUG_MACRO].data,
+	    debug_sections[DEBUG_MACRO].size);
 
   for (i = 0; debug_sections[i].name; ++i)
     {
@@ -9320,12 +10000,17 @@ read_multifile (int fd)
 	    }
 	}
 
+      if (debug_sections[DEBUG_MACRO].data)
+	handle_macro ();
+
       alt_strp_htab = strp_htab;
       strp_htab = NULL;
       alt_off_htab = off_htab;
       off_htab = NULL;
       alt_dup_htab = dup_htab;
       dup_htab = NULL;
+      alt_macro_htab = macro_htab;
+      macro_htab = NULL;
       alt_first_cu = first_cu;
       alt_pool = pool;
       pool = NULL;
@@ -9448,10 +10133,15 @@ main (int argc, char *argv[])
 	  multi_str_fd = mkstemp (buf);
 	  if (multi_str_fd != -1)
 	    unlink (buf);
+	  strcpy (buf, "/tmp/dwz.debug_macro.XXXXXX");
+	  multi_macro_fd = mkstemp (buf);
+	  if (multi_macro_fd != -1)
+	    unlink (buf);
 	  if (multi_info_fd == -1
 	      || multi_abbrev_fd == -1
 	      || multi_line_fd == -1
-	      || multi_str_fd == -1)
+	      || multi_str_fd == -1
+	      || multi_macro_fd == -1)
 	    {
 	      error (0, 0, "Could not create multifile temporary files");
 	      multifile = NULL;
@@ -9486,6 +10176,7 @@ main (int argc, char *argv[])
 	  strp_htab = alt_strp_htab;
 	  off_htab = alt_off_htab;
 	  dup_htab = alt_dup_htab;
+	  macro_htab = alt_macro_htab;
 	  pool = alt_pool;
 	  ob = alt_ob;
 	  ob2 = alt_ob2;
