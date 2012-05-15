@@ -10069,6 +10069,7 @@ read_multifile (int fd)
       close (fd);
       free (dso);
       ret = NULL;
+      alt_off_htab = NULL;
     }
   else
     {
