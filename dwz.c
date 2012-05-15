@@ -742,22 +742,16 @@ compute_abbrev_hash (struct abbrev_tag *t)
 /* Maximum number of attributes in a DIE.  */
 static unsigned int max_nattr;
 
-/* Parse a .debug_abbrev entry at PTR.  If !DEBUG_TYPES, return
-   first abbrev htab style hash table, otherwise return cu->cu_new_abbrev
-   style hash table (this is used for reading .debug_types abbreviations
-   which we are not rewriting).  */
+/* Parse a .debug_abbrev entry at PTR.  */
 static htab_t
-read_abbrev (DSO *dso, unsigned char *ptr, bool debug_types)
+read_abbrev (DSO *dso, unsigned char *ptr)
 {
   htab_t h;
   unsigned int attr, form;
   struct abbrev_tag *t;
   void **slot;
 
-  if (debug_types)
-    h = htab_try_create (50, abbrev_hash, abbrev_eq2, NULL);
-  else
-    h = htab_try_create (50, abbrev_hash, abbrev_eq, NULL);
+  h = htab_try_create (50, abbrev_hash, abbrev_eq, NULL);
   if (h == NULL)
     dwz_oom ();
 
@@ -806,8 +800,6 @@ read_abbrev (DSO *dso, unsigned char *ptr, bool debug_types)
       read_uleb128 (ptr);
       if (t->nattr > max_nattr)
 	max_nattr = t->nattr;
-      if (debug_types)
-	compute_abbrev_hash (t);
       slot = htab_find_slot_with_hash (h, t, t->hash, INSERT);
       if (slot == NULL)
 	{
@@ -993,12 +985,32 @@ static htab_t off_htab;
 
 static htab_t alt_off_htab;
 
+static htab_t types_off_htab;
+
 /* Function to add DIE into the hash table (and create the hash table
    when not already created).  */
 static int
 off_htab_add_die (dw_die_ref die)
 {
   void **slot;
+
+  if (unlikely (die->die_cu->cu_kind == CU_TYPES))
+    {
+      if (types_off_htab == NULL)
+	{
+	  types_off_htab = htab_try_create (100000, off_hash, off_eq, NULL);
+	  if (types_off_htab == NULL)
+	    dwz_oom ();
+	}
+
+      slot = htab_find_slot (types_off_htab, die, INSERT);
+      if (slot == NULL)
+	dwz_oom ();
+      assert (*slot == NULL);
+      *slot = die;
+      return 0;
+    }
+
   if (off_htab == NULL)
     {
       off_htab = htab_try_create (100000, off_hash, off_eq, NULL);
@@ -1024,8 +1036,12 @@ off_htab_lookup (struct dw_cu *cu, unsigned int die_offset)
 {
   struct dw_die die;
   die.die_offset = die_offset;
+  if (cu == NULL)
+    return (dw_die_ref) htab_find_with_hash (off_htab, &die, die_offset);
   if (unlikely (cu->cu_kind == CU_ALT))
     return (dw_die_ref) htab_find_with_hash (alt_off_htab, &die, die_offset);
+  if (unlikely (cu->cu_kind == CU_TYPES))
+    return (dw_die_ref) htab_find_with_hash (types_off_htab, &die, die_offset);
   return (dw_die_ref) htab_find_with_hash (off_htab, &die, die_offset);
 }
 
@@ -1039,6 +1055,8 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
   unsigned char *ptr;
   if (unlikely (fi_multifile) && die->die_cu->cu_kind == CU_ALT)
     ptr = alt_data[DEBUG_INFO];
+  else if (die->die_cu->cu_kind == CU_TYPES)
+    ptr = debug_sections[DEBUG_TYPES].data;
   else
     ptr = debug_sections[DEBUG_INFO].data;
   ptr += die->die_offset;
@@ -1316,7 +1334,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	    ptr += ptr_size;
 	  else
 	    ptr += 4;
-	  ref = off_htab_lookup (die->die_cu, addr);
+	  ref = off_htab_lookup (NULL, addr);
 	  if (ref == NULL)
 	    {
 	      error (0, 0, "%s: Couldn't find DIE referenced by DW_OP_%d",
@@ -3737,7 +3755,7 @@ remove_unneeded (dw_die_ref die, unsigned int phase)
    for each CU in it construct internal represetnation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
 static int
-read_debug_info (DSO *dso)
+read_debug_info (DSO *dso, int kind)
 {
   unsigned char *ptr, *endcu, *endsec;
   unsigned int value;
@@ -3750,8 +3768,10 @@ read_debug_info (DSO *dso)
   struct abbrev_tag tag, *t;
   unsigned int cu_chunk = 0;
   struct dw_cu *cu_tail = NULL;
+  unsigned int cu_kind = rd_multifile ? CU_ALT
+			 : kind == DEBUG_TYPES ? CU_TYPES : CU_NORMAL;
 
-  if (!fi_multifile)
+  if (likely (!fi_multifile && kind != DEBUG_TYPES))
     {
       dup_htab = htab_try_create (100000, die_hash,
 				  rd_multifile ? die_eq2 : die_eq, NULL);
@@ -3759,11 +3779,11 @@ read_debug_info (DSO *dso)
 	dwz_oom ();
     }
 
-  ptr = debug_sections[DEBUG_INFO].data;
-  endsec = ptr + debug_sections[DEBUG_INFO].size;
+  ptr = debug_sections[kind].data;
+  endsec = ptr + debug_sections[kind].size;
   while (ptr < endsec)
     {
-      unsigned int cu_offset = ptr - debug_sections[DEBUG_INFO].data;
+      unsigned int cu_offset = ptr - debug_sections[kind].data;
       unsigned int tick = 0, culen;
       int cu_version;
       struct dw_cu *cu;
@@ -3771,9 +3791,10 @@ read_debug_info (DSO *dso)
       bool present;
       unsigned int debug_line_off;
 
-      if (ptr + 11 > endsec)
+      if (ptr + (kind == DEBUG_TYPES ? 23 : 11) > endsec)
 	{
-	  error (0, 0, "%s: .debug_info CU header too small", dso->filename);
+	  error (0, 0, "%s: %s CU header too small", dso->filename,
+		 debug_sections[kind].name);
 	  goto fail;
 	}
 
@@ -3788,7 +3809,8 @@ read_debug_info (DSO *dso)
 
       if (endcu > endsec)
 	{
-	  error (0, 0, "%s: .debug_info too small", dso->filename);
+	  error (0, 0, "%s: %s too small", dso->filename,
+		 debug_sections[kind].name);
 	  goto fail;
 	}
 
@@ -3869,16 +3891,19 @@ read_debug_info (DSO *dso)
 	{
 	  if (abbrev)
 	    htab_delete (abbrev);
-	  abbrev = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value,
-				false);
+	  abbrev
+	    = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value);
 	  if (abbrev == NULL)
 	    goto fail;
 	}
       last_abbrev_offset = value;
 
+      if (kind == DEBUG_TYPES)
+	ptr += 12;
+
       cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
       memset (cu, '\0', sizeof (*cu));
-      cu->cu_kind = rd_multifile ? CU_ALT : CU_NORMAL;
+      cu->cu_kind = cu_kind;
       cu->cu_offset = cu_offset;
       cu->cu_version = cu_version;
       cu->cu_chunk = cu_chunk;
@@ -3895,7 +3920,7 @@ read_debug_info (DSO *dso)
       while (ptr < endcu)
 	{
 	  unsigned int i;
-	  unsigned int die_offset = ptr - debug_sections[DEBUG_INFO].data;
+	  unsigned int die_offset = ptr - debug_sections[kind].data;
 
 	  tag.entry = read_uleb128 (ptr);
 	  if (tag.entry == 0)
@@ -3912,7 +3937,8 @@ read_debug_info (DSO *dso)
 	    }
 	  if (diep == NULL)
 	    {
-	      error (0, 0, "%s: Wrong .debug_info DIE tree", dso->filename);
+	      error (0, 0, "%s: Wrong %s DIE tree", dso->filename,
+		     debug_sections[kind].name);
 	      goto fail;
 	    }
 	  t = htab_find_with_hash (abbrev, &tag, tag.entry);
@@ -4084,7 +4110,7 @@ read_debug_info (DSO *dso)
 		  ptr += len;
 		}
 	    }
-	  die->die_size = (ptr - debug_sections[DEBUG_INFO].data)
+	  die->die_size = (ptr - debug_sections[kind].data)
 			  - die_offset;
 	  if (off_htab_add_die (die))
 	    goto fail;
@@ -4092,11 +4118,13 @@ read_debug_info (DSO *dso)
 
       if (cu->cu_die == NULL
 	  || (cu->cu_die->die_tag != DW_TAG_compile_unit
-	      && cu->cu_die->die_tag != DW_TAG_partial_unit)
+	      && cu->cu_die->die_tag != DW_TAG_partial_unit
+	      && cu->cu_die->die_tag != DW_TAG_type_unit)
 	  || cu->cu_die->die_sib != NULL)
 	{
-	  error (0, 0, "%s: .debug_info section chunk doesn't contain a single"
-			" compile_unit or partial_unit", dso->filename);
+	  error (0, 0, "%s: %s section chunk doesn't contain a single"
+			" compile_unit or partial_unit", dso->filename,
+		 debug_sections[kind].name);
 	  goto fail;
 	}
 
@@ -4119,7 +4147,8 @@ read_debug_info (DSO *dso)
 	    }
 	}
 
-      if (likely (!op_multifile && !rd_multifile && !fi_multifile))
+      if (likely (!op_multifile && !rd_multifile && !fi_multifile)
+	  && likely (kind == DEBUG_INFO))
 	{
 	  if (checksum_die (dso, NULL, cu->cu_die))
 	    goto fail;
@@ -4136,6 +4165,9 @@ read_debug_info (DSO *dso)
 
   if (abbrev)
     htab_delete (abbrev);
+
+  if (unlikely (kind == DEBUG_TYPES))
+    return 0;
 
   if (unlikely (rd_multifile || fi_multifile))
     {
@@ -4176,8 +4208,11 @@ read_debug_info (DSO *dso)
 fail:
   if (abbrev)
     htab_delete (abbrev);
-  htab_delete (dup_htab);
-  dup_htab = NULL;
+  if (dup_htab && kind == DEBUG_INFO)
+    {
+      htab_delete (dup_htab);
+      dup_htab = NULL;
+    }
   return 1;
 }
 
@@ -5385,102 +5420,6 @@ create_import_tree (void)
   return 0;
 }
 
-/* Record abbreviations referenced from .debug_types section.
-   .debug_types sections aren't rewritten, so the abbrevs need
-   to stay as is.  */
-static int
-read_debug_types (DSO *dso)
-{
-  unsigned char *ptr, *endcu, *endsec;
-  htab_t abbrev;
-  unsigned int value, last_abbrev_offset = -1U;
-
-  ptr = debug_sections[DEBUG_TYPES].data;
-  if (ptr == NULL)
-    return 0;
-  endsec = ptr + debug_sections[DEBUG_TYPES].size;
-  while (ptr < endsec)
-    {
-      unsigned int cu_offset = ptr - debug_sections[DEBUG_TYPES].data, culen;
-      int cu_version;
-      struct dw_cu *cu;
-
-      if (ptr + 23 > endsec)
-	{
-	  error (0, 0, "%s: .debug_types CU header too small", dso->filename);
-	  return 1;
-	}
-
-      endcu = ptr + 4;
-      culen = read_32 (ptr);
-      if (culen >= 0xfffffff0)
-	{
-	  error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
-	  return 1;
-	}
-      endcu += culen;
-
-      if (endcu > endsec)
-	{
-	  error (0, 0, "%s: .debug_types too small", dso->filename);
-	  return 1;
-	}
-
-      cu_version = read_16 (ptr);
-      if (cu_version < 2 || cu_version > 4)
-	{
-	  error (0, 0, "%s: DWARF version %d unhandled", dso->filename,
-		 cu_version);
-	  return 1;
-	}
-
-      value = read_32 (ptr);
-      if (value >= debug_sections[DEBUG_ABBREV].size)
-	{
-	  if (debug_sections[DEBUG_ABBREV].data == NULL)
-	    error (0, 0, "%s: .debug_abbrev not present", dso->filename);
-	  else
-	    error (0, 0, "%s: DWARF CU abbrev offset too large",
-		   dso->filename);
-	  return 1;
-	}
-
-      if (cu_offset && last_abbrev_offset == value)
-	abbrev = NULL;
-      else
-	{
-	  abbrev = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value,
-				true);
-	  if (abbrev == NULL)
-	    return 1;
-	  last_abbrev_offset = value;
-	}
-
-      cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
-      memset (cu, '\0', sizeof (*cu));
-      cu->cu_kind = CU_TYPES;
-      cu->cu_new_abbrev = abbrev;
-      cu->cu_offset = cu_offset;
-      cu->cu_version = cu_version;
-      if (abbrev == NULL)
-	{
-	  cu->u1.cu_new_abbrev_owner = last_cu->u1.cu_new_abbrev_owner;
-	  if (cu->u1.cu_new_abbrev_owner == NULL)
-	    cu->u1.cu_new_abbrev_owner = last_cu;
-	}
-      if (first_cu == NULL)
-	first_cu = last_cu = cu;
-      else
-	{
-	  last_cu->cu_next = cu;
-	  last_cu = cu;
-	}
-      ptr = endcu;
-    }
-
-  return 0;
-}
-
 /* If DIE is equal to ORIG, return DUP, otherwise if DIE is
    a child of ORIG, return corresponding child in DUP's subtree,
    or return NULL.  */
@@ -6233,8 +6172,11 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	break;
   if (ref != NULL && origin == NULL)
     {
-      unsigned char *ptr = debug_sections[DEBUG_INFO].data
-			   + ref->die_offset;
+      unsigned char *base
+	= die->die_cu->cu_kind == CU_TYPES
+	  ? debug_sections[DEBUG_TYPES].data
+	  : debug_sections[DEBUG_INFO].data;
+      unsigned char *ptr = base + ref->die_offset;
       struct abbrev_tag *reft = ref->die_abbrev;
 
       read_uleb128 (ptr);
@@ -6264,9 +6206,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	    }
       if (i != -1U)
 	{
-	  die->die_size -= ptr
-			   - (debug_sections[DEBUG_INFO].data
-			      + ref->die_offset);
+	  die->die_size -= ptr - (base + ref->die_offset);
 	  /* If there are no references, size stays the same
 	     and no need to walk the actual attribute values.  */
 	  for (i = 0; i < reft->nattr; i++)
@@ -6367,7 +6307,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 					 ref->die_cu->cu_version == 2
 					 ? ptr_size : 4);
 		      ptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
-		      refd = off_htab_lookup (ref->die_cu, value);
+		      refd = off_htab_lookup (NULL, value);
 		      assert (refd != NULL);
 		      refdt = refd;
 		      while (refdt->die_toplevel == 0)
@@ -6704,18 +6644,6 @@ list_abbrevs (void **slot, void *data)
   return 1;
 }
 
-/* Helper function to find abbrev with highest abbrev number,
-   called through htab_traverse.  */
-static int
-find_max_abbrev_entry (void **slot, void *info)
-{
-  struct abbrev_tag *t = (struct abbrev_tag *) *slot;
-  unsigned int *largest = (unsigned int *) info;
-  if (t->entry > *largest)
-    *largest = t->entry;
-  return 1;
-}
-
 /* Comparison function for abbreviations.  Used for CUs that
    need 128 or more abbreviations.  Use lowest numbers (i.e. sort earlier)
    abbrevs used for typed DWARF stack referenced DIEs, then sort
@@ -6919,7 +6847,7 @@ cu_abbrev_cmp (const void *p, const void *q)
 static int
 compute_abbrevs (DSO *dso)
 {
-  unsigned long total_size = 0, abbrev_size = 0;
+  unsigned long total_size = 0, types_size = 0, abbrev_size = 0;
   struct dw_cu *cu, **cuarr;
   struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
@@ -6938,19 +6866,8 @@ compute_abbrevs (DSO *dso)
       dw_die_ref *intracuarr, *intracuvec;
       enum dwarf_form intracuform = DW_FORM_ref4;
       dw_die_ref child, *lastotr, child_next, *last;
+      unsigned int headersz = cu->cu_kind == CU_TYPES ? 23 : 11;
 
-      if (cu->cu_kind == CU_TYPES)
-	{
-	  if (cu->u1.cu_new_abbrev_owner != NULL)
-	    continue;
-	  ncus++;
-	  if (htab_elements (cu->cu_new_abbrev) >= 128)
-	    nlargeabbrevs++;
-	  cu->u2.cu_largest_entry = 0;
-	  htab_traverse (cu->cu_new_abbrev, find_max_abbrev_entry,
-			 &cu->u2.cu_largest_entry);
-	  continue;
-	}
       if (unlikely (fi_multifile) && cu->cu_die->die_remove)
 	continue;
       ncus++;
@@ -7028,7 +6945,7 @@ compute_abbrevs (DSO *dso)
 
       cu->u2.cu_largest_entry = nabbrevs;
       diesize = calc_sizes (cu->cu_die);
-      cusize = 11 + tagsize + diesize + nchildren;
+      cusize = headersz + tagsize + diesize + nchildren;
       intracusize = size_of_uleb128 (cusize + intracu);
       do
 	{
@@ -7038,11 +6955,11 @@ compute_abbrevs (DSO *dso)
 	  intracusize = i;
 	}
       while (1);
-      off = init_new_die_offsets (cu->cu_die, 11, intracusize);
+      off = init_new_die_offsets (cu->cu_die, headersz, intracusize);
       do
 	{
 	  intracuvec = intracuarr;
-	  i = update_new_die_offsets (cu->cu_die, 11, &intracuvec);
+	  i = update_new_die_offsets (cu->cu_die, headersz, &intracuvec);
 	  assert (*intracuvec == NULL);
 	  if (i == off)
 	    break;
@@ -7075,7 +6992,7 @@ compute_abbrevs (DSO *dso)
 	}
 
       intracuvec = intracuarr;
-      off = finalize_new_die_offsets (cu->cu_die, 11, intracusize,
+      off = finalize_new_die_offsets (cu->cu_die, headersz, intracusize,
 				      &intracuvec);
       if (off == -1U)
 	{
@@ -7111,8 +7028,16 @@ compute_abbrevs (DSO *dso)
 	  total_size += 11;
 	  saw_cu_normal = true;
 	}
-      cu->cu_new_offset = (wr_multifile ? multi_info_off : 0) + total_size;
-      total_size += cusize;
+      if (cu->cu_kind == CU_TYPES)
+	{
+	  cu->cu_new_offset = types_size;
+	  types_size += cusize;
+	}
+      else
+	{
+	  cu->cu_new_offset = (wr_multifile ? multi_info_off : 0) + total_size;
+	  total_size += cusize;
+	}
     }
   if (wr_multifile)
     total_size += saw_cu_normal ? 11 : 22;
@@ -7159,16 +7084,7 @@ compute_abbrevs (DSO *dso)
 		  struct abbrev_tag *t
 		    = htab_find_with_hash (cuarr[j]->cu_new_abbrev,
 					   arr[k], arr[k]->hash);
-		  /* We aren't rewriting .debug_types section, merely
-		     adjusting .debug_abbrev offsets into it, so the
-		     assigned entry values for .debug_types section
-		     can't change.  */
-		  if (cuarr[i]->cu_kind == CU_TYPES)
-		    {
-		      if (t == NULL || t->entry != arr[k]->entry)
-			break;
-		    }
-		  else if (t == NULL)
+		  if (t == NULL)
 		    {
 		      ++entry;
 		      if (size_of_uleb128 (entry)
@@ -7237,11 +7153,6 @@ compute_abbrevs (DSO *dso)
 				       arr[k], arr[k]->hash);
 	      if (t == NULL || t->entry >= 128)
 		break;
-	      /* We aren't rewriting .debug_types section, merely adjusting
-		 .debug_abbrev offsets into it, so the assigned entry
-		 values for .debug_types section can't change.  */
-	      if (cuarr[i]->cu_kind == CU_TYPES && t->entry != arr[k]->entry)
-		break;
 	    }
 	  if (k == nabbrevs)
 	    {
@@ -7278,15 +7189,6 @@ compute_abbrevs (DSO *dso)
 					   arr[k], arr[k]->hash);
 		  if (t != NULL)
 		    curdups++;
-		  /* We aren't rewriting .debug_types section, merely adjusting
-		     .debug_abbrev offsets into it, so the assigned entry
-		     values for .debug_types section can't change.  */
-		  if (cuarr[i]->cu_kind == CU_TYPES
-		      && (t == NULL || t->entry != arr[k]->entry))
-		    {
-		      curdups = 0;
-		      break;
-		    }
 		}
 	      if (curdups > maxdups
 		  && cuarr[j]->u2.cu_largest_entry - curdups + nabbrevs < 128)
@@ -7391,6 +7293,7 @@ compute_abbrevs (DSO *dso)
       }
   debug_sections[DEBUG_INFO].new_size = total_size;
   debug_sections[DEBUG_ABBREV].new_size = abbrev_size;
+  debug_sections[DEBUG_TYPES].new_size = types_size;
   return 0;
 }
 
@@ -7557,7 +7460,7 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	case DW_OP_GNU_implicit_pointer:
 	  addr = read_size (ptr, ref->die_cu->cu_version == 2 ? ptr_size : 4);
 	  assert (die->die_cu->cu_version == ref->die_cu->cu_version);
-	  refd = off_htab_lookup (ref->die_cu, addr);
+	  refd = off_htab_lookup (NULL, addr);
 	  assert (refd != NULL);
 	  refdt = refd;
 	  while (refdt->die_toplevel == 0)
@@ -7686,8 +7589,11 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
   write_uleb128 (ptr, t->entry);
   if (ref != NULL && origin == NULL)
     {
-      unsigned char *inptr = debug_sections[DEBUG_INFO].data
-			     + ref->die_offset;
+      unsigned char *base
+	= die->die_cu->cu_kind == CU_TYPES
+	  ? debug_sections[DEBUG_TYPES].data
+	  : debug_sections[DEBUG_INFO].data;
+      unsigned char *inptr = base + ref->die_offset;
       struct abbrev_tag *reft = ref->die_abbrev;
       unsigned int i, j;
 
@@ -7757,7 +7663,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		value = read_size (inptr, ref->die_cu->cu_version == 2
 					  ? ptr_size : 4);
 		inptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
-		refd = off_htab_lookup (ref->die_cu, value);
+		refd = off_htab_lookup (NULL, value);
 		assert (refd != NULL);
 		refdt = refd;
 		while (refdt->die_toplevel == 0)
@@ -8243,30 +8149,44 @@ write_loc (void)
   htab_traverse (loc_htab, adjust_loclist, NULL);
 }
 
-/* Create new .debug_types section in malloced memory if abbrev
-   offsets in .debug_types need to be adjusted.  */
+/* Create new .debug_types section in malloced memory.  */
 static void
 write_types (void)
 {
   struct dw_cu *cu;
-  unsigned char *types, *ptr;
+  unsigned char *types, *ptr, *inptr;
+  dw_die_ref ref;
 
   if (debug_sections[DEBUG_TYPES].data == NULL)
     return;
-  types = malloc (debug_sections[DEBUG_TYPES].size);
+  types = malloc (debug_sections[DEBUG_TYPES].new_size);
   if (types == NULL)
     dwz_oom ();
   debug_sections[DEBUG_TYPES].new_data = types;
-  memcpy (types, debug_sections[DEBUG_TYPES].data,
-	  debug_sections[DEBUG_TYPES].size);
+  ptr = types;
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
+      unsigned long next_off = debug_sections[DEBUG_TYPES].new_size;
       /* Ignore .debug_info CUs.  */
       if (cu->cu_kind != CU_TYPES)
 	continue;
-      ptr = types + cu->cu_offset + 6;
+      if (cu->cu_next)
+	next_off = cu->cu_next->cu_new_offset;
+      /* Write CU header.  */
+      write_32 (ptr, next_off - cu->cu_new_offset - 4);
+      write_16 (ptr, cu->cu_version);
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
+      write_8 (ptr, ptr_size);
+      inptr = debug_sections[DEBUG_TYPES].data + cu->cu_offset + 19;
+      memcpy (ptr, inptr - 8, 8);
+      ptr += 8;
+      ref = off_htab_lookup (cu, cu->cu_offset + read_32 (inptr));
+      assert (ref && ref->die_dup == NULL);
+      write_32 (ptr, ref->u.p2.die_new_offset);
+      ptr = write_die (ptr, cu->cu_die, NULL);
+      assert (types + next_off == ptr);
     }
+  assert (types + debug_sections[DEBUG_TYPES].new_size == ptr);
 }
 
 /* Construct new .debug_aranges section in malloced memory,
@@ -8627,7 +8547,7 @@ read_dwarf (DSO *dso)
       return 1;
     }
 
-  if (read_debug_info (dso))
+  if (read_debug_info (dso, DEBUG_INFO))
     return 1;
 
   return 0;
@@ -9004,6 +8924,9 @@ cleanup (void)
   if (off_htab != NULL)
     htab_delete (off_htab);
   off_htab = NULL;
+  if (types_off_htab != NULL)
+    htab_delete (types_off_htab);
+  types_off_htab = NULL;
   if (loc_htab != NULL)
     htab_delete (loc_htab);
   loc_htab = NULL;
@@ -9574,7 +9497,7 @@ dwz (const char *file, const char *outfile)
 	  || (unlikely (fi_multifile)
 	      && (remove_empty_pus ()
 		  || read_macro (dso)))
-	  || read_debug_types (dso)
+	  || read_debug_info (dso, DEBUG_TYPES)
 	  || compute_abbrevs (dso)
 	  || (unlikely (fi_multifile) && (finalize_strp (false), 0)))
 	{
@@ -9585,21 +9508,25 @@ dwz (const char *file, const char *outfile)
 	       + debug_sections[DEBUG_ABBREV].new_size
 	       + debug_sections[DEBUG_STR].new_size
 	       + debug_sections[DEBUG_MACRO].new_size
+	       + debug_sections[DEBUG_TYPES].new_size
 	       >= debug_sections[DEBUG_INFO].size
 		  + debug_sections[DEBUG_ABBREV].size
 		  + debug_sections[DEBUG_STR].size
-		  + debug_sections[DEBUG_MACRO].size)
+		  + debug_sections[DEBUG_MACRO].size
+		  + debug_sections[DEBUG_TYPES].size)
 	{
 	  error (0, 0, "%s: DWARF compression not beneficial "
 		       "- old size %ld new size %ld", dso->filename,
 		 (unsigned long) (debug_sections[DEBUG_INFO].size
 				  + debug_sections[DEBUG_ABBREV].size
 				  + debug_sections[DEBUG_STR].size
-				  + debug_sections[DEBUG_MACRO].size),
+				  + debug_sections[DEBUG_MACRO].size
+				  + debug_sections[DEBUG_TYPES].size),
 		 (unsigned long) (debug_sections[DEBUG_INFO].new_size
 				  + debug_sections[DEBUG_ABBREV].new_size
 				  + debug_sections[DEBUG_STR].new_size
-				  + debug_sections[DEBUG_MACRO].new_size));
+				  + debug_sections[DEBUG_MACRO].new_size
+				  + debug_sections[DEBUG_TYPES].new_size));
 
 	  if (multifile && !fi_multifile)
 	    write_multifile (dso);
@@ -9801,7 +9728,7 @@ optimize_multifile (void)
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      if (read_debug_info (dso)
+      if (read_debug_info (dso, DEBUG_INFO)
 	  || partition_dups ())
 	goto fail;
 
