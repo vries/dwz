@@ -504,10 +504,8 @@ struct dw_cu
     } u2;
   /* Offset into the new .debug_info section.  */
   unsigned int cu_new_offset;
-  /* When op_multifile, record which object this came from here.
-     The least significant bit is clear for partial units added
-     by dwz, set for compilation units/partial units from original
-     debug info.  */
+  /* When op_multifile, record which object this came from here,
+     otherwise it is the index of the CU.  */
   unsigned int cu_chunk;
 };
 
@@ -1759,9 +1757,10 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 			 dso->filename, t->attr[i].attr);
 		  return 1;
 		}
-	      assert (die->die_cu != ref->die_cu
-		      && (die->die_cu->cu_chunk | 1)
-			 == (ref->die_cu->cu_chunk | 1));
+	      assert (((!op_multifile && !rd_multifile && !fi_multifile)
+		       || die->die_cu != ref->die_cu)
+		      && (!op_multifile
+			  || die->die_cu->cu_chunk == ref->die_cu->cu_chunk));
 	      handled = true;
 	      break;
 	    }
@@ -3850,9 +3849,9 @@ read_debug_info (DSO *dso, int kind)
 	  goto fail;
 	}
 
-      if (unlikely (op_multifile) && ptr == endcu)
+      if (unlikely (op_multifile))
 	{
-	  if ((cu_chunk++ & 1) == 1)
+	  if (ptr == endcu)
 	    {
 	      struct dw_cu *cuf = cu_tail ? cu_tail->cu_next : first_cu;
 	      /* Inside of optimize_multifile, DIE hashes are computed
@@ -3883,9 +3882,12 @@ read_debug_info (DSO *dso, int kind)
 		remove_unneeded (cu->cu_die, 2);
 
 	      cu_tail = last_cu;
+	      cu_chunk++;
+	      continue;
 	    }
-	  continue;
 	}
+      else
+	cu_chunk++;
 
       if (abbrev == NULL || value != last_abbrev_offset)
 	{
@@ -4273,10 +4275,10 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
 		 some dups when the compiler did a bad job.  Reject
 		 those here, because otherwise we would fail on assertions
 		 later on.  */
-	      unsigned int cu_chunk = child->die_cu->cu_chunk & ~1U;
+	      unsigned int cu_chunk = child->die_cu->cu_chunk;
 	      dw_die_ref dup;
 	      for (dup = child->die_nextdup; dup; dup = dup->die_nextdup)
-		if ((dup->die_cu->cu_chunk & ~1U) != cu_chunk)
+		if (dup->die_cu->cu_chunk != cu_chunk)
 		  break;
 	      if (dup == NULL)
 		continue;
@@ -6852,7 +6854,6 @@ compute_abbrevs (DSO *dso)
   struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
   unsigned char *to_free = obstack_alloc (&ob2, 1);
-  bool saw_cu_normal = false;
 
   t = (struct abbrev_tag *)
       obstack_alloc (&ob2,
@@ -7023,11 +7024,6 @@ compute_abbrevs (DSO *dso)
 	}
       obstack_free (&ob, (void *) arr);
       obstack_free (&ob2, (void *) intracuarr);
-      if (wr_multifile && cu->cu_kind == CU_NORMAL && !saw_cu_normal)
-	{
-	  total_size += 11;
-	  saw_cu_normal = true;
-	}
       if (cu->cu_kind == CU_TYPES)
 	{
 	  cu->cu_new_offset = types_size;
@@ -7040,7 +7036,7 @@ compute_abbrevs (DSO *dso)
 	}
     }
   if (wr_multifile)
-    total_size += saw_cu_normal ? 11 : 22;
+    total_size += 11;
   obstack_free (&ob2, (void *) t);
   cuarr = (struct dw_cu **) obstack_alloc (&ob2,
 					   ncus * sizeof (struct dw_cu *));
@@ -8033,7 +8029,6 @@ write_info (void)
   struct dw_cu *cu, *cu_next;
   unsigned char *info = malloc (debug_sections[DEBUG_INFO].new_size);
   unsigned char *ptr = info;
-  bool saw_cu_normal = false;
 
   if (info == NULL)
     dwz_oom ();
@@ -8050,15 +8045,6 @@ write_info (void)
       /* Ignore .debug_types CUs.  */
       if (cu->cu_kind == CU_TYPES)
 	break;
-      if (wr_multifile && !saw_cu_normal && cu->cu_kind == CU_NORMAL)
-	{
-	  /* Emit a barrier separating CU_PUs from CU_NORMAL.  */
-	  write_32 (ptr, 7);
-	  write_16 (ptr, 2);
-	  write_32 (ptr, 0);
-	  write_8 (ptr, ptr_size);
-	  saw_cu_normal = true;
-	}
       cu_next = cu->cu_next;
       if (unlikely (fi_multifile))
 	while (cu_next
@@ -8068,14 +8054,9 @@ write_info (void)
       if (cu_next && cu_next->cu_kind == CU_TYPES)
 	cu_next = NULL;
       if (cu_next)
-	{
-	  next_off = cu_next->cu_new_offset;
-	  if (wr_multifile && !saw_cu_normal
-	      && cu_next->cu_kind == CU_NORMAL)
-	    next_off -= 11L;
-	}
+	next_off = cu_next->cu_new_offset;
       else if (wr_multifile)
-	next_off += multi_info_off - (saw_cu_normal ? 11L : 22L);
+	next_off += multi_info_off - 11L;
       /* Write CU header.  */
       write_32 (ptr, next_off - cu->cu_new_offset - 4);
       write_16 (ptr, cu->cu_version);
@@ -8086,15 +8067,11 @@ write_info (void)
     }
   if (wr_multifile)
     {
-      unsigned int i;
       /* And terminate the contribution by the current object file.  */
-      for (i = 0; i < (saw_cu_normal ? 1 : 2); i++)
-	{
-	  write_32 (ptr, 7);
-	  write_16 (ptr, 2);
-	  write_32 (ptr, 0);
-	  write_8 (ptr, ptr_size);
-	}
+      write_32 (ptr, 7);
+      write_16 (ptr, 2);
+      write_32 (ptr, 0);
+      write_8 (ptr, ptr_size);
     }
   assert (info + debug_sections[DEBUG_INFO].new_size == ptr);
 }
