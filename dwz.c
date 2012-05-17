@@ -336,14 +336,14 @@ static struct
 #define DEBUG_LINE		2
 #define DEBUG_STR		3
 #define DEBUG_MACRO		4
-#define DEBUG_ARANGES		5
-#define DEBUG_PUBNAMES		6
-#define DEBUG_PUBTYPES		7
-#define DEBUG_MACINFO		8
-#define DEBUG_LOC		9
-#define DEBUG_FRAME		10
-#define DEBUG_RANGES		11
-#define DEBUG_TYPES		12
+#define DEBUG_TYPES		5
+#define DEBUG_ARANGES		6
+#define DEBUG_PUBNAMES		7
+#define DEBUG_PUBTYPES		8
+#define DEBUG_MACINFO		9
+#define DEBUG_LOC		10
+#define DEBUG_FRAME		11
+#define DEBUG_RANGES		12
 #define DEBUG_GDB_SCRIPTS	13
 #define GDB_INDEX		14
 #define GNU_DEBUGALTLINK	15
@@ -352,6 +352,7 @@ static struct
     { ".debug_line", NULL, NULL, 0, 0, 0 },
     { ".debug_str", NULL, NULL, 0, 0, 0 },
     { ".debug_macro", NULL, NULL, 0, 0, 0 },
+    { ".debug_types", NULL, NULL, 0, 0, 0 },
     { ".debug_aranges", NULL, NULL, 0, 0, 0 },
     { ".debug_pubnames", NULL, NULL, 0, 0, 0 },
     { ".debug_pubtypes", NULL, NULL, 0, 0, 0 },
@@ -359,13 +360,12 @@ static struct
     { ".debug_loc", NULL, NULL, 0, 0, 0 },
     { ".debug_frame", NULL, NULL, 0, 0, 0 },
     { ".debug_ranges", NULL, NULL, 0, 0, 0 },
-    { ".debug_types", NULL, NULL, 0, 0, 0 },
     { ".debug_gdb_scripts", NULL, NULL, 0, 0, 0 },
     { ".gdb_index", NULL, NULL, 0, 0, 0 },
     { ".gnu_debugaltlink", NULL, NULL, 0, 0, 0 },
     { NULL, NULL, NULL, 0, 0, 0 }
   };
-#define SAVED_SECTIONS (DEBUG_MACRO + 1)
+#define SAVED_SECTIONS (DEBUG_TYPES + 1)
 /* Pointers that might need cleaning up during write_multifile.  */
 static unsigned char *saved_new_data[SAVED_SECTIONS];
 static size_t saved_new_size[SAVED_SECTIONS];
