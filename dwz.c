@@ -3776,6 +3776,44 @@ remove_unneeded (dw_die_ref die, unsigned int phase)
     }
 }
 
+struct meta_abbrev_entry
+{
+  unsigned int abbrev_off;
+  htab_t abbrev_htab;
+};
+
+static htab_t meta_abbrev_htab;
+static struct meta_abbrev_entry meta_abbrev_fallback;
+
+/* Hash function for meta_abbrev_htab.  */
+static hashval_t
+meta_abbrev_hash (const void *p)
+{
+  struct meta_abbrev_entry *m = (struct meta_abbrev_entry *)p;
+
+  return m->abbrev_off;
+}
+
+/* Equality function for meta_abbrev_htab.  */
+static int
+meta_abbrev_eq (const void *p, const void *q)
+{
+  struct meta_abbrev_entry *m1 = (struct meta_abbrev_entry *)p;
+  struct meta_abbrev_entry *m2 = (struct meta_abbrev_entry *)q;
+
+  return m1->abbrev_off == m2->abbrev_off;
+}
+
+/* Delete function for meta_abbrev_htab.  */
+static void
+meta_abbrev_del (void *p)
+{
+  struct meta_abbrev_entry *m = (struct meta_abbrev_entry *)p;
+
+  if (m->abbrev_htab != NULL)
+    htab_delete (m->abbrev_htab);
+}
+
 /* First phase of the DWARF compression.  Parse .debug_info section,
    for each CU in it construct internal represetnation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
@@ -3795,12 +3833,23 @@ read_debug_info (DSO *dso, int kind)
   struct dw_cu *cu_tail = NULL;
   unsigned int cu_kind = rd_multifile ? CU_ALT
 			 : kind == DEBUG_TYPES ? CU_TYPES : CU_NORMAL;
+  void *to_free = NULL;
 
   if (likely (!fi_multifile && kind != DEBUG_TYPES))
     {
       dup_htab = htab_try_create (100000, die_hash, die_eq, NULL);
       if (dup_htab == NULL)
 	dwz_oom ();
+    }
+  if (unlikely (op_multifile || rd_multifile || fi_multifile)
+      || unlikely (kind == DEBUG_TYPES))
+    {
+      meta_abbrev_htab
+	= htab_try_create (500, meta_abbrev_hash, meta_abbrev_eq,
+			   meta_abbrev_del);
+      if (meta_abbrev_htab == NULL)
+	dwz_oom ();
+      to_free = obstack_alloc (&ob2, 1);
     }
 
   ptr = debug_sections[kind].data;
@@ -3914,7 +3963,32 @@ read_debug_info (DSO *dso, int kind)
       else
 	cu_chunk++;
 
-      if (abbrev == NULL || value != last_abbrev_offset)
+      if (unlikely (meta_abbrev_htab != NULL))
+	{
+	  struct meta_abbrev_entry m, *mp;
+	  void **slot;
+	  m.abbrev_off = value;
+	  slot = htab_find_slot_with_hash (meta_abbrev_htab, &m,
+					   m.abbrev_off, INSERT);
+	  if (slot == NULL)
+	    dwz_oom ();
+	  else if (*slot != NULL)
+	    abbrev = ((struct meta_abbrev_entry *) *slot)->abbrev_htab;
+	  else
+	    {
+	      *slot = (void *) &meta_abbrev_fallback;
+	      abbrev
+		= read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value);
+	      if (abbrev == NULL)
+		goto fail;
+	      mp = (struct meta_abbrev_entry *)
+		   obstack_alloc (&ob2, sizeof (*mp));
+	      mp->abbrev_off = value;
+	      mp->abbrev_htab = abbrev;
+	      *slot = (void *) mp;
+	    }
+	}
+      else if (abbrev == NULL || value != last_abbrev_offset)
 	{
 	  if (abbrev)
 	    htab_delete (abbrev);
@@ -3934,6 +4008,8 @@ read_debug_info (DSO *dso, int kind)
       cu->cu_offset = cu_offset;
       cu->cu_version = cu_version;
       cu->cu_chunk = cu_chunk;
+      if (unlikely (op_multifile))
+	cu->cu_new_abbrev = abbrev;
       diep = &cu->cu_die;
       parent = NULL;
       if (first_cu == NULL)
@@ -4190,7 +4266,18 @@ read_debug_info (DSO *dso, int kind)
 	}
     }
 
-  if (abbrev)
+  if (unlikely (meta_abbrev_htab != NULL))
+    {
+      struct dw_cu *cu;
+
+      if (unlikely (op_multifile))
+	for (cu = first_cu; cu; cu = cu->cu_next)
+	  cu->cu_new_abbrev = NULL;
+      htab_delete (meta_abbrev_htab);
+      meta_abbrev_htab = NULL;
+      obstack_free (&ob2, to_free);
+    }
+  else if (abbrev)
     htab_delete (abbrev);
 
   if (unlikely (kind == DEBUG_TYPES))
@@ -4233,7 +4320,17 @@ read_debug_info (DSO *dso, int kind)
   dup_htab = NULL;
   return 0;
 fail:
-  if (abbrev)
+  if (unlikely (meta_abbrev_htab != NULL))
+    {
+      struct dw_cu *cu;
+
+      for (cu = first_cu; cu; cu = cu->cu_next)
+	cu->cu_new_abbrev = NULL;
+      htab_delete (meta_abbrev_htab);
+      meta_abbrev_htab = NULL;
+      obstack_free (&ob2, to_free);
+    }
+  else if (abbrev)
     htab_delete (abbrev);
   if (dup_htab && kind == DEBUG_INFO)
     {
@@ -8940,7 +9037,7 @@ cleanup (void)
 
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
-      if (cu->cu_new_abbrev)
+      if (cu->cu_new_abbrev && meta_abbrev_htab == NULL)
 	htab_delete (cu->cu_new_abbrev);
       cu->cu_new_abbrev = NULL;
     }
@@ -8965,6 +9062,9 @@ cleanup (void)
   if (macro_htab != NULL)
     htab_delete (macro_htab);
   macro_htab = NULL;
+  if (meta_abbrev_htab != NULL)
+    htab_delete (meta_abbrev_htab);
+  meta_abbrev_htab = NULL;
 
   for (i = 0; i < SAVED_SECTIONS; ++i)
     {
