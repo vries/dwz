@@ -560,6 +560,9 @@ struct dw_die
   /* Set if DIE is referenced using DW_FORM_ref*.  So far only used during
      optimize_multifile.  */
   unsigned int die_referenced : 1;
+  /* Set if DIE has its children collapsed.  Only used during
+     optimize_multifile.  */
+  unsigned int die_collapsed_children : 1;
   /* Index into the dw_die_ref vector used in checksum_ref_die function.
      While this is only phase 1 field, we get better packing by having it
      here instead of u.p1.  */
@@ -2459,6 +2462,161 @@ die_hash (const void *p)
   return die->u.p1.die_ref_hash;
 }
 
+static dw_die_ref die_nontoplevel_freelist;
+
+static void
+expand_children (dw_die_ref top_die)
+{
+  struct dw_cu *cu = top_die->die_cu;
+  dw_die_ref *diep = &top_die->die_child;
+  dw_die_ref parent = top_die, child;
+  unsigned char *ptr = debug_sections[DEBUG_INFO].data
+		       + top_die->die_offset + top_die->die_size;
+  struct abbrev_tag tag, *t;
+  dw_die_ref die;
+  unsigned int tick = top_die->u.p1.die_enter + 1;
+
+  while (1)
+    {
+      unsigned int i;
+      unsigned int die_offset = ptr - debug_sections[DEBUG_INFO].data;
+
+      tag.entry = read_uleb128 (ptr);
+      if (tag.entry == 0)
+	{
+	  if (parent == top_die)
+	    break;
+	  diep = &parent->die_sib;
+	  parent->u.p1.die_exit = tick++;
+	  parent = parent->die_parent;
+	  continue;
+	}
+
+      die = off_htab_lookup (NULL, die_offset);
+      if (die != NULL)
+	{
+	  *diep = die;
+	  die->die_parent = parent;
+	  die->die_ck_state = CK_UNKNOWN;
+	  die->die_ref_seen = 0;
+	  assert (die->u.p1.die_enter == tick);
+	  if (die->die_abbrev->children)
+	    {
+	      diep = &die->die_child;
+	      parent = die;
+	    }
+	  else
+	    {
+	      diep = &die->die_sib;
+	      assert (die->u.p1.die_exit == tick);
+	    }
+	  tick++;
+	  ptr = debug_sections[DEBUG_INFO].data + die_offset + die->die_size;
+	  continue;
+	}
+
+      t = htab_find_with_hash (cu->cu_new_abbrev, &tag, tag.entry);
+      if (die_nontoplevel_freelist)
+	{
+	  die = die_nontoplevel_freelist;
+	  die_nontoplevel_freelist = die->die_sib;
+	}
+      else
+	die = pool_alloc (dw_die, offsetof (struct dw_die, die_dup));
+      memset (die, '\0', offsetof (struct dw_die, die_dup));
+      *diep = die;
+      die->die_tag = t->tag;
+      die->die_abbrev = t;
+      die->die_offset = die_offset;
+      die->die_cu = cu;
+      die->die_parent = parent;
+      die->u.p1.die_enter = tick;
+      die->u.p1.die_exit = tick++;
+      if (t->children)
+	{
+	  diep = &die->die_child;
+	  parent = die;
+	}
+      else
+	diep = &die->die_sib;
+      for (i = 0; i < t->nattr; ++i)
+	{
+	  uint32_t form = t->attr[i].form;
+	  size_t len = 0;
+
+	  while (form == DW_FORM_indirect)
+	    form = read_uleb128 (ptr);
+	  switch (form)
+	    {
+	    case DW_FORM_ref_addr:
+	      ptr += cu->cu_version == 2 ? ptr_size : 4;
+	      break;
+	    case DW_FORM_addr:
+	      ptr += ptr_size;
+	      break;
+	    case DW_FORM_flag_present:
+	      break;
+	    case DW_FORM_ref1:
+	    case DW_FORM_flag:
+	    case DW_FORM_data1:
+	      ++ptr;
+	      break;
+	    case DW_FORM_ref2:
+	    case DW_FORM_data2:
+	      ptr += 2;
+	      break;
+	    case DW_FORM_ref4:
+	    case DW_FORM_data4:
+	    case DW_FORM_sec_offset:
+	    case DW_FORM_strp:
+	      ptr += 4;
+	      break;
+	    case DW_FORM_ref8:
+	    case DW_FORM_data8:
+	    case DW_FORM_ref_sig8:
+	      ptr += 8;
+	      break;
+	    case DW_FORM_sdata:
+	    case DW_FORM_ref_udata:
+	    case DW_FORM_udata:
+	      read_uleb128 (ptr);
+	      break;
+	    case DW_FORM_string:
+	      ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
+	      break;
+	    case DW_FORM_indirect:
+	      abort ();
+	    case DW_FORM_block1:
+	      len = *ptr++;
+	      break;
+	    case DW_FORM_block2:
+	      len = read_16 (ptr);
+	      form = DW_FORM_block1;
+	      break;
+	    case DW_FORM_block4:
+	      len = read_32 (ptr);
+	      form = DW_FORM_block1;
+	      break;
+	    case DW_FORM_block:
+	    case DW_FORM_exprloc:
+	      len = read_uleb128 (ptr);
+	      form = DW_FORM_block1;
+	      break;
+	    default:
+	      abort ();
+	    }
+
+	  if (form == DW_FORM_block1)
+	    ptr += len;
+	}
+      die->die_size = (ptr - debug_sections[DEBUG_INFO].data) - die_offset;
+    }
+  assert (top_die->u.p1.die_exit == tick);
+  top_die->die_collapsed_children = 0;
+  for (child = top_die->die_child; child; child = child->die_sib)
+    checksum_die (NULL, top_die, child);
+}
+
 /* Return 1 if DIE1 and DIE2 match.  TOP_DIE1 and TOP_DIE2
    is the corresponding ultimate parent with die_toplevel
    set.  u.p1.die_hash and u.p1.die_ref_hash hashes should
@@ -2991,6 +3149,13 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	FAIL;
       i++;
       j++;
+    }
+
+  if (unlikely (op_multifile))
+    {
+      if (die1->die_collapsed_children)
+	expand_children (die1);
+      assert (die2->die_collapsed_children == 0);
     }
 
   for (child1 = die1->die_child, child2 = die2->die_child;
@@ -3714,8 +3879,6 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
   return true;
 }
 
-static dw_die_ref die_nontoplevel_freelist;
-
 static void
 remove_dies (dw_die_ref die, bool remove)
 {
@@ -3740,7 +3903,7 @@ remove_dies (dw_die_ref die, bool remove)
     {
       memset (die, '\0', offsetof (struct dw_die, die_dup));
       die->die_sib = die_nontoplevel_freelist;
-      die_nontoplevel_freelist = die->die_sib;
+      die_nontoplevel_freelist = die;
     }
   else
     die->die_child = NULL;
@@ -3814,6 +3977,46 @@ meta_abbrev_del (void *p)
     htab_delete (m->abbrev_htab);
 }
 
+static void
+collapse_child (dw_die_ref top_die, dw_die_ref die)
+{
+  dw_die_ref child, next;
+  for (child = die->die_child; child; child = next)
+    {
+      next = child->die_sib;
+      collapse_child (top_die, child);
+    }
+  if (top_die == die)
+    {
+      die->die_child = NULL;
+      die->die_collapsed_children = 1;
+    }
+  else if (die->die_referenced)
+    {
+      die->die_parent = top_die;
+      die->die_child = NULL;
+      die->die_sib = NULL;
+      die->die_ref_seen = die->u.p1.die_enter - top_die->u.p1.die_enter;
+    }
+  else
+    {
+      memset (die, '\0', offsetof (struct dw_die, die_dup));
+      die->die_sib = die_nontoplevel_freelist;
+      die_nontoplevel_freelist = die;
+    }
+}
+
+static void
+collapse_children (dw_die_ref die)
+{
+  dw_die_ref child;
+  for (child = die->die_child; child; child = child->die_sib)
+    if (child->die_named_namespace)
+      collapse_children (child);
+    else if (child->die_child != NULL && child->die_nextdup == NULL)
+      collapse_child (child, child);
+}
+
 /* First phase of the DWARF compression.  Parse .debug_info section,
    for each CU in it construct internal represetnation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
@@ -3830,7 +4033,7 @@ read_debug_info (DSO *dso, int kind)
   bool note_strp_forms = multifile != NULL && !op_multifile && !rd_multifile;
   struct abbrev_tag tag, *t;
   unsigned int cu_chunk = 0;
-  struct dw_cu *cu_tail = NULL;
+  struct dw_cu *cu_tail = NULL, *cu_collapse = NULL;
   unsigned int cu_kind = rd_multifile ? CU_ALT
 			 : kind == DEBUG_TYPES ? CU_TYPES : CU_NORMAL;
   void *to_free = NULL;
@@ -3953,6 +4156,14 @@ read_debug_info (DSO *dso, int kind)
 		remove_unneeded (cu->cu_die, 1);
 	      for (cu = cuf; cu; cu = cu->cu_next)
 		remove_unneeded (cu->cu_die, 2);
+
+	      if (cu_collapse == NULL)
+		cu_collapse = first_cu;
+	      while (cu_collapse->cu_chunk < cu_chunk)
+		{
+		  collapse_children (cu_collapse->cu_die);
+		  cu_collapse = cu_collapse->cu_next;
+		}
 
 	      cu_tail = last_cu;
 	      cu_chunk++;
@@ -5564,6 +5775,22 @@ create_import_tree (void)
   return 0;
 }
 
+static dw_die_ref
+die_find_collapsed_dup (dw_die_ref die, unsigned int *tick)
+{
+  dw_die_ref child, ret;
+
+  for (child = die->die_child; child; child = child->die_sib)
+    if ((*tick)-- == 0)
+      return child;
+    else if (child->die_child == NULL)
+      continue;
+    else if ((ret = die_find_collapsed_dup (child, tick)) != NULL)
+      return ret;
+  (*tick)--;
+  return NULL;
+}
+
 /* If DIE is equal to ORIG, return DUP, otherwise if DIE is
    a child of ORIG, return corresponding child in DUP's subtree,
    or return NULL.  */
@@ -5573,6 +5800,16 @@ die_find_dup (dw_die_ref orig, dw_die_ref dup, dw_die_ref die)
   dw_die_ref orig_child, dup_child;
   if (orig == die)
     return dup;
+  if (orig->die_collapsed_children)
+    {
+      dw_die_ref ret;
+      unsigned int tick = die->die_ref_seen - 1;
+      assert (dup->die_collapsed_children == 0
+	      && die->die_parent == orig);
+      ret = die_find_collapsed_dup (dup, &tick);
+      assert (ret->die_tag == die->die_tag);
+      return ret;
+    }
   for (orig_child = orig->die_child, dup_child = dup->die_child;
        orig_child;
        orig_child = orig_child->die_sib, dup_child = dup_child->die_sib)
