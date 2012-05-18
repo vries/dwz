@@ -557,6 +557,9 @@ struct dw_die
   unsigned int die_remove : 1;
   /* Set if DIE is unsuitable for moving into alternate .debug_info.  */
   unsigned int die_no_multifile : 1;
+  /* Set if DIE is referenced using DW_FORM_ref*.  So far only used during
+     optimize_multifile.  */
+  unsigned int die_referenced : 1;
   /* Index into the dw_die_ref vector used in checksum_ref_die function.
      While this is only phase 1 field, we get better packing by having it
      here instead of u.p1.  */
@@ -3546,6 +3549,7 @@ finalize_strp (bool build_tail_offset_list)
 
 #define MARK_REFS_FOLLOW_DUPS	1
 #define MARK_REFS_RETURN_VAL	2
+#define MARK_REFS_REFERENCED	4
 
 /* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
    unless already marked.  */
@@ -3599,6 +3603,8 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 		  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
 		  assert (t->attr[i].attr != DW_AT_sibling);
 		  ref = off_htab_lookup (die->die_cu, value);
+		  if ((mode & MARK_REFS_REFERENCED) != 0)
+		    ref->die_referenced = 1;
 		  goto finish_ref;
 		}
 	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
@@ -3646,6 +3652,8 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 		break;
 	      ref = off_htab_lookup (die->die_cu,
 				     die->die_cu->cu_offset + value);
+	      if ((mode & MARK_REFS_REFERENCED) != 0)
+		ref->die_referenced = 1;
 	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
 		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
 		break;
@@ -3709,19 +3717,25 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 static dw_die_ref die_nontoplevel_freelist;
 
 static void
-remove_dies (dw_die_ref die)
+remove_dies (dw_die_ref die, bool remove)
 {
   dw_die_ref child, next;
-  void **slot;
+  if (die->die_toplevel && die->die_ref_seen == 0)
+    remove = true;
   for (child = die->die_child; child; child = next)
     {
       next = child->die_sib;
-      remove_dies (child);
+      remove_dies (child, remove);
     }
-  slot = htab_find_slot_with_hash (off_htab, die, die->die_offset,
-				   NO_INSERT);
-  if (slot != NULL)
-    htab_clear_slot (off_htab, slot);
+  if (die->die_referenced == 0)
+    {
+      void **slot = htab_find_slot_with_hash (off_htab, die, die->die_offset,
+					      NO_INSERT);
+      if (slot != NULL)
+	htab_clear_slot (off_htab, slot);
+    }
+  if (!remove)
+    return;
   if (die->die_toplevel == 0)
     {
       memset (die, '\0', offsetof (struct dw_die, die_dup));
@@ -3752,13 +3766,11 @@ remove_unneeded (dw_die_ref die, unsigned int phase)
 	    break;
 	  case 1:
 	    if (child->die_dup == NULL)
-	      mark_refs (child, child, 0);
+	      mark_refs (child, child, MARK_REFS_REFERENCED);
 	    break;
 	  case 2:
-	    if (child->die_ref_seen == 0)
-	      remove_dies (child);
-	    else
-	      child->die_ref_seen = 0;
+	    remove_dies (child, false);
+	    child->die_ref_seen = 0;
 	    break;
 	  }
     }
