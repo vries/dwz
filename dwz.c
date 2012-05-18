@@ -3841,8 +3841,7 @@ read_debug_info (DSO *dso, int kind)
       if (dup_htab == NULL)
 	dwz_oom ();
     }
-  if (unlikely (op_multifile || rd_multifile || fi_multifile)
-      || unlikely (kind == DEBUG_TYPES))
+  if (unlikely (op_multifile || rd_multifile || fi_multifile))
     {
       meta_abbrev_htab
 	= htab_try_create (500, meta_abbrev_hash, meta_abbrev_eq,
