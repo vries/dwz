@@ -4558,6 +4558,7 @@ read_debug_info (DSO *dso, int kind)
       htab_delete (meta_abbrev_htab);
       meta_abbrev_htab = NULL;
       obstack_free (&ob2, to_free);
+      abbrev = NULL;
     }
   else if (abbrev)
     htab_delete (abbrev);
