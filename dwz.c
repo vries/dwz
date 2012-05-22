@@ -515,20 +515,9 @@ struct dw_cu
    in them and this structure is allocated for each of them.  */
 struct dw_die
 {
-  /* This field should be the first, otherwise die_dup and die_nextdup
-     macros need adjustment.  Pointer to the CU this DIE is in or
-     will be in.  */
-  struct dw_cu *die_cu;
-  /* Tree pointers, to parent, first child and pointer to next sibling.  */
-  dw_die_ref die_parent, die_child, die_sib;
-  /* Pointer to the old .debug_abbrev entry's internal representation.  */
-  struct abbrev_tag *die_abbrev;
   /* Offset in old .debug_info from the start of the .debug_info section,
      -1U for newly created DIEs.  */
   unsigned int die_offset;
-  /* Size of the DIE (abbrev number + attributes), not including children.
-     In later phases this holds the new size as opposed to the old one.  */
-  unsigned int die_size;
   /* Cached copy of die_abbrev->tag.  */
   enum dwarf_tag die_tag : 16;
   /* State of checksum computation.  Not computed yet, computed and
@@ -563,6 +552,25 @@ struct dw_die
   /* Set if DIE has its children collapsed.  Only used during
      optimize_multifile.  */
   unsigned int die_collapsed_children : 1;
+  /* Set on collapsed child DIE that is referenced.  In that case, die_tag
+     is reused for die_enter difference from parent and no fields after
+     die_parent are allocated.  */
+  unsigned int die_collapsed_child : 1;
+  /* Tree pointer to parent.  */
+  dw_die_ref die_parent;
+
+  /* The remaining fields are present only if die_collapsed_child is
+     0.  */
+
+  /* Pointer to the CU this DIE is in or will be in.  */
+  struct dw_cu *die_cu;
+  /* Tree pointers, to first child and pointer to next sibling.  */
+  dw_die_ref die_child, die_sib;
+  /* Pointer to the old .debug_abbrev entry's internal representation.  */
+  struct abbrev_tag *die_abbrev;
+  /* Size of the DIE (abbrev number + attributes), not including children.
+     In later phases this holds the new size as opposed to the old one.  */
+  unsigned int die_size;
   /* Index into the dw_die_ref vector used in checksum_ref_die function.
      While this is only phase 1 field, we get better packing by having it
      here instead of u.p1.  */
@@ -1763,6 +1771,8 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 			 dso->filename, t->attr[i].attr);
 		  return 1;
 		}
+	      if (unlikely (op_multifile) && ref->die_collapsed_child)
+		ref = ref->die_parent;
 	      assert (((!op_multifile && !rd_multifile && !fi_multifile)
 		       || die->die_cu != ref->die_cu)
 		      && (!op_multifile
@@ -1833,6 +1843,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 		    = iterative_hash_object (s, die->u.p1.die_hash);
 		}
 	      if (top_die
+		  && !ref->die_collapsed_child
 		  && ref->u.p1.die_enter >= top_die->u.p1.die_enter
 		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
 		{
@@ -2463,6 +2474,7 @@ die_hash (const void *p)
 }
 
 static dw_die_ref die_nontoplevel_freelist;
+static dw_die_ref die_collapsed_child_freelist;
 
 static void
 expand_children (dw_die_ref top_die)
@@ -2480,6 +2492,8 @@ expand_children (dw_die_ref top_die)
     {
       unsigned int i;
       unsigned int die_offset = ptr - debug_sections[DEBUG_INFO].data;
+      void **slot;
+      struct dw_die diebuf;
 
       tag.entry = read_uleb128 (ptr);
       if (tag.entry == 0)
@@ -2492,8 +2506,14 @@ expand_children (dw_die_ref top_die)
 	  continue;
 	}
 
-      die = off_htab_lookup (NULL, die_offset);
-      if (die != NULL)
+      diebuf.die_offset = die_offset;
+      slot = htab_find_slot_with_hash (off_htab, &diebuf, die_offset,
+				       NO_INSERT);
+      if (slot == NULL)
+	die = NULL;
+      else
+	die = (dw_die_ref) *slot;
+      if (die != NULL && !die->die_collapsed_child)
 	{
 	  *diep = die;
 	  die->die_parent = parent;
@@ -2610,6 +2630,14 @@ expand_children (dw_die_ref top_die)
 	    ptr += len;
 	}
       die->die_size = (ptr - debug_sections[DEBUG_INFO].data) - die_offset;
+      if (slot != NULL)
+	{
+	  dw_die_ref collapsed = (dw_die_ref) *slot;
+	  *slot = (void *) die;
+	  memset (collapsed, '\0', offsetof (struct dw_die, die_cu));
+	  collapsed->die_parent = die_collapsed_child_freelist;
+	  die_collapsed_child_freelist = collapsed;
+	}
     }
   assert (top_die->u.p1.die_exit == tick);
   top_die->die_collapsed_children = 0;
@@ -3086,7 +3114,18 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  ref2 = off_htab_lookup (die2->die_cu,
 				  die2->die_cu->cu_offset + value2);
 	  assert (ref1 != NULL && ref2 != NULL);
-	  if (ref1->die_cu == top_die1->die_cu
+	  if (unlikely (op_multifile))
+	    {
+	      if (die1->die_collapsed_children && ref1->die_collapsed_child)
+		{
+		  expand_children (die1);
+		  ref1 = off_htab_lookup (die1->die_cu,
+					  die1->die_cu->cu_offset + value1);
+		}
+	      assert (ref2->die_collapsed_child == 0);
+	    }
+	  if (likely (!ref1->die_collapsed_child)
+	      && ref1->die_cu == top_die1->die_cu
 	      && ref1->u.p1.die_enter >= top_die1->u.p1.die_enter
 	      && ref1->u.p1.die_exit <= top_die1->u.p1.die_exit)
 	    {
@@ -3105,8 +3144,14 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 		reft1 = reft1->die_parent;
 	      while (reft2->die_toplevel == 0)
 		reft2 = reft2->die_parent;
-	      if (ref1->u.p1.die_enter - reft1->u.p1.die_enter
-		  != ref2->u.p1.die_enter - reft2->u.p1.die_enter)
+	      if (unlikely (ref1->die_collapsed_child))
+		{
+		  if (ref1->die_tag
+		      != ref2->u.p1.die_enter - reft2->u.p1.die_enter)
+		    FAIL;
+		}
+	      else if (ref1->u.p1.die_enter - reft1->u.p1.die_enter
+		       != ref2->u.p1.die_enter - reft2->u.p1.die_enter)
 		FAIL;
 	      if (unlikely (reft1->die_cu->cu_chunk
 			    == reft2->die_cu->cu_chunk)
@@ -3993,10 +4038,37 @@ collapse_child (dw_die_ref top_die, dw_die_ref die)
     }
   else if (die->die_referenced)
     {
+      unsigned int die_enter_diff
+	= die->u.p1.die_enter - top_die->u.p1.die_enter;
       die->die_parent = top_die;
-      die->die_child = NULL;
-      die->die_sib = NULL;
-      die->die_ref_seen = die->u.p1.die_enter - top_die->u.p1.die_enter;
+      if (die_enter_diff <= 0xffff)
+	{
+	  dw_die_ref ref;
+	  void **slot;
+	  if (die_collapsed_child_freelist)
+	    {
+	      ref = die_collapsed_child_freelist;
+	      die_collapsed_child_freelist = ref->die_parent;
+	    }
+	  else
+	    ref = pool_alloc (dw_die, offsetof (struct dw_die, die_cu));
+	  memcpy (ref, die, offsetof (struct dw_die, die_cu));
+	  ref->die_collapsed_child = 1;
+	  ref->die_tag = die_enter_diff;
+	  slot = htab_find_slot_with_hash (off_htab, ref, ref->die_offset,
+					   NO_INSERT);
+	  assert (slot != NULL);
+	  *slot = (void *) ref;
+	  memset (die, '\0', offsetof (struct dw_die, die_dup));
+	  die->die_sib = die_nontoplevel_freelist;
+	  die_nontoplevel_freelist = die;
+	}
+      else
+	{
+	  die->die_child = NULL;
+	  die->die_sib = NULL;
+	  die->die_ref_seen = die_enter_diff;
+	}
     }
   else
     {
@@ -5803,11 +5875,15 @@ die_find_dup (dw_die_ref orig, dw_die_ref dup, dw_die_ref die)
   if (orig->die_collapsed_children)
     {
       dw_die_ref ret;
-      unsigned int tick = die->die_ref_seen - 1;
+      unsigned int tick;
+      if (die->die_collapsed_child)
+	tick = die->die_tag - 1;
+      else
+	tick = die->die_ref_seen - 1;
       assert (dup->die_collapsed_children == 0
 	      && die->die_parent == orig);
       ret = die_find_collapsed_dup (dup, &tick);
-      assert (ret->die_tag == die->die_tag);
+      assert (die->die_collapsed_child || ret->die_tag == die->die_tag);
       return ret;
     }
   for (orig_child = orig->die_child, dup_child = dup->die_child;
@@ -9313,6 +9389,7 @@ cleanup (void)
   memset (&ob2, '\0', sizeof (ob2));
   memset (&ob, '\0', sizeof (ob2));
   die_nontoplevel_freelist = NULL;
+  die_collapsed_child_freelist = NULL;
   pool_destroy ();
   first_cu = NULL;
   last_cu = NULL;
