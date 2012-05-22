@@ -5312,6 +5312,11 @@ create_import_tree (void)
 	  prev_cu = die->die_cu;
 	}
     }
+  if (unlikely (fi_multifile) && npus == 0)
+    {
+      obstack_free (&ob2, to_free);
+      return 0;
+    }
   for (cu = fi_multifile ? first_cu : pu, ncus = 0; cu; cu = cu->cu_next)
     if (cu->u1.cu_icu)
       {
