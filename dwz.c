@@ -4888,7 +4888,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      die->die_size += 4;
 	    else
 	      die->die_size
-		= strlen (die->die_nextdup->die_cu->cu_comp_dir) + 1;
+		+= strlen (die->die_nextdup->die_cu->cu_comp_dir) + 1;
 	    t->nattr++;
 	  }
 	break;
