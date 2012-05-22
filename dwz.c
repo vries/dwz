@@ -6990,7 +6990,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      }
 	    else
 	      die->die_size
-		= strlen (origin->die_cu->cu_comp_dir) + 1;
+		+= strlen (origin->die_cu->cu_comp_dir) + 1;
 	    t->attr[t->nattr].attr = DW_AT_comp_dir;
 	    t->attr[t->nattr].form = form;
 	    t->nattr++;
