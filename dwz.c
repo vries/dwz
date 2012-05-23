@@ -10830,6 +10830,7 @@ main (int argc, char *argv[])
 	  ob2 = alt_ob2;
 	  cleanup ();
 	}
+      free (resa);
     }
 
   return ret;
