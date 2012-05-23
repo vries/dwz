@@ -8454,14 +8454,14 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
       case DW_TAG_imported_unit:
 	if (t->attr[0].form == DW_FORM_GNU_ref_alt)
 	  {
-	    assert (die->die_nextdup->die_cu->cu_kind == CU_ALT);
-	    write_32 (ptr, die->die_nextdup->die_offset);
+	    assert (origin->die_cu->cu_kind == CU_ALT);
+	    write_32 (ptr, origin->die_offset);
 	    break;
 	  }
-	assert (die->die_nextdup->die_cu->cu_kind != CU_ALT);
+	assert (origin->die_cu->cu_kind != CU_ALT);
 	write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
-		    die->die_nextdup->die_cu->cu_new_offset
-		    + die->die_nextdup->u.p2.die_new_offset);
+		    origin->die_cu->cu_new_offset
+		    + origin->u.p2.die_new_offset);
 	ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
 	break;
       default:
