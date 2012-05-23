@@ -412,6 +412,8 @@ static const char *multifile;
 
 static unsigned char multifile_sha1[0x14];
 
+static bool quiet;
+
 /* A single attribute in abbreviations.  */
 struct abbrev_attr
 {
@@ -8928,7 +8930,7 @@ strptr (DSO *dso, int sec, off_t offset)
 
 /* Read DWARF sections from DSO.  */
 static int
-read_dwarf (DSO *dso)
+read_dwarf (DSO *dso, bool quieter)
 {
   Elf_Data *data;
   Elf_Scn *scn;
@@ -9016,8 +9018,9 @@ read_dwarf (DSO *dso)
 
   if (debug_sections[DEBUG_INFO].data == NULL)
     {
-      error (0, 0, "%s: .debug_info section not present",
-	     dso->filename);
+      if (!quieter)
+	error (0, 0, "%s: .debug_info section not present",
+	       dso->filename);
       return 1;
     }
 
@@ -9976,7 +9979,7 @@ dwz (const char *file, const char *outfile)
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      if (read_dwarf (dso)
+      if (read_dwarf (dso, quiet && outfile == NULL)
 	  || partition_dups ()
 	  || create_import_tree ()
 	  || (unlikely (fi_multifile)
@@ -10000,18 +10003,19 @@ dwz (const char *file, const char *outfile)
 		  + debug_sections[DEBUG_MACRO].size
 		  + debug_sections[DEBUG_TYPES].size)
 	{
-	  error (0, 0, "%s: DWARF compression not beneficial "
-		       "- old size %ld new size %ld", dso->filename,
-		 (unsigned long) (debug_sections[DEBUG_INFO].size
-				  + debug_sections[DEBUG_ABBREV].size
-				  + debug_sections[DEBUG_STR].size
-				  + debug_sections[DEBUG_MACRO].size
-				  + debug_sections[DEBUG_TYPES].size),
-		 (unsigned long) (debug_sections[DEBUG_INFO].new_size
-				  + debug_sections[DEBUG_ABBREV].new_size
-				  + debug_sections[DEBUG_STR].new_size
-				  + debug_sections[DEBUG_MACRO].new_size
-				  + debug_sections[DEBUG_TYPES].new_size));
+	  if (!quiet || outfile != NULL)
+	    error (0, 0, "%s: DWARF compression not beneficial "
+			 "- old size %ld new size %ld", dso->filename,
+		   (unsigned long) (debug_sections[DEBUG_INFO].size
+				    + debug_sections[DEBUG_ABBREV].size
+				    + debug_sections[DEBUG_STR].size
+				    + debug_sections[DEBUG_MACRO].size
+				    + debug_sections[DEBUG_TYPES].size),
+		   (unsigned long) (debug_sections[DEBUG_INFO].new_size
+				    + debug_sections[DEBUG_ABBREV].new_size
+				    + debug_sections[DEBUG_STR].new_size
+				    + debug_sections[DEBUG_MACRO].new_size
+				    + debug_sections[DEBUG_TYPES].new_size));
 
 	  if (multifile && !fi_multifile)
 	    write_multifile (dso);
@@ -10488,7 +10492,7 @@ read_multifile (int fd)
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      if (read_dwarf (dso))
+      if (read_dwarf (dso, false))
 	goto fail;
 
       if (debug_sections[DEBUG_STR].size)
@@ -10598,14 +10602,18 @@ static struct option dwz_options[] =
   { "help",	no_argument,	   0, 0 },
   { "output",	required_argument, 0, 'o' },
   { "multifile",required_argument, 0, 'm' },
+  { "quiet",	no_argument,	   0, 'q' }
 };
 
 /* Print usage and exit.  */
 static void
 usage (void)
 {
-  error (1, 0, "Usage:\n  dwz [FILES]\n  dwz -o OUTFILE FILE\n"
-	       "  dwz -m COMMONFILE FILES");
+  error (1, 0,
+	 "Usage:\n"
+	 "  dwz [-q] [FILES]\n"
+	 "  dwz [-q] -o OUTFILE FILE\n"
+	 "  dwz [-q] -m COMMONFILE FILES");
 }
 
 int
@@ -10636,6 +10644,10 @@ main (int argc, char *argv[])
 
 	case 'm':
 	  multifile = optarg;
+	  break;
+
+	case 'q':
+	  quiet = true;
 	  break;
 	}
     }
