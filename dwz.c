@@ -10629,7 +10629,7 @@ main (int argc, char *argv[])
   while (1)
     {
       int option_index;
-      int c = getopt_long (argc, argv, "m:o:", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:q", dwz_options, &option_index);
       if (c == -1)
 	break;
       switch (c)
