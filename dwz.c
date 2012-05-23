@@ -556,14 +556,14 @@ struct dw_die
      is reused for die_enter difference from parent and no fields after
      die_parent are allocated.  */
   unsigned int die_collapsed_child : 1;
+  /* Set if die_parent field is reused for struct dw_cu pointer.  */
+  unsigned int die_root : 1;
   /* Tree pointer to parent.  */
   dw_die_ref die_parent;
 
   /* The remaining fields are present only if die_collapsed_child is
      0.  */
 
-  /* Pointer to the CU this DIE is in or will be in.  */
-  struct dw_cu *die_cu;
   /* Tree pointers, to first child and pointer to next sibling.  */
   dw_die_ref die_child, die_sib;
   /* Pointer to the old .debug_abbrev entry's internal representation.  */
@@ -602,7 +602,7 @@ struct dw_die
 	     entry for this DIE.  */
 	  struct abbrev_tag *die_new_abbrev;
 	  /* Offset within the new .debug_info CU.  Unlike die_offset
-	     this one is CU relative, so die_cu->cu_new_offset needs
+	     this one is CU relative, so die_cu (die)->cu_new_offset needs
 	     to be added to it to get .debug_info offset.  */
 	  unsigned int die_new_offset;
 	  /* Used during compute_abbrevs DW_FORM_ref_udata optimization.  */
@@ -622,6 +622,14 @@ struct dw_die
      the newly created partial unit CU.  */
   dw_die_ref die_nextdup;
 };
+
+static inline struct dw_cu *
+die_cu (dw_die_ref die)
+{
+  while (!die->die_root)
+    die = die->die_parent;
+  return (struct dw_cu *) die->die_parent;
+}
 
 /* Safe variant that check die_toplevel.  Can't be used on LHS.  */
 #define die_safe_dup(die) \
@@ -1002,11 +1010,11 @@ static htab_t types_off_htab;
 /* Function to add DIE into the hash table (and create the hash table
    when not already created).  */
 static int
-off_htab_add_die (dw_die_ref die)
+off_htab_add_die (struct dw_cu *cu, dw_die_ref die)
 {
   void **slot;
 
-  if (unlikely (die->die_cu->cu_kind == CU_TYPES))
+  if (unlikely (cu->cu_kind == CU_TYPES))
     {
       if (types_off_htab == NULL)
 	{
@@ -1065,9 +1073,10 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
   struct abbrev_tag *t = die->die_abbrev;
   unsigned int i;
   unsigned char *ptr;
-  if (unlikely (fi_multifile) && die->die_cu->cu_kind == CU_ALT)
+  struct dw_cu *cu = die_cu (die);
+  if (unlikely (fi_multifile) && cu->cu_kind == CU_ALT)
     ptr = alt_data[DEBUG_INFO];
-  else if (die->die_cu->cu_kind == CU_TYPES)
+  else if (cu->cu_kind == CU_TYPES)
     ptr = debug_sections[DEBUG_TYPES].data;
   else
     ptr = debug_sections[DEBUG_INFO].data;
@@ -1088,7 +1097,7 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
       switch (form)
 	{
 	case DW_FORM_ref_addr:
-	  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	  ptr += cu->cu_version == 2 ? ptr_size : 4;
 	  break;
 	case DW_FORM_addr:
 	  ptr += ptr_size;
@@ -1166,7 +1175,7 @@ get_AT_int (dw_die_ref die, enum dwarf_attribute at, bool *present)
   switch (form)
     {
     case DW_FORM_ref_addr:
-      return read_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4);
+      return read_size (ptr, die_cu (die)->cu_version == 2 ? ptr_size : 4);
     case DW_FORM_addr:
       return read_size (ptr, ptr_size);
     case DW_FORM_flag_present:
@@ -1214,7 +1223,7 @@ get_AT_string (dw_die_ref die, enum dwarf_attribute at)
     case DW_FORM_strp:
       {
 	unsigned int strp = read_32 (ptr);
-	if (unlikely (fi_multifile) && die->die_cu->cu_kind == CU_ALT)
+	if (unlikely (fi_multifile) && die_cu (die)->cu_kind == CU_ALT)
 	  {
 	    if (strp >= alt_size[DEBUG_STR])
 	      return NULL;
@@ -1243,6 +1252,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
   unsigned char op;
   GElf_Addr addr;
   dw_die_ref ref;
+  struct dw_cu *cu;
 
   while (ptr < end)
     {
@@ -1310,7 +1320,8 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	    addr = read_16 (ptr);
 	  else
 	    addr = read_32 (ptr);
-	  ref = off_htab_lookup (die->die_cu, die->die_cu->cu_offset + addr);
+	  cu = die_cu (die);
+	  ref = off_htab_lookup (cu, cu->cu_offset + addr);
 	  if (ref == NULL)
 	    {
 	      error (0, 0, "%s: Couldn't find DIE referenced by DW_OP_%d",
@@ -1322,7 +1333,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  if (ref->die_ck_state == CK_KNOWN)
 	    {
 	      ref->die_ck_state = CK_BAD;
-	      while (ref->die_parent != NULL
+	      while (!ref->die_root
 		     && ref->die_parent->die_ck_state == CK_KNOWN)
 		{
 		  ref = ref->die_parent;
@@ -1341,8 +1352,9 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
-	  addr = read_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4);
-	  if (die->die_cu->cu_version == 2)
+	  cu = die_cu (die);
+	  addr = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
+	  if (cu->cu_version == 2)
 	    ptr += ptr_size;
 	  else
 	    ptr += 4;
@@ -1415,7 +1427,8 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ++ptr;
 	  addr = read_uleb128 (ptr);
 	typed_dwarf:
-	  ref = off_htab_lookup (die->die_cu, die->die_cu->cu_offset + addr);
+	  cu = die_cu (die);
+	  ref = off_htab_lookup (cu, cu->cu_offset + addr);
 	  if (ref == NULL)
 	    {
 	      error (0, 0, "%s: Couldn't find DIE referenced by DW_OP_%d",
@@ -1530,7 +1543,7 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
 
       adj.start_offset = offset;
       adj.end_offset = ptr - debug_sections[DEBUG_LOC].data;
-      adj.cu = die->die_cu;
+      adj.cu = die_cu (die);
       if (loc_htab == NULL)
 	{
 	  loc_htab = htab_try_create (50, loc_hash, loc_eq, NULL);
@@ -1571,7 +1584,7 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
    or other reasons).  TOP_DIE is initially NULL when DW_TAG_*_unit or
    die_named_namespace dies are walked.  */
 static int
-checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
+checksum_die (DSO *dso, struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die)
 {
   unsigned short s;
   struct abbrev_tag *t;
@@ -1638,7 +1651,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_stmt_list:
 	case DW_AT_macro_info:
 	case DW_AT_GNU_macros:
-	  if (die->die_parent)
+	  if (!die->die_root)
 	    die->die_no_multifile = 1;
 	  break;
 	/* loclistptr attributes.  */
@@ -1651,7 +1664,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_static_link:
 	case DW_AT_use_location:
 	case DW_AT_vtable_elem_location:
-	  if ((die->die_cu->cu_version < 4 && form == DW_FORM_data4)
+	  if ((cu->cu_version < 4 && form == DW_FORM_data4)
 	      || form == DW_FORM_sec_offset)
 	    {
 	      if (read_loclist (dso, die, read_32 (ptr)))
@@ -1659,7 +1672,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	      ptr = old_ptr;
 	      break;
 	    }
-	  else if (die->die_cu->cu_version < 4 && form == DW_FORM_data8)
+	  else if (cu->cu_version < 4 && form == DW_FORM_data8)
 	    {
 	      if (read_loclist (dso, die, read_64 (ptr)))
 		return 1;
@@ -1686,7 +1699,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	    {
 	      unsigned char *new_ptr = ptr;
 	      ptr = old_ptr;
-	      if (value > die->die_cu->cu_nfiles)
+	      if (value > cu->cu_nfiles)
 		{
 		  error (0, 0, "%s: Invalid DW_AT_%d file number %d",
 			 dso->filename, t->attr[i].attr, (int) value);
@@ -1696,7 +1709,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 		handled = false;
 	      else if (!IGNORE_LOCUS && die->die_ck_state != CK_BAD)
 		{
-		  struct dw_file *cu_file = &die->die_cu->cu_files[value - 1];
+		  struct dw_file *cu_file = &cu->cu_files[value - 1];
 		  size_t file_len = strlen (cu_file->file);
 		  s = t->attr[i].attr;
 		  die->u.p1.die_hash
@@ -1727,12 +1740,12 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 			   && t->attr[i + 1].form == DW_FORM_data1
 			   && *new_ptr == 0)
 		    break;
-		  if (die->die_cu->cu_comp_dir
+		  if (cu->cu_comp_dir
 		      && (cu_file->dir ? cu_file->dir[0]
 				       : cu_file->file[0]) != '/')
 		    die->u.p1.die_hash
-		      = iterative_hash (die->die_cu->cu_comp_dir,
-					strlen (die->die_cu->cu_comp_dir) + 1,
+		      = iterative_hash (cu->cu_comp_dir,
+					strlen (cu->cu_comp_dir) + 1,
 					die->u.p1.die_hash);
 		}
 	    }
@@ -1755,16 +1768,16 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	    {
 	      dw_die_ref ref;
 
-	      value = read_size (ptr, die->die_cu->cu_version == 2
+	      value = read_size (ptr, cu->cu_version == 2
 				      ? ptr_size : 4);
-	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	      ptr += cu->cu_version == 2 ? ptr_size : 4;
 	      if (die->die_ck_state != CK_BAD)
 		{
 		  s = t->attr[i].attr;
 		  die->u.p1.die_hash
 		    = iterative_hash_object (s, die->u.p1.die_hash);
 		}
-	      ref = off_htab_lookup (die->die_cu, value);
+	      ref = off_htab_lookup (cu, value);
 	      if (ref == NULL)
 		{
 		  error (0, 0, "%s: Couldn't find DIE referenced by DW_AT_%d",
@@ -1774,14 +1787,14 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	      if (unlikely (op_multifile) && ref->die_collapsed_child)
 		ref = ref->die_parent;
 	      assert (((!op_multifile && !rd_multifile && !fi_multifile)
-		       || die->die_cu != ref->die_cu)
+		       || cu != die_cu (ref))
 		      && (!op_multifile
-			  || die->die_cu->cu_chunk == ref->die_cu->cu_chunk));
+			  || cu->cu_chunk == die_cu (ref)->cu_chunk));
 	      handled = true;
 	      break;
 	    }
 	  die->die_no_multifile = 1;
-	  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	  ptr += cu->cu_version == 2 ? ptr_size : 4;
 	  break;
 	case DW_FORM_addr:
 	  die->die_no_multifile = 1;
@@ -1828,8 +1841,7 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
 	  if (!handled)
 	    {
 	      dw_die_ref ref
-		= off_htab_lookup (die->die_cu,
-				   die->die_cu->cu_offset + value);
+		= off_htab_lookup (cu, cu->cu_offset + value);
 	      if (ref == NULL)
 		{
 		  error (0, 0, "%s: Couldn't find DIE referenced by DW_AT_%d",
@@ -1972,9 +1984,10 @@ checksum_die (DSO *dso, dw_die_ref top_die, dw_die_ref die)
     }
 
   for (child = die->die_child; child; child = child->die_sib)
-    if (checksum_die (dso, top_die ? top_die
-				   : child->die_named_namespace
-				     ? NULL : child, child))
+    if (checksum_die (dso, cu,
+		      top_die ? top_die
+			      : child->die_named_namespace
+			      ? NULL : child, child))
       return 1;
     else if (die->die_ck_state != CK_BAD)
       {
@@ -2090,8 +2103,8 @@ checksum_ref_die_cmp (const void *p, const void *q)
    hash in their u.p1.die_ref_hash, otherwise (DIEs on the current cycle(s))
    hash in their u.p1.die_hash.  */
 static unsigned int
-checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
-		  hashval_t *second_hash)
+checksum_ref_die (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die,
+		  unsigned int *second_idx, hashval_t *second_hash)
 {
   struct abbrev_tag *t;
   unsigned int i, ret = 0;
@@ -2163,16 +2176,15 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 	    case DW_FORM_ref_addr:
 	      if (unlikely (op_multifile || rd_multifile))
 		{
-		  value = read_size (ptr, die->die_cu->cu_version == 2
-					  ? ptr_size : 4);
-		  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		  value = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
+		  ptr += cu->cu_version == 2 ? ptr_size : 4;
 		  assert (t->attr[i].attr != DW_AT_sibling);
 		  if (top_die == NULL)
 		    break;
-		  ref = off_htab_lookup (die->die_cu, value);
+		  ref = off_htab_lookup (cu, value);
 		  goto finish_ref;
 		}
-	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	      ptr += cu->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    case DW_FORM_addr:
 	      ptr += ptr_size;
@@ -2215,24 +2227,23 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 		}
 	      if (t->attr[i].attr == DW_AT_sibling || top_die == NULL)
 		break;
-	      ref = off_htab_lookup (die->die_cu,
-				     die->die_cu->cu_offset + value);
+	      ref = off_htab_lookup (cu, cu->cu_offset + value);
 	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
 		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
 		break;
 	    finish_ref:
 	      reft = ref;
-	      while (reft->die_parent != NULL
+	      while (!reft->die_root
 		     && reft->die_parent->die_tag != DW_TAG_compile_unit
 		     && reft->die_parent->die_tag != DW_TAG_partial_unit
 		     && !reft->die_parent->die_named_namespace)
 		reft = reft->die_parent;
-	      if (reft->die_ck_state != CK_KNOWN || reft->die_parent == NULL)
+	      if (reft->die_ck_state != CK_KNOWN || reft->die_root)
 		top_die->die_ck_state = CK_BAD;
 	      else
 		{
-		  unsigned int r = checksum_ref_die (reft, reft, second_idx,
-						     second_hash);
+		  unsigned int r = checksum_ref_die (die_cu (reft), reft, reft,
+						     second_idx, second_hash);
 		  if (ret == 0 || (r && r < ret))
 		    ret = r;
 		  if (reft->die_ck_state != CK_KNOWN)
@@ -2311,7 +2322,8 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
     for (child = die->die_child; child; child = child->die_sib)
       {
 	unsigned int r
-	  = checksum_ref_die (top_die ? top_die
+	  = checksum_ref_die (cu,
+			      top_die ? top_die
 			      : child->die_named_namespace
 			      ? NULL : child, child,
 			      second_idx, second_hash);
@@ -2427,7 +2439,8 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 	  if (minidx != -1U)
 	    {
 	      idx = 0;
-	      checksum_ref_die (arr[minidx], arr[minidx], &idx, &ref_hash);
+	      checksum_ref_die (die_cu (arr[minidx]), arr[minidx],
+				arr[minidx], &idx, &ref_hash);
 	      assert (arr == (dw_die_ref *) obstack_base (&ob) + first);
 	      for (i = 0; i < count; i++)
 		{
@@ -2447,7 +2460,7 @@ checksum_ref_die (dw_die_ref top_die, dw_die_ref die, unsigned int *second_idx,
 		{
 		  unsigned int j;
 		  arr[i]->u.p1.die_ref_hash = arr[i]->u.p1.die_hash;
-		  checksum_ref_die (arr[i], arr[i], NULL,
+		  checksum_ref_die (die_cu (arr[i]), arr[i], arr[i], NULL,
 				    &arr[i]->u.p1.die_ref_hash);
 		  assert (arr == (dw_die_ref *) obstack_base (&ob) + first);
 		  for (j = 0; j < count; j++)
@@ -2479,7 +2492,7 @@ static dw_die_ref die_collapsed_child_freelist;
 static void
 expand_children (dw_die_ref top_die)
 {
-  struct dw_cu *cu = top_die->die_cu;
+  struct dw_cu *cu = die_cu (top_die);
   dw_die_ref *diep = &top_die->die_child;
   dw_die_ref parent = top_die, child;
   unsigned char *ptr = debug_sections[DEBUG_INFO].data
@@ -2548,7 +2561,6 @@ expand_children (dw_die_ref top_die)
       die->die_tag = t->tag;
       die->die_abbrev = t;
       die->die_offset = die_offset;
-      die->die_cu = cu;
       die->die_parent = parent;
       die->u.p1.die_enter = tick;
       die->u.p1.die_exit = tick++;
@@ -2634,7 +2646,7 @@ expand_children (dw_die_ref top_die)
 	{
 	  dw_die_ref collapsed = (dw_die_ref) *slot;
 	  *slot = (void *) die;
-	  memset (collapsed, '\0', offsetof (struct dw_die, die_cu));
+	  memset (collapsed, '\0', offsetof (struct dw_die, die_child));
 	  collapsed->die_parent = die_collapsed_child_freelist;
 	  die_collapsed_child_freelist = collapsed;
 	}
@@ -2642,7 +2654,7 @@ expand_children (dw_die_ref top_die)
   assert (top_die->u.p1.die_exit == tick);
   top_die->die_collapsed_children = 0;
   for (child = top_die->die_child; child; child = child->die_sib)
-    checksum_die (NULL, top_die, child);
+    checksum_die (NULL, cu, top_die, child);
 }
 
 /* Return 1 if DIE1 and DIE2 match.  TOP_DIE1 and TOP_DIE2
@@ -2651,7 +2663,8 @@ expand_children (dw_die_ref top_die)
    hopefully ensure that in most cases this function actually
    just verifies matching.  */
 static int
-die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
+die_eq_1 (struct dw_cu *cu1, struct dw_cu *cu2,
+	  dw_die_ref top_die1, dw_die_ref top_die2,
 	  dw_die_ref die1, dw_die_ref die2)
 {
   struct abbrev_tag *t1, *t2;
@@ -2673,8 +2686,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
       || die2->die_ck_state != CK_KNOWN
       || die1->die_toplevel != die2->die_toplevel)
     return 0;
-  assert (die1->die_parent != NULL
-	  && die2->die_parent != NULL);
+  assert (!die1->die_root && !die2->die_root);
 
   t1 = die1->die_abbrev;
   t2 = die2->die_abbrev;
@@ -2685,12 +2697,12 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
     }
   else
     {
-      if (die1->die_cu->cu_kind == CU_ALT)
+      if (cu1->cu_kind == CU_ALT)
 	ptr1 = alt_data[DEBUG_INFO];
       else
 	ptr1 = debug_sections[DEBUG_INFO].data;
       ptr1 += die1->die_offset;
-      if (die2->die_cu->cu_kind == CU_ALT)
+      if (cu2->cu_kind == CU_ALT)
 	ptr2 = alt_data[DEBUG_INFO];
       else
 	ptr2 = debug_sections[DEBUG_INFO].data;
@@ -2702,8 +2714,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   j = 0;
   if (die1->die_toplevel)
     {
-      for (ref1 = die1->die_parent, ref2 = die2->die_parent;
-	   ref1 && ref2; ref1 = ref1->die_parent, ref2 = ref2->die_parent)
+      for (ref1 = die1->die_parent, ref2 = die2->die_parent; ref1 && ref2; )
 	{
 	  const char *name1, *name2;
 	  if ((ref1->die_tag == DW_TAG_compile_unit
@@ -2719,6 +2730,8 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  name2 = get_AT_string (ref2, DW_AT_name);
 	  if (strcmp (name1, name2))
 	    return 0;
+	  ref1 = ref1->die_root ? NULL : ref1->die_parent;
+	  ref2 = ref2->die_root ? NULL : ref2->die_parent;
 	}
       if (ref1 == NULL || ref2 == NULL)
 	return 0;
@@ -2847,9 +2860,9 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  if (value1 != 0)
 	    {
 	      struct dw_file *cu_file1
-		= &die1->die_cu->cu_files[value1 - 1];
+		= &cu1->cu_files[value1 - 1];
 	      struct dw_file *cu_file2
-		= &die2->die_cu->cu_files[value2 - 1];
+		= &cu2->cu_files[value2 - 1];
 	      unsigned int file_len;
 
 	      if (cu_file1->time != cu_file2->time
@@ -2890,14 +2903,13 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      if ((cu_file1->dir ? cu_file1->dir[0] : cu_file1->file[0])
 		  != '/')
 		{
-		  if (die1->die_cu->cu_comp_dir != NULL)
+		  if (cu1->cu_comp_dir != NULL)
 		    {
-		      if (die2->die_cu->cu_comp_dir == NULL
-			  || strcmp (die1->die_cu->cu_comp_dir,
-				     die2->die_cu->cu_comp_dir))
+		      if (cu2->cu_comp_dir == NULL
+			  || strcmp (cu1->cu_comp_dir, cu2->cu_comp_dir))
 			FAIL;
 		    }
-		  else if (die2->die_cu->cu_comp_dir != NULL)
+		  else if (cu2->cu_comp_dir != NULL)
 		    FAIL;
 		}
 	    }
@@ -2991,11 +3003,11 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      value2 = read_32 (ptr2);
 	      if (fi_multifile)
 		{
-		  if (strcmp ((char *) (die1->die_cu->cu_kind == CU_ALT
+		  if (strcmp ((char *) (cu1->cu_kind == CU_ALT
 					? alt_data[DEBUG_STR]
 					: debug_sections[DEBUG_STR].data)
 			      + value1,
-			      (char *) (die2->die_cu->cu_kind == CU_ALT
+			      (char *) (cu2->cu_kind == CU_ALT
 					? alt_data[DEBUG_STR]
 					: debug_sections[DEBUG_STR].data)
 			      + value2) != 0)
@@ -3049,8 +3061,8 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	case DW_FORM_ref_addr:
 	  if (likely (!op_multifile && !rd_multifile))
 	    {
-	      ptr1 += die1->die_cu->cu_version == 2 ? ptr_size : 4;
-	      ptr2 += die2->die_cu->cu_version == 2 ? ptr_size : 4;
+	      ptr1 += cu1->cu_version == 2 ? ptr_size : 4;
+	      ptr2 += cu2->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    }
 	  /* FALLTHRU */
@@ -3062,10 +3074,10 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  switch (form1)
 	    {
 	    case DW_FORM_ref_addr:
-	      value1 = read_size (ptr1, die1->die_cu->cu_version == 2
+	      value1 = read_size (ptr1, cu1->cu_version == 2
 					? ptr_size : 4)
-		       - die1->die_cu->cu_offset;
-	      ptr1 += die1->die_cu->cu_version == 2 ? ptr_size : 4;
+		       - cu1->cu_offset;
+	      ptr1 += cu1->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    case DW_FORM_ref_udata:
 	      value1 = read_uleb128 (ptr1);
@@ -3084,15 +3096,14 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      break;
 	    default: abort ();
 	    }
-	  ref1 = off_htab_lookup (die1->die_cu,
-				  die1->die_cu->cu_offset + value1);
+	  ref1 = off_htab_lookup (cu1, cu1->cu_offset + value1);
 	  switch (form2)
 	    {
 	    case DW_FORM_ref_addr:
-	      value2 = read_size (ptr2, die2->die_cu->cu_version == 2
+	      value2 = read_size (ptr2, cu2->cu_version == 2
 					? ptr_size : 4)
-		       - die2->die_cu->cu_offset;
-	      ptr2 += die2->die_cu->cu_version == 2 ? ptr_size : 4;
+		       - cu2->cu_offset;
+	      ptr2 += cu2->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    case DW_FORM_ref_udata:
 	      value2 = read_uleb128 (ptr2);
@@ -3111,26 +3122,24 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      break;
 	    default: abort ();
 	    }
-	  ref2 = off_htab_lookup (die2->die_cu,
-				  die2->die_cu->cu_offset + value2);
+	  ref2 = off_htab_lookup (cu2, cu2->cu_offset + value2);
 	  assert (ref1 != NULL && ref2 != NULL);
 	  if (unlikely (op_multifile))
 	    {
 	      if (die1->die_collapsed_children && ref1->die_collapsed_child)
 		{
 		  expand_children (die1);
-		  ref1 = off_htab_lookup (die1->die_cu,
-					  die1->die_cu->cu_offset + value1);
+		  ref1 = off_htab_lookup (cu1, cu1->cu_offset + value1);
 		}
 	      assert (ref2->die_collapsed_child == 0);
 	    }
 	  if (likely (!ref1->die_collapsed_child)
-	      && ref1->die_cu == top_die1->die_cu
+	      && die_cu (ref1) == cu1
 	      && ref1->u.p1.die_enter >= top_die1->u.p1.die_enter
 	      && ref1->u.p1.die_exit <= top_die1->u.p1.die_exit)
 	    {
 	      /* A reference into a subdie of the DIE being compared.  */
-	      if (ref2->die_cu != top_die2->die_cu
+	      if (die_cu (ref2) != cu2
 		  || ref1->u.p1.die_enter - top_die1->u.p1.die_enter
 		     != ref2->u.p1.die_enter - top_die2->u.p1.die_enter
 		  || top_die1->u.p1.die_exit - ref1->u.p1.die_exit
@@ -3140,6 +3149,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	  else
 	    {
 	      dw_die_ref reft1 = ref1, reft2 = ref2;
+	      struct dw_cu *refcu1, *refcu2;
 	      while (reft1->die_toplevel == 0)
 		reft1 = reft1->die_parent;
 	      while (reft2->die_toplevel == 0)
@@ -3153,17 +3163,18 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      else if (ref1->u.p1.die_enter - reft1->u.p1.die_enter
 		       != ref2->u.p1.die_enter - reft2->u.p1.die_enter)
 		FAIL;
-	      if (unlikely (reft1->die_cu->cu_chunk
-			    == reft2->die_cu->cu_chunk)
+	      refcu1 = die_cu (reft1);
+	      refcu2 = die_cu (reft2);
+	      if (unlikely (refcu1->cu_chunk == refcu2->cu_chunk)
 		  && likely (!fi_multifile))
 		{
 		  if (reft1->die_dup
-		      && reft1->die_dup->die_cu->cu_chunk
-			 == reft1->die_cu->cu_chunk)
+		      && die_cu (reft1->die_dup)->cu_chunk
+			 == refcu1->cu_chunk)
 		    reft1 = reft1->die_dup;
 		  if (reft2->die_dup
-		      && reft2->die_dup->die_cu->cu_chunk
-			 == reft2->die_cu->cu_chunk)
+		      && die_cu (reft2->die_dup)->cu_chunk
+			 == refcu2->cu_chunk)
 		    reft2 = reft2->die_dup;
 		  if (reft2->die_offset < reft1->die_offset)
 		    {
@@ -3178,7 +3189,9 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 		 should always be from the current CU.  */
 	      if (reft1->die_dup)
 		reft1 = reft1->die_dup;
-	      if (die_eq_1 (reft1, reft2, reft1, reft2) == 0)
+	      refcu1 = die_cu (reft1);
+	      refcu2 = die_cu (reft2);
+	      if (die_eq_1 (refcu1, refcu2, reft1, reft2, reft1, reft2) == 0)
 		FAIL;
 	    }
 	  i++;
@@ -3206,7 +3219,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   for (child1 = die1->die_child, child2 = die2->die_child;
        child1 && child2;
        child1 = child1->die_sib, child2 = child2->die_sib)
-    if (die_eq_1 (top_die1, top_die2, child1, child2) == 0)
+    if (die_eq_1 (cu1, cu2, top_die1, top_die2, child1, child2) == 0)
       FAIL;
 
   if (child1 || child2)
@@ -3216,7 +3229,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
     }
 
   if (unlikely (fi_multifile))
-    assert (die1->die_cu->cu_kind == CU_ALT && die2->die_cu->cu_kind != CU_ALT);
+    assert (cu1->cu_kind == CU_ALT && cu2->cu_kind != CU_ALT);
   return 1;
 }
 
@@ -3236,7 +3249,7 @@ die_eq (const void *p, const void *q)
   if (die1->u.p1.die_hash != die2->u.p1.die_hash
       || die1->u.p1.die_ref_hash != die2->u.p1.die_ref_hash)
     return 0;
-  ret = die_eq_1 (die1, die2, die1, die2);
+  ret = die_eq_1 (die_cu (die1), die_cu (die2), die1, die2, die1, die2);
   count = obstack_object_size (&ob) / sizeof (void *);
   arr = (dw_die_ref *) obstack_finish (&ob);
   if (!ret)
@@ -3764,7 +3777,7 @@ finalize_strp (bool build_tail_offset_list)
 /* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
    unless already marked.  */
 static bool
-mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
+mark_refs (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die, int mode)
 {
   struct abbrev_tag *t;
   unsigned int i;
@@ -3808,16 +3821,16 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 	    case DW_FORM_ref_addr:
 	      if (unlikely (op_multifile))
 		{
-		  value = read_size (ptr, die->die_cu->cu_version == 2
+		  value = read_size (ptr, cu->cu_version == 2
 					  ? ptr_size : 4);
-		  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		  ptr += cu->cu_version == 2 ? ptr_size : 4;
 		  assert (t->attr[i].attr != DW_AT_sibling);
-		  ref = off_htab_lookup (die->die_cu, value);
+		  ref = off_htab_lookup (cu, value);
 		  if ((mode & MARK_REFS_REFERENCED) != 0)
 		    ref->die_referenced = 1;
 		  goto finish_ref;
 		}
-	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	      ptr += cu->cu_version == 2 ? ptr_size : 4;
 	      break;
 	    case DW_FORM_addr:
 	      ptr += ptr_size;
@@ -3860,8 +3873,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 		}
 	      if (t->attr[i].attr == DW_AT_sibling)
 		break;
-	      ref = off_htab_lookup (die->die_cu,
-				     die->die_cu->cu_offset + value);
+	      ref = off_htab_lookup (cu, cu->cu_offset + value);
 	      if ((mode & MARK_REFS_REFERENCED) != 0)
 		ref->die_referenced = 1;
 	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
@@ -3869,7 +3881,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 		break;
 	    finish_ref:
 	      reft = ref;
-	      while (reft->die_parent != NULL
+	      while (!reft->die_root
 		     && reft->die_parent->die_tag != DW_TAG_compile_unit
 		     && reft->die_parent->die_tag != DW_TAG_partial_unit
 		     && !reft->die_parent->die_named_namespace)
@@ -3877,7 +3889,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 	      if ((mode & MARK_REFS_FOLLOW_DUPS) && reft->die_dup != NULL)
 		{
 		  reft = reft->die_dup;
-		  if (reft->die_cu->cu_kind == CU_PU)
+		  if (die_cu (reft)->cu_kind == CU_PU)
 		    break;
 		}
 	      if (reft->die_ref_seen == 0)
@@ -3885,7 +3897,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
 		  if ((mode & MARK_REFS_RETURN_VAL))
 		    return false;
 		  reft->die_ref_seen = 1;
-		  mark_refs (reft, reft, mode);
+		  mark_refs (die_cu (reft), reft, reft, mode);
 		}
 	      break;
 	    case DW_FORM_string:
@@ -3919,7 +3931,7 @@ mark_refs (dw_die_ref top_die, dw_die_ref die, int mode)
     }
 
   for (child = die->die_child; child; child = child->die_sib)
-    if (!mark_refs (top_die, child, mode))
+    if (!mark_refs (cu, top_die, child, mode))
       return false;
   return true;
 }
@@ -3955,14 +3967,14 @@ remove_dies (dw_die_ref die, bool remove)
 }
 
 static void
-remove_unneeded (dw_die_ref die, unsigned int phase)
+remove_unneeded (struct dw_cu *cu, dw_die_ref die, unsigned int phase)
 {
   dw_die_ref child;
   for (child = die->die_child; child; child = child->die_sib)
     {
       if (child->die_named_namespace)
 	{
-	  remove_unneeded (child, phase);
+	  remove_unneeded (cu, child, phase);
 	  if (phase == 2)
 	    child->die_ref_seen = 0;
 	}
@@ -3974,7 +3986,7 @@ remove_unneeded (dw_die_ref die, unsigned int phase)
 	    break;
 	  case 1:
 	    if (child->die_dup == NULL)
-	      mark_refs (child, child, MARK_REFS_REFERENCED);
+	      mark_refs (cu, child, child, MARK_REFS_REFERENCED);
 	    break;
 	  case 2:
 	    remove_dies (child, false);
@@ -4051,8 +4063,8 @@ collapse_child (dw_die_ref top_die, dw_die_ref die)
 	      die_collapsed_child_freelist = ref->die_parent;
 	    }
 	  else
-	    ref = pool_alloc (dw_die, offsetof (struct dw_die, die_cu));
-	  memcpy (ref, die, offsetof (struct dw_die, die_cu));
+	    ref = pool_alloc (dw_die, offsetof (struct dw_die, die_child));
+	  memcpy (ref, die, offsetof (struct dw_die, die_child));
 	  ref->die_collapsed_child = 1;
 	  ref->die_tag = die_enter_diff;
 	  slot = htab_find_slot_with_hash (off_htab, ref, ref->die_offset,
@@ -4207,11 +4219,11 @@ read_debug_info (DSO *dso, int kind)
 		 executable have been parsed, as we follow
 		 DW_FORM_ref_addr then.  */
 	      for (cu = cuf; cu; cu = cu->cu_next)
-		if (checksum_die (dso, NULL, cu->cu_die))
+		if (checksum_die (dso, cu, NULL, cu->cu_die))
 		  goto fail;
 
 	      for (cu = cuf; cu; cu = cu->cu_next)
-		checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
+		checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
 #ifdef DEBUG_DUMP_DIES
 	      for (cu = cuf; cu; cu = cu->cu_next)
@@ -4223,11 +4235,11 @@ read_debug_info (DSO *dso, int kind)
 		  goto fail;
 
 	      for (cu = cuf; cu; cu = cu->cu_next)
-		remove_unneeded (cu->cu_die, 0);
+		remove_unneeded (cu, cu->cu_die, 0);
 	      for (cu = cuf; cu; cu = cu->cu_next)
-		remove_unneeded (cu->cu_die, 1);
+		remove_unneeded (cu, cu->cu_die, 1);
 	      for (cu = cuf; cu; cu = cu->cu_next)
-		remove_unneeded (cu->cu_die, 2);
+		remove_unneeded (cu, cu->cu_die, 2);
 
 	      if (cu_collapse == NULL)
 		cu_collapse = first_cu;
@@ -4314,7 +4326,10 @@ read_debug_info (DSO *dso, int kind)
 		{
 		  diep = &parent->die_sib;
 		  parent->u.p1.die_exit = tick++;
-		  parent = parent->die_parent;
+		  if (parent->die_root == 0)
+		    parent = parent->die_parent;
+		  else
+		    parent = NULL;
 		}
 	      else
 		diep = NULL;
@@ -4334,7 +4349,7 @@ read_debug_info (DSO *dso, int kind)
 	      goto fail;
 	    }
 	  if (parent == NULL
-	      || parent->die_parent == NULL
+	      || parent->die_root
 	      || parent->die_named_namespace)
 	    {
 	      die = pool_alloc (dw_die, sizeof (struct dw_die));
@@ -4356,8 +4371,13 @@ read_debug_info (DSO *dso, int kind)
 	  die->die_tag = t->tag;
 	  die->die_abbrev = t;
 	  die->die_offset = die_offset;
-	  die->die_cu = cu;
-	  die->die_parent = parent;
+	  if (parent)
+	    die->die_parent = parent;
+	  else
+	    {
+	      die->die_root = 1;
+	      die->die_parent = (dw_die_ref) cu;
+	    }
 	  die->u.p1.die_enter = tick;
 	  die->u.p1.die_exit = tick++;
 	  if (t->children)
@@ -4420,8 +4440,8 @@ read_debug_info (DSO *dso, int kind)
 		  if (t->attr[i].attr == DW_AT_name
 		      && (die->die_tag == DW_TAG_namespace
 			  || die->die_tag == DW_TAG_module)
-		      && die->die_parent != NULL
-		      && (die->die_parent->die_parent == NULL
+		      && !die->die_root
+		      && (die->die_parent->die_root
 			  || die->die_parent->die_named_namespace))
 		    die->die_named_namespace = 1;
 		  if (note_strp_forms)
@@ -4434,8 +4454,8 @@ read_debug_info (DSO *dso, int kind)
 		  if (t->attr[i].attr == DW_AT_name
 		      && (die->die_tag == DW_TAG_namespace
 			  || die->die_tag == DW_TAG_module)
-		      && die->die_parent != NULL
-		      && (die->die_parent->die_parent == NULL
+		      && !die->die_root
+		      && (die->die_parent->die_root
 			  || die->die_parent->die_named_namespace))
 		    die->die_named_namespace = 1;
 		  break;
@@ -4497,7 +4517,7 @@ read_debug_info (DSO *dso, int kind)
 	    }
 	  die->die_size = (ptr - debug_sections[kind].data)
 			  - die_offset;
-	  if (off_htab_add_die (die))
+	  if (off_htab_add_die (cu, die))
 	    goto fail;
 	}
 
@@ -4535,9 +4555,9 @@ read_debug_info (DSO *dso, int kind)
       if (likely (!op_multifile && !rd_multifile && !fi_multifile)
 	  && likely (kind == DEBUG_INFO))
 	{
-	  if (checksum_die (dso, NULL, cu->cu_die))
+	  if (checksum_die (dso, cu, NULL, cu->cu_die))
 	    goto fail;
-	  checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
+	  checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
 #ifdef DEBUG_DUMP_DIES
 	  dump_dies (0, cu->cu_die);
@@ -4574,11 +4594,11 @@ read_debug_info (DSO *dso, int kind)
 	 only after all the PUs are parsed, as we follow
 	 DW_FORM_ref_addr then.  */
       for (cu = first_cu; cu; cu = cu->cu_next)
-	if (checksum_die (dso, NULL, cu->cu_die))
+	if (checksum_die (dso, cu, NULL, cu->cu_die))
 	  goto fail;
 
       for (cu = first_cu; cu; cu = cu->cu_next)
-	checksum_ref_die (NULL, cu->cu_die, NULL, NULL);
+	checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
 #ifdef DEBUG_DUMP_DIES
       for (cu = first_cu; cu; cu = cu->cu_next)
@@ -4636,14 +4656,16 @@ partition_cmp (const void *p, const void *q)
   for (ref1 = die1, ref2 = die2;;
        ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
     {
-      while (ref1 && ref1->die_cu == last_cu1)
+      struct dw_cu *ref1cu = NULL;
+      struct dw_cu *ref2cu = NULL;
+      while (ref1 && (ref1cu = die_cu (ref1)) == last_cu1)
 	ref1 = ref1->die_nextdup;
-      while (ref2 && ref2->die_cu == last_cu2)
+      while (ref2 && (ref2cu = die_cu (ref2)) == last_cu2)
 	ref2 = ref2->die_nextdup;
       if (ref1 == NULL || ref2 == NULL)
 	break;
-      last_cu1 = ref1->die_cu;
-      last_cu2 = ref2->die_cu;
+      last_cu1 = ref1cu;
+      last_cu2 = ref2cu;
       if (last_cu1->cu_offset < last_cu2->cu_offset)
 	return -1;
       else if (last_cu1->cu_offset > last_cu2->cu_offset)
@@ -4680,14 +4702,14 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
 	      /* If all the dups are from the same DSO or executable,
 		 there is nothing in it to optimize in between different
 		 objects.  */
-	      unsigned int cu_chunk = child->die_cu->cu_chunk;
+	      unsigned int cu_chunk = die_cu (child)->cu_chunk;
 	      for (die = child->die_nextdup; die; die = die->die_nextdup)
-		if (die->die_cu->cu_chunk != cu_chunk)
+		if (die_cu (die)->cu_chunk != cu_chunk)
 		  break;
 	      if (die == NULL)
 		continue;
 	    }
-	  /* Sort the die_nextdup list by increasing die_cu->cu_chunk.
+	  /* Sort the die_nextdup list by increasing die_cu ()->cu_chunk.
 	     When it is originally added, child has the lowest
 	     cu_offset, then the DIEs are sorted in the linked list
 	     from highest cu_offset down to lowest or second lowest.  */
@@ -4728,7 +4750,6 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   new_die->die_parent = parent;
   new_die->die_tag = die->die_tag;
   new_die->die_offset = -1U;
-  new_die->die_cu = parent->die_cu;
   new_die->die_size = die->die_size;
   diep = &new_die->die_child;
   for (child = die->die_child; child; child = child->die_sib)
@@ -4769,14 +4790,16 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  for (ref1 = arr[i], ref2 = arr[j];;
 	       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
 	    {
-	      while (ref1 && ref1->die_cu == last_cu1)
+	      struct dw_cu *ref1cu = NULL;
+	      struct dw_cu *ref2cu = NULL;
+	      while (ref1 && (ref1cu = die_cu (ref1)) == last_cu1)
 		ref1 = ref1->die_nextdup;
-	      while (ref2 && ref2->die_cu == last_cu2)
+	      while (ref2 && (ref2cu = die_cu (ref2)) == last_cu2)
 		ref2 = ref2->die_nextdup;
 	      if (ref1 == NULL || ref2 == NULL)
 		break;
-	      last_cu1 = ref1->die_cu;
-	      last_cu2 = ref2->die_cu;
+	      last_cu1 = ref1cu;
+	      last_cu2 = ref2cu;
 	      if (last_cu1 != last_cu2)
 		break;
 	      else
@@ -4791,11 +4814,12 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  struct dw_cu *last_cu1 = NULL;
 	  for (ref = arr[i];; ref = ref->die_nextdup)
 	    {
-	      while (ref && ref->die_cu == last_cu1)
+	      struct dw_cu *refcu = NULL;
+	      while (ref && (refcu = die_cu (ref)) == last_cu1)
 		ref = ref->die_nextdup;
 	      if (ref == NULL)
 		break;
-	      last_cu1 = ref->die_cu;
+	      last_cu1 = refcu;
 	      cnt++;
 	    }
 	}
@@ -4832,8 +4856,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	    }
 	  for (k = i; k < j; k++)
 	    if (arr[k]->die_ref_seen == 2
-		&& !mark_refs (arr[k], arr[k], (MARK_REFS_FOLLOW_DUPS
-						| MARK_REFS_RETURN_VAL)))
+		&& !mark_refs (die_cu (arr[k]), arr[k], arr[k],
+			       (MARK_REFS_FOLLOW_DUPS | MARK_REFS_RETURN_VAL)))
 	      break;
 	  /* If that is not possible and some DIEs couldn't be included,
 	     fallback to assume other DIEs won't be included.  */
@@ -4846,8 +4870,9 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		if (arr[k]->die_ref_seen == 0)
 		  {
 		    arr[k]->die_ref_seen = 2;
-		    if (!mark_refs (arr[k], arr[k], (MARK_REFS_FOLLOW_DUPS
-						     | MARK_REFS_RETURN_VAL)))
+		    if (!mark_refs (die_cu (arr[k]), arr[k], arr[k],
+				    (MARK_REFS_FOLLOW_DUPS
+				     | MARK_REFS_RETURN_VAL)))
 		      arr[k]->die_ref_seen = 0;
 		  }
 	    }
@@ -4870,19 +4895,20 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	 for the abbrev index, DW_AT_name attribute and
 	 DW_AT_sibling attribute and child end.  */
       new_size = size + 21
-		 + (arr[i]->die_cu->cu_version == 2
+		 + (die_cu (arr[i])->cu_version == 2
 		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
       if (!second_phase)
 	force = orig_size > new_size;
       if (force)
 	{
 	  dw_die_ref die, *diep;
+	  struct dw_cu *refcu = die_cu (arr[i]);
 	  struct dw_cu *partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
 	  memset (partial_cu, '\0', sizeof (*partial_cu));
 	  partial_cu->cu_kind = CU_PU;
 	  partial_cu->cu_offset = *last_partial_cu == NULL
 				  ? 0 : (*last_partial_cu)->cu_offset + 1;
-	  partial_cu->cu_version = arr[i]->die_cu->cu_version;
+	  partial_cu->cu_version = refcu->cu_version;
 	  if (*first_partial_cu == NULL)
 	    *first_partial_cu = *last_partial_cu = partial_cu;
 	  else
@@ -4896,8 +4922,9 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  partial_cu->cu_die = die;
 	  die->die_tag = DW_TAG_partial_unit;
 	  die->die_offset = -1U;
-	  die->die_cu = partial_cu;
-	  die->die_nextdup = arr[i]->die_cu->cu_die;
+	  die->die_root = 1;
+	  die->die_parent = (dw_die_ref) partial_cu;
+	  die->die_nextdup = refcu->cu_die;
 	  die->die_size = 9;
 	  diep = &die->die_child;
 	  for (k = i; k < j; k++)
@@ -4920,7 +4947,6 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		      namespc->die_toplevel = 1;
 		      namespc->die_tag = ref->die_tag;
 		      namespc->die_offset = -1U;
-		      namespc->die_cu = partial_cu;
 		      namespc->die_nextdup = ref;
 		      namespc->die_child = child;
 		      namespc->die_parent = die;
@@ -4967,6 +4993,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		continue;
 	      for (ref = arr[k]; ref; ref = next)
 		{
+		  struct dw_cu *refcu = die_cu (ref);
 		  next = ref->die_nextdup;
 		  ref->die_dup = NULL;
 		  ref->die_nextdup = NULL;
@@ -4975,7 +5002,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		     (arguably a bug in the DWARF producer),
 		     keep them linked together, but don't link
 		     DIEs across different CUs.  */
-		  while (next && ref->die_cu == next->die_cu)
+		  while (next && refcu == die_cu (next))
 		    {
 		      dw_die_ref cur = next;
 		      next = cur->die_nextdup;
@@ -5017,7 +5044,8 @@ partition_dups (void)
 	    arr[i]->die_ref_seen = arr[i]->die_dup != NULL;
 	  for (i = 0; i < vec_size; i++)
 	    if (arr[i]->die_dup != NULL)
-	      mark_refs (arr[i], arr[i], MARK_REFS_FOLLOW_DUPS);
+	      mark_refs (die_cu (arr[i]), arr[i], arr[i],
+			 MARK_REFS_FOLLOW_DUPS);
 	  partition_dups_1 (arr, vec_size, &first_partial_cu,
 			    &last_partial_cu, true);
 	  for (i = 0; i < vec_size; i++)
@@ -5283,11 +5311,12 @@ create_import_tree (void)
       for (die = rdie->die_nextdup, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
-	  if (die->die_cu == prev_cu)
+	  struct dw_cu *diecu = die_cu (die);
+	  if (diecu == prev_cu)
 	    continue;
 	  ipu->incoming_count++;
-	  size += 1 + (die->die_cu->cu_version == 2 ? ptr_size : 4);
-	  prev_cu = die->die_cu;
+	  size += 1 + (diecu->cu_version == 2 ? ptr_size : 4);
+	  prev_cu = diecu;
 	}
       ipu->incoming = (struct import_edge *)
 		       obstack_alloc (&ob2,
@@ -5296,20 +5325,21 @@ create_import_tree (void)
       for (die = rdie->die_nextdup, i = 0, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
-	  if (die->die_cu == prev_cu)
+	  struct dw_cu *diecu = die_cu (die);
+	  if (diecu == prev_cu)
 	    continue;
-	  icu = die->die_cu->u1.cu_icu;
+	  icu = diecu->u1.cu_icu;
 	  if (icu == NULL)
 	    {
 	      icu = (struct import_cu *)
 		    obstack_alloc (&ob2, sizeof (*ipu));
 	      memset (icu, 0, sizeof (*icu));
-	      icu->cu = die->die_cu;
-	      die->die_cu->u1.cu_icu = icu;
+	      icu->cu = diecu;
+	      diecu->u1.cu_icu = icu;
 	    }
 	  ipu->incoming[i++].icu = icu;
 	  icu->outgoing_count++;
-	  prev_cu = die->die_cu;
+	  prev_cu = diecu;
 	}
     }
   if (unlikely (fi_multifile) && npus == 0)
@@ -5807,7 +5837,8 @@ create_import_tree (void)
       partial_cu->cu_die = die;
       die->die_tag = DW_TAG_partial_unit;
       die->die_offset = -1U;
-      die->die_cu = partial_cu;
+      die->die_root = 1;
+      die->die_parent = (dw_die_ref) partial_cu;
       die->die_size = 1;
       ipu->cu = partial_cu;
     }
@@ -5827,9 +5858,8 @@ create_import_tree (void)
 	  die->die_toplevel = 1;
 	  die->die_tag = DW_TAG_imported_unit;
 	  die->die_offset = -1U;
-	  die->die_cu = cu;
 	  die->die_nextdup = e->icu->cu->cu_die;
-	  die->die_parent = die->die_cu->cu_die;
+	  die->die_parent = cu->cu_die;
 	  die->die_size = (cu->cu_version == 2 ? 1 + ptr_size : 5);
 	  /* Put the new DW_TAG_imported_unit DIE after all typed DWARF
 	     stack referenced base types and after all previously added
@@ -6593,7 +6623,8 @@ write_macro (void)
    in the tree, and record pairs of referrer/referree DIEs for
    intra-CU references into obstack vector VEC.  */
 static int
-build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
+build_abbrevs_for_die (htab_t h, struct dw_cu *cu, dw_die_ref die,
+		       struct dw_cu *refcu, dw_die_ref ref,
 		       struct abbrev_tag *t, unsigned int *ndies,
 		       struct obstack *vec)
 {
@@ -6618,15 +6649,20 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
       if (ref != NULL)
 	;
       else if (die_safe_nextdup (die) && die->die_nextdup->die_dup == die)
-	ref = die->die_nextdup;
+	{
+	  ref = die->die_nextdup;
+	  if (ref != NULL)
+	    refcu = die_cu (ref);
+	}
       if (ref == NULL)
 	origin = die->die_nextdup;
     }
   else
     {
       ref = die;
+      refcu = cu;
       if (wr_multifile
-	  && (die->die_parent == NULL || die->die_named_namespace))
+	  && (die->die_root || die->die_named_namespace))
 	origin = die;
     }
   if (die->die_child && die->die_sib)
@@ -6636,7 +6672,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
   if (ref != NULL && origin == NULL)
     {
       unsigned char *base
-	= die->die_cu->cu_kind == CU_TYPES
+	= cu->cu_kind == CU_TYPES
 	  ? debug_sections[DEBUG_TYPES].data
 	  : debug_sections[DEBUG_INFO].data;
       unsigned char *ptr = base + ref->die_offset;
@@ -6661,7 +6697,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      break;
 	    case DW_FORM_addr:
 	      if (reft->attr[i].attr == DW_AT_high_pc
-		  && die->die_cu->cu_version >= 4)
+		  && cu->cu_version >= 4)
 		i = -2U;
 	      break;
 	    default:
@@ -6710,7 +6746,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 			     form, reft->attr[i].attr);
 		      return 1;
 		    }
-		  value = line_htab_lookup (ref->die_cu, value);
+		  value = line_htab_lookup (refcu, value);
 		  if (value <= 0xff)
 		    {
 		      form = DW_FORM_data1;
@@ -6767,9 +6803,9 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 		    {
 		      dw_die_ref refdt;
 		      value = read_size (ptr,
-					 ref->die_cu->cu_version == 2
+					 refcu->cu_version == 2
 					 ? ptr_size : 4);
-		      ptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
+		      ptr += refcu->cu_version == 2 ? ptr_size : 4;
 		      refd = off_htab_lookup (NULL, value);
 		      assert (refd != NULL);
 		      refdt = refd;
@@ -6777,7 +6813,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 			refdt = refdt->die_parent;
 		      if (refdt->die_dup
 			  && !refdt->die_op_type_referenced
-			  && refdt->die_dup->die_cu->cu_kind == CU_ALT)
+			  && die_cu (refdt->die_dup)->cu_kind == CU_ALT)
 			{
 			  t->attr[j].attr = reft->attr[i].attr;
 			  t->attr[j++].form = DW_FORM_GNU_ref_alt;
@@ -6786,12 +6822,12 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 			}
 		      break;
 		    }
-		  ptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
+		  ptr += refcu->cu_version == 2 ? ptr_size : 4;
 		  break;
 		case DW_FORM_addr:
 		  ptr += ptr_size;
 		  if (reft->attr[i].attr == DW_AT_low_pc
-		      && die->die_cu->cu_version >= 4)
+		      && cu->cu_version >= 4)
 		    low_pc = read_size (ptr - ptr_size, ptr_size);
 		  else if (reft->attr[i].attr == DW_AT_high_pc
 			   && low_pc)
@@ -6909,17 +6945,16 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 		  else
 		    {
 		      dw_die_ref refdt;
-		      refd = off_htab_lookup (ref->die_cu,
-					      ref->die_cu->cu_offset + value);
+		      refd = off_htab_lookup (refcu, refcu->cu_offset + value);
 		      assert (refd != NULL);
 		      refdt = refd;
 		      while (refdt->die_toplevel == 0)
 			refdt = refdt->die_parent;
 		      if (refdt->die_dup && refdt->die_op_type_referenced)
 			{
-			  if (die->die_cu == refd->die_cu)
+			  if (cu == die_cu (refdt))
 			    form = DW_FORM_ref4;
-			  else if (die->die_cu == refdt->die_dup->die_cu)
+			  else if (cu == die_cu (refdt->die_dup))
 			    {
 			      form = DW_FORM_ref4;
 			      refd = die_find_dup (refdt, refdt->die_dup,
@@ -6932,16 +6967,16 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 			{
 			  if (refdt->die_dup)
 			    refd = die_find_dup (refdt, refdt->die_dup, refd);
-			  if (die->die_cu == refd->die_cu)
+			  if (cu == die_cu (refd))
 			    form = DW_FORM_ref4;
-			  else if (refd->die_cu->cu_kind == CU_ALT)
+			  else if (die_cu (refd)->cu_kind == CU_ALT)
 			    form = DW_FORM_GNU_ref_alt;
 			  else
 			    form = DW_FORM_ref_addr;
 			}
 		    }
 		  if (form == DW_FORM_ref_addr)
-		    die->die_size += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		    die->die_size += cu->cu_version == 2 ? ptr_size : 4;
 		  else if (form == DW_FORM_GNU_ref_alt)
 		    die->die_size += 4;
 		  else
@@ -6974,15 +7009,16 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	die->die_size = 0;
 	if (origin == NULL)
 	  break;
-	if (origin->die_cu->cu_nfiles)
+	refcu = die_cu (origin);
+	if (refcu->cu_nfiles)
 	  {
 	    t->attr[0].attr = DW_AT_stmt_list;
-	    t->attr[0].form = die->die_cu->cu_version < 4
+	    t->attr[0].form = cu->cu_version < 4
 			      ? DW_FORM_sec_offset : DW_FORM_data4;
 	    die->die_size += 4;
 	    t->nattr++;
 	  }
-	if (origin->die_cu->cu_comp_dir)
+	if (refcu->cu_comp_dir)
 	  {
 	    enum dwarf_form form;
 	    unsigned char *ptr = get_AT (origin, DW_AT_comp_dir, &form);
@@ -6995,7 +7031,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	      }
 	    else
 	      die->die_size
-		+= strlen (origin->die_cu->cu_comp_dir) + 1;
+		+= strlen (refcu->cu_comp_dir) + 1;
 	    t->attr[t->nattr].attr = DW_AT_comp_dir;
 	    t->attr[t->nattr].form = form;
 	    t->nattr++;
@@ -7031,7 +7067,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
       case DW_TAG_imported_unit:
 	t->attr[0].attr = DW_AT_import;
 	t->nattr = 1;
-	if (die->die_nextdup->die_cu->cu_kind == CU_ALT)
+	if (die_cu (die->die_nextdup)->cu_kind == CU_ALT)
 	  {
 	    t->attr[0].form = DW_FORM_GNU_ref_alt;
 	    die->die_size = 4;
@@ -7039,7 +7075,7 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
 	else
 	  {
 	    t->attr[0].form = DW_FORM_ref_addr;
-	    die->die_size = die->die_cu->cu_version == 2 ? ptr_size : 4;
+	    die->die_size = cu->cu_version == 2 ? ptr_size : 4;
 	  }
 	break;
       default:
@@ -7069,12 +7105,13 @@ build_abbrevs_for_die (htab_t h, dw_die_ref die, dw_die_ref ref,
     {
       for (child = die->die_child, ref_child = ref->die_child;
 	   child; child = child->die_sib, ref_child = ref_child->die_sib)
-	if (build_abbrevs_for_die (h, child, ref_child, t, ndies, vec))
+	if (build_abbrevs_for_die (h, cu, child, refcu, ref_child,
+				   t, ndies, vec))
 	  return 1;
     }
   else
     for (child = die->die_child; child; child = child->die_sib)
-      if (build_abbrevs_for_die (h, child, NULL, t, ndies, vec))
+      if (build_abbrevs_for_die (h, cu, child, NULL, NULL, t, ndies, vec))
 	return 1;
   return 0;
 }
@@ -7090,7 +7127,7 @@ build_abbrevs (struct dw_cu *cu, struct abbrev_tag *t, unsigned int *ndies,
   if (h == NULL)
     dwz_oom ();
 
-  if (build_abbrevs_for_die (h, cu->cu_die, NULL, t, ndies, vec))
+  if (build_abbrevs_for_die (h, cu, cu->cu_die, NULL, NULL, t, ndies, vec))
     return 1;
 
   cu->cu_new_abbrev = h;
@@ -7225,7 +7262,7 @@ update_new_die_offsets (dw_die_ref die, unsigned int off,
    decided what intra-CU form will be used.  Can return -1U if
    a problem is detected and the tool should give up.  */
 static unsigned int
-finalize_new_die_offsets (dw_die_ref die, unsigned int off,
+finalize_new_die_offsets (struct dw_cu *cu, dw_die_ref die, unsigned int off,
 			  unsigned int intracusize, dw_die_ref **intracuvec)
 {
   dw_die_ref child;
@@ -7247,7 +7284,7 @@ finalize_new_die_offsets (dw_die_ref die, unsigned int off,
   if (die->die_op_type_referenced
       && !wr_multifile
       && size_of_uleb128 (off)
-	 > size_of_uleb128 (die->die_offset - die->die_cu->cu_offset))
+	 > size_of_uleb128 (die->die_offset - cu->cu_offset))
     return -1U;
   if ((*intracuvec)[0] == die)
     {
@@ -7270,7 +7307,7 @@ finalize_new_die_offsets (dw_die_ref die, unsigned int off,
   off += die->die_size;
   for (child = die->die_child; child; child = child->die_sib)
     {
-      off = finalize_new_die_offsets (child, off, intracusize, intracuvec);
+      off = finalize_new_die_offsets (cu, child, off, intracusize, intracuvec);
       if (off == -1U)
 	return off;
     }
@@ -7454,7 +7491,7 @@ compute_abbrevs (DSO *dso)
 	}
 
       intracuvec = intracuarr;
-      off = finalize_new_die_offsets (cu->cu_die, headersz, intracusize,
+      off = finalize_new_die_offsets (cu, cu->cu_die, headersz, intracusize,
 				      &intracuvec);
       if (off == -1U)
 	{
@@ -7821,7 +7858,8 @@ write_abbrev (void)
 /* Adjust DWARF expression starting at PTR, LEN bytes long, referenced by
    DIE, with REF being the original DIE.  */
 static void
-adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
+adjust_exprloc (struct dw_cu *cu, dw_die_ref die, struct dw_cu *refcu,
+		dw_die_ref ref, unsigned char *ptr, size_t len)
 {
   unsigned char *end = ptr + len, *orig_ptr = NULL;
   unsigned char op;
@@ -7894,8 +7932,7 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	    addr = read_16 (ptr);
 	  else
 	    addr = read_32 (ptr);
-	  refd = off_htab_lookup (ref->die_cu,
-				  ref->die_cu->cu_offset + addr);
+	  refd = off_htab_lookup (refcu, refcu->cu_offset + addr);
 	  assert (refd != NULL && !refd->die_remove);
 	  if (op == DW_OP_call2)
 	    {
@@ -7915,8 +7952,8 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
-	  addr = read_size (ptr, ref->die_cu->cu_version == 2 ? ptr_size : 4);
-	  assert (die->die_cu->cu_version == ref->die_cu->cu_version);
+	  addr = read_size (ptr, refcu->cu_version == 2 ? ptr_size : 4);
+	  assert (cu->cu_version == refcu->cu_version);
 	  refd = off_htab_lookup (NULL, addr);
 	  assert (refd != NULL);
 	  refdt = refd;
@@ -7924,10 +7961,10 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	    refdt = refdt->die_parent;
 	  if (refdt->die_dup && !refdt->die_op_type_referenced)
 	    refd = die_find_dup (refdt, refdt->die_dup, refd);
-	  write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
-		      refd->die_cu->cu_new_offset
+	  write_size (ptr, cu->cu_version == 2 ? ptr_size : 4,
+		      die_cu (refd)->cu_new_offset
 		      + refd->u.p2.die_new_offset);
-	  if (die->die_cu->cu_version == 2)
+	  if (cu->cu_version == 2)
 	    ptr += ptr_size;
 	  else
 	    ptr += 4;
@@ -7959,7 +7996,7 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	case DW_OP_GNU_entry_value:
 	  leni = read_uleb128 (ptr);
 	  assert ((uint64_t) (end - ptr) >= leni);
-	  adjust_exprloc (die, ref, ptr, leni);
+	  adjust_exprloc (cu, die, refcu, ref, ptr, leni);
 	  ptr += leni;
 	  break;
 	case DW_OP_GNU_convert:
@@ -7983,8 +8020,7 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 	  orig_ptr = ptr;
 	  addr = read_uleb128 (ptr);
 	typed_dwarf:
-	  refd = off_htab_lookup (ref->die_cu,
-				  ref->die_cu->cu_offset + addr);
+	  refd = off_htab_lookup (refcu, refcu->cu_offset + addr);
 	  assert (refd != NULL && refd->die_op_type_referenced);
 	  leni = ptr - orig_ptr;
 	  assert (size_of_uleb128 (refd->u.p2.die_new_offset) <= leni);
@@ -8014,7 +8050,8 @@ adjust_exprloc (dw_die_ref die, dw_die_ref ref, unsigned char *ptr, size_t len)
 /* Write DIE (with REF being the corresponding original DIE) to
    memory starting at PTR, return pointer after the DIE.  */
 static unsigned char *
-write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
+write_die (unsigned char *ptr, struct dw_cu *cu, dw_die_ref die,
+	   struct dw_cu *refcu, dw_die_ref ref)
 {
   uint64_t low_pc = 0;
   dw_die_ref child, sib = NULL, origin = NULL;
@@ -8027,15 +8064,19 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
       if (ref != NULL)
 	;
       else if (die_safe_nextdup (die) && die->die_nextdup->die_dup == die)
-	ref = die->die_nextdup;
+	{
+	  ref = die->die_nextdup;
+	  refcu = die_cu (ref);
+	}
       if (ref == NULL)
 	origin = die->die_nextdup;
     }
   else
     {
       ref = die;
+      refcu = cu;
       if (wr_multifile
-	  && (die->die_parent == NULL || die->die_named_namespace))
+	  && (die->die_root || die->die_named_namespace))
 	origin = die;
     }
   if (die->die_child && die->die_sib)
@@ -8047,7 +8088,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
   if (ref != NULL && origin == NULL)
     {
       unsigned char *base
-	= die->die_cu->cu_kind == CU_TYPES
+	= cu->cu_kind == CU_TYPES
 	  ? debug_sections[DEBUG_TYPES].data
 	  : debug_sections[DEBUG_INFO].data;
       unsigned char *inptr = base + ref->die_offset;
@@ -8078,7 +8119,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		case DW_FORM_udata: value = read_uleb128 (inptr); break;
 		default: abort ();
 		}
-	      value = line_htab_lookup (ref->die_cu, value);
+	      value = line_htab_lookup (refcu, value);
 	      switch (t->attr[j].form)
 		{
 		case DW_FORM_data1: write_8 (ptr, value); break;
@@ -8117,9 +8158,9 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		    memcpy (ptr, orig_ptr, inptr - orig_ptr);
 		    ptr += inptr - orig_ptr;
 		  }
-		value = read_size (inptr, ref->die_cu->cu_version == 2
+		value = read_size (inptr, refcu->cu_version == 2
 					  ? ptr_size : 4);
-		inptr += ref->die_cu->cu_version == 2 ? ptr_size : 4;
+		inptr += refcu->cu_version == 2 ? ptr_size : 4;
 		refd = off_htab_lookup (NULL, value);
 		assert (refd != NULL);
 		refdt = refd;
@@ -8130,7 +8171,7 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		    refd = die_find_dup (refdt, refdt->die_dup, refd);
 		    if (t->attr[j].form == DW_FORM_GNU_ref_alt)
 		      {
-			assert (refd->die_cu->cu_kind == CU_ALT);
+			assert (die_cu (refd)->cu_kind == CU_ALT);
 			write_32 (ptr, refd->die_offset);
 			j++;
 			continue;
@@ -8138,13 +8179,13 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		  }
 		assert (refd->u.p2.die_new_offset
 			&& t->attr[j].form != DW_FORM_GNU_ref_alt);
-		value = refd->die_cu->cu_new_offset
+		value = die_cu (refd)->cu_new_offset
 			+ refd->u.p2.die_new_offset;
-		write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
+		write_size (ptr, cu->cu_version == 2 ? ptr_size : 4,
 			    value);
-		ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		ptr += cu->cu_version == 2 ? ptr_size : 4;
 		if (unlikely (op_multifile))
-		  assert (refd->die_cu->cu_kind == CU_PU);
+		  assert (die_cu (refd)->cu_kind == CU_PU);
 		j++;
 		continue;
 	      }
@@ -8252,15 +8293,14 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      else
 		{
 		  dw_die_ref refdt, refd
-		    = off_htab_lookup (ref->die_cu,
-				       ref->die_cu->cu_offset + value);
+		    = off_htab_lookup (refcu, refcu->cu_offset + value);
 		  assert (refd != NULL);
 		  refdt = refd;
 		  while (refdt->die_toplevel == 0)
 		    refdt = refdt->die_parent;
 		  if (refdt->die_dup && refdt->die_op_type_referenced)
 		    {
-		      if (die->die_cu == refdt->die_dup->die_cu)
+		      if (cu == die_cu (refdt->die_dup))
 			refd = die_find_dup (refdt, refdt->die_dup, refd);
 		    }
 		  else if (refdt->die_dup)
@@ -8268,20 +8308,21 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		  if (t->attr[j].form == DW_FORM_GNU_ref_alt)
 		    {
 		      value = refd->die_offset;
-		      assert (refd->die_cu->cu_kind == CU_ALT);
+		      assert (die_cu (refd)->cu_kind == CU_ALT);
 		    }
 		  else
 		    {
+		      struct dw_cu *refdcu = die_cu (refd);
 		      value = refd->u.p2.die_new_offset;
-		      assert (value && refd->die_cu->cu_kind != CU_ALT);
+		      assert (value && refdcu->cu_kind != CU_ALT);
 		      if (t->attr[j].form == DW_FORM_ref_addr)
 			{
-			  value += refd->die_cu->cu_new_offset;
+			  value += refdcu->cu_new_offset;
 			  if (unlikely (op_multifile))
-			    assert (refd->die_cu->cu_kind == CU_PU);
+			    assert (refdcu->cu_kind == CU_PU);
 			}
 		      else
-			assert (refd->die_cu == die->die_cu);
+			assert (refdcu == cu);
 		    }
 		}
 	      switch (t->attr[j].form)
@@ -8291,9 +8332,9 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 		case DW_FORM_ref4: write_32 (ptr, value); break;
 		case DW_FORM_ref_udata: write_uleb128 (ptr, value); break;
 		case DW_FORM_ref_addr:
-		  write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
+		  write_size (ptr, cu->cu_version == 2 ? ptr_size : 4,
 			      value);
-		  ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+		  ptr += cu->cu_version == 2 ? ptr_size : 4;
 		  break;
 		case DW_FORM_GNU_ref_alt: write_32 (ptr, value); break;
 		default:
@@ -8338,12 +8379,12 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	      case DW_AT_GNU_call_site_data_value:
 	      case DW_AT_GNU_call_site_target:
 	      case DW_AT_GNU_call_site_target_clobbered:
-		adjust_exprloc (die, ref, ptr - len, len);
+		adjust_exprloc (cu, die, refcu, ref, ptr - len, len);
 	      default:
 		break;
 	      }
 	  else if (form == DW_FORM_exprloc)
-	    adjust_exprloc (die, ref, ptr - len, len);
+	    adjust_exprloc (cu, die, refcu, ref, ptr - len, len);
 	  j++;
 	}
       assert (j == t->nattr);
@@ -8452,17 +8493,18 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
 	  break;
 	}
       case DW_TAG_imported_unit:
+	refcu = die_cu (origin);
 	if (t->attr[0].form == DW_FORM_GNU_ref_alt)
 	  {
-	    assert (origin->die_cu->cu_kind == CU_ALT);
+	    assert (refcu->cu_kind == CU_ALT);
 	    write_32 (ptr, origin->die_offset);
 	    break;
 	  }
-	assert (origin->die_cu->cu_kind != CU_ALT);
-	write_size (ptr, die->die_cu->cu_version == 2 ? ptr_size : 4,
-		    origin->die_cu->cu_new_offset
+	assert (refcu->cu_kind != CU_ALT);
+	write_size (ptr, cu->cu_version == 2 ? ptr_size : 4,
+		    refcu->cu_new_offset
 		    + origin->u.p2.die_new_offset);
-	ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
+	ptr += cu->cu_version == 2 ? ptr_size : 4;
 	break;
       default:
 	abort ();
@@ -8472,11 +8514,11 @@ write_die (unsigned char *ptr, dw_die_ref die, dw_die_ref ref)
       dw_die_ref ref_child;
       for (child = die->die_child, ref_child = ref->die_child;
 	   child; child = child->die_sib, ref_child = ref_child->die_sib)
-	ptr = write_die (ptr, child, ref_child);
+	ptr = write_die (ptr, cu, child, refcu, ref_child);
     }
   else
     for (child = die->die_child; child; child = child->die_sib)
-      ptr = write_die (ptr, child, NULL);
+      ptr = write_die (ptr, cu, child, NULL, NULL);
   if (die->die_child)
     write_8 (ptr, 0);
   return ptr;
@@ -8523,7 +8565,7 @@ write_info (void)
       write_16 (ptr, cu->cu_version);
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
       write_8 (ptr, ptr_size);
-      ptr = write_die (ptr, cu->cu_die, NULL);
+      ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL);
       assert (info + (next_off - (wr_multifile ? multi_info_off : 0)) == ptr);
     }
   if (wr_multifile)
@@ -8563,7 +8605,8 @@ adjust_loclist (void **slot, void *data __attribute__((unused)))
       len = read_16 (ptr);
       assert (ptr + len <= endsec);
 
-      adjust_exprloc (adj->cu->cu_die, adj->cu->cu_die, ptr, len);
+      adjust_exprloc (adj->cu, adj->cu->cu_die, adj->cu, adj->cu->cu_die,
+		      ptr, len);
 
       ptr += len;
     }
@@ -8621,7 +8664,7 @@ write_types (void)
       ref = off_htab_lookup (cu, cu->cu_offset + read_32 (inptr));
       assert (ref && ref->die_dup == NULL);
       write_32 (ptr, ref->u.p2.die_new_offset);
-      ptr = write_die (ptr, cu->cu_die, NULL);
+      ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL);
       assert (types + next_off == ptr);
     }
   assert (types + debug_sections[DEBUG_TYPES].new_size == ptr);
