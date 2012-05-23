@@ -9937,18 +9937,28 @@ remove_empty_pus (void)
   return 0;
 }
 
+struct file_result
+{
+  int res;
+  dev_t dev;
+  ino_t ino;
+  nlink_t nlink;
+};
+
 /* Handle compression of a single file FILE.  If OUTFILE is
    non-NULL, the result will be stored into that file, otherwise
    the result will be written into a temporary file that is renamed
    over FILE.  */
 static int
-dwz (const char *file, const char *outfile)
+dwz (const char *file, const char *outfile, struct file_result *res,
+     struct file_result *resa, char **files)
 {
   DSO *dso;
   int ret = 0, fd;
   unsigned int i;
   struct stat st;
 
+  res->res = -1;
   fd = open (file, O_RDONLY);
   if (fd < 0)
     {
@@ -9960,6 +9970,60 @@ dwz (const char *file, const char *outfile)
       close (fd);
       error (0, errno, "Failed to stat input file %s", file);
       return 1;
+    }
+
+  res->res = 1;
+  res->dev = st.st_dev;
+  res->ino = st.st_ino;
+  res->nlink = st.st_nlink;
+  /* Hardlink handling if requested.  */
+  if (resa != NULL)
+    {
+      size_t n;
+      for (n = 0; &resa[n] != res; n++)
+	if (resa[n].res >= 0
+	    && resa[n].nlink > 1
+	    && resa[n].dev == st.st_dev
+	    && resa[n].ino == st.st_ino)
+	  break;
+      if (&resa[n] != res)
+	{
+	  /* If a hardlink to this has been processed before
+	     and we didn't change it, just assume the same
+	     state.  */
+	  if (resa[n].res == 1)
+	    {
+	      close (fd);
+	      res->res = -2;
+	      return 1;
+	    }
+	  /* If it changed, try to hardlink it again.  */
+	  if (resa[n].res == 0)
+	    {
+	      size_t len = strlen (file);
+	      char *filename = alloca (len + sizeof (".#dwz#.XXXXXX"));
+	      int fd2;
+	      memcpy (filename, file, len);
+	      memcpy (filename + len, ".#dwz#.XXXXXX",
+		      sizeof (".#dwz#.XXXXXX"));
+	      fd2 = mkstemp (filename);
+	      if (fd2 >= 0)
+		{
+		  close (fd2);
+		  unlink (filename);
+		  if (link (files[n], filename) == 0)
+		    {
+		      if (rename (filename, file) == 0)
+			{
+			  close (fd);
+			  res->res = -2;
+			  return 0;
+			}
+		      unlink (filename);
+		    }
+		}
+	    }
+	}
     }
 
   dso = fdopen_dso (fd, file);
@@ -10079,6 +10143,8 @@ dwz (const char *file, const char *outfile)
   close (fd);
 
   free (dso);
+  if (ret == 0)
+    res->res = 0;
   return ret;
 }
 
@@ -10602,7 +10668,8 @@ static struct option dwz_options[] =
   { "help",	no_argument,	   0, 0 },
   { "output",	required_argument, 0, 'o' },
   { "multifile",required_argument, 0, 'm' },
-  { "quiet",	no_argument,	   0, 'q' }
+  { "quiet",	no_argument,	   0, 'q' },
+  { "hardlink",	no_argument,	   0, 'h' }
 };
 
 /* Print usage and exit.  */
@@ -10611,9 +10678,9 @@ usage (void)
 {
   error (1, 0,
 	 "Usage:\n"
-	 "  dwz [-q] [FILES]\n"
+	 "  dwz [-q] [-h] [FILES]\n"
 	 "  dwz [-q] -o OUTFILE FILE\n"
-	 "  dwz [-q] -m COMMONFILE FILES");
+	 "  dwz [-q] [-h] -m COMMONFILE FILES");
 }
 
 int
@@ -10622,6 +10689,8 @@ main (int argc, char *argv[])
   const char *outfile = NULL;
   int ret = 0;
   int i;
+  struct file_result res;
+  bool hardlink = false;
 
   if (elf_version (EV_CURRENT) == EV_NONE)
     error (1, 0, "library out of date\n");
@@ -10629,7 +10698,7 @@ main (int argc, char *argv[])
   while (1)
     {
       int option_index;
-      int c = getopt_long (argc, argv, "m:o:q", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:qh", dwz_options, &option_index);
       if (c == -1)
 	break;
       switch (c)
@@ -10649,17 +10718,28 @@ main (int argc, char *argv[])
 	case 'q':
 	  quiet = true;
 	  break;
+
+	case 'h':
+	  hardlink = true;
+	  break;
 	}
     }
 
   if (multifile && argc - optind <= 1)
     error (1, 0, "-m option only allowed with more than one file");
   if (optind == argc)
-    ret = dwz ("a.out", outfile);
+    ret = dwz ("a.out", outfile, &res, NULL, NULL);
   else if (optind + 1 == argc)
-    ret = dwz (argv[optind], outfile);
+    ret = dwz (argv[optind], outfile, &res, NULL, NULL);
   else
     {
+      struct file_result *resa
+	= (struct file_result *) malloc ((argc - optind) * sizeof (*resa));
+      bool hardlinks = false;
+      int successcount = 0;
+
+      if (resa == NULL)
+	error (1, ENOMEM, "failed to allocate result array");
       if (outfile != NULL)
 	error (1, 0, "-o option not allowed for multiple files");
       if (multifile)
@@ -10696,7 +10776,21 @@ main (int argc, char *argv[])
 	    }
 	}
       for (i = optind; i < argc; i++)
-	ret |= dwz (argv[i], NULL);
+	{
+	  ret |= dwz (argv[i], NULL, &resa[i - optind],
+		      hardlinks ? resa : NULL, &argv[optind]);
+	  if (hardlink
+	      && resa[i - optind].res >= 0
+	      && resa[i - optind].nlink > 1)
+	    hardlinks = true;
+	  if (resa[i - optind].res == 0)
+	    successcount++;
+	}
+      if (multifile && successcount < 2)
+	{
+	  error (0, 0, "Too few files for multifile optimization");
+	  multifile = NULL;
+	}
       if (multifile)
 	{
 	  int multi_fd = optimize_multifile ();
@@ -10712,9 +10806,15 @@ main (int argc, char *argv[])
 		{
 		  struct dw_cu *cu;
 		  multifile_mode = MULTIFILE_MODE_FI;
+		  /* Don't process again files that couldn't
+		     be processed successfully.  */
+		  if (resa[i - optind].res == -1
+		      || resa[i - optind].res == 1)
+		    continue;
 		  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 		    alt_clear_dups (cu->cu_die);
-		  ret |= dwz (argv[i], NULL);
+		  ret |= dwz (argv[i], NULL, &resa[i - optind],
+			      hardlinks ? resa : NULL, &argv[optind]);
 		}
 	      elf_end (dso->elf);
 	      close (multi_fd);
