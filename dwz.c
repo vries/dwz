@@ -3879,7 +3879,8 @@ mark_refs (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die, int mode)
 	      ref = off_htab_lookup (cu, cu->cu_offset + value);
 	      if ((mode & MARK_REFS_REFERENCED) != 0)
 		ref->die_referenced = 1;
-	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
+	      if (!ref->die_collapsed_child
+		  && ref->u.p1.die_enter >= top_die->u.p1.die_enter
 		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
 		break;
 	    finish_ref:
