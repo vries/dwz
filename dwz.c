@@ -3713,7 +3713,8 @@ finalize_strp (bool build_tail_offset_list)
   if (debug_sections[DEBUG_STR].new_data == NULL)
     dwz_oom ();
   debug_sections[DEBUG_STR].new_size = strp_index;
-  strp_htab = htab_try_create (new_count, strp_hash3, strp_eq3, NULL);
+  strp_htab = htab_try_create (new_count < 32 ? 32 : new_count,
+			       strp_hash3, strp_eq3, NULL);
   if (strp_htab == NULL)
     dwz_oom ();
   if (build_tail_offset_list && tail_offset_list_count++ != 0)
@@ -8928,6 +8929,31 @@ strptr (DSO *dso, int sec, off_t offset)
   return NULL;
 }
 
+static void
+init_endian (int endianity)
+{
+  if (endianity == ELFDATA2LSB)
+    {
+      do_read_16 = buf_read_ule16;
+      do_read_32 = buf_read_ule32;
+      do_read_64 = buf_read_ule64;
+      do_write_16 = buf_write_le16;
+      do_write_32 = buf_write_le32;
+      do_write_64 = buf_write_le64;
+    }
+  else if (endianity == ELFDATA2MSB)
+    {
+      do_read_16 = buf_read_ube16;
+      do_read_32 = buf_read_ube32;
+      do_read_64 = buf_read_ube64;
+      do_write_16 = buf_write_be16;
+      do_write_32 = buf_write_be32;
+      do_write_64 = buf_write_be64;
+    }
+  else
+    abort ();
+}
+
 /* Read DWARF sections from DSO.  */
 static int
 read_dwarf (DSO *dso, bool quieter)
@@ -8979,24 +9005,9 @@ read_dwarf (DSO *dso, bool quieter)
 	  }
       }
 
-  if (dso->ehdr.e_ident[EI_DATA] == ELFDATA2LSB)
-    {
-      do_read_16 = buf_read_ule16;
-      do_read_32 = buf_read_ule32;
-      do_read_64 = buf_read_ule64;
-      do_write_16 = buf_write_le16;
-      do_write_32 = buf_write_le32;
-      do_write_64 = buf_write_le64;
-    }
-  else if (dso->ehdr.e_ident[EI_DATA] == ELFDATA2MSB)
-    {
-      do_read_16 = buf_read_ube16;
-      do_read_32 = buf_read_ube32;
-      do_read_64 = buf_read_ube64;
-      do_write_16 = buf_write_be16;
-      do_write_32 = buf_write_be32;
-      do_write_64 = buf_write_be64;
-    }
+  if (dso->ehdr.e_ident[EI_DATA] == ELFDATA2LSB
+      || dso->ehdr.e_ident[EI_DATA] == ELFDATA2MSB)
+    init_endian (dso->ehdr.e_ident[EI_DATA]);
   else
     {
       error (0, 0, "%s: Wrong ELF data enconding", dso->filename);
@@ -9599,6 +9610,7 @@ write_multifile_line (void)
   unsigned char *line, *ptr;
   struct line_entry **filearr = NULL;
   unsigned int *diridx = NULL, *dirarr = NULL;
+  unsigned char buf[17];
   int ret = 0;
 
   if (line_htab)
@@ -9689,7 +9701,10 @@ write_multifile_line (void)
 	  return 1;
 	}
 
-      line = (unsigned char *) obstack_alloc (&ob, len);
+      if (len == 17)
+	line = buf;
+      else
+	line = (unsigned char *) obstack_alloc (&ob, len);
     }
   ptr = line;
   write_32 (ptr, len - 4);	/* Total length.  */
@@ -9744,7 +9759,10 @@ write_multifile_line (void)
 	ret = 1;
       else
 	multi_line_off += len;
-      obstack_free (&ob, line_htab ? (void *) filearr : (void *) line);
+      if (line_htab)
+	obstack_free (&ob, (void *) filearr);
+      else if (line != buf)
+	obstack_free (&ob, (void *) line);
     }
   else if (line_htab)
     obstack_free (&ob, (void *) filearr);
@@ -10173,10 +10191,14 @@ optimize_multifile (void)
       || multi_endian == 0)
     return -1;
 
-  if ((multi_line_off == 0 && write_multifile_line ()))
+  if (multi_line_off == 0)
     {
-      error (0, 0, "Error writing multi-file temporary files");
-      return -1;
+      init_endian (multi_endian);
+      if (write_multifile_line ())
+	{
+	  error (0, 0, "Error writing multi-file temporary files");
+	  return -1;
+	}
     }
 
   debug_sections[DEBUG_INFO].size = multi_info_off;
@@ -10191,7 +10213,9 @@ optimize_multifile (void)
     = mmap (NULL, multi_line_off, PROT_READ, MAP_PRIVATE, multi_line_fd, 0);
   debug_sections[DEBUG_STR].size = multi_str_off;
   debug_sections[DEBUG_STR].data
-    = mmap (NULL, multi_str_off, PROT_READ, MAP_PRIVATE, multi_str_fd, 0);
+    = multi_str_off
+      ? mmap (NULL, multi_str_off, PROT_READ, MAP_PRIVATE, multi_str_fd, 0)
+      : NULL;
   debug_sections[DEBUG_MACRO].size = multi_macro_off;
   debug_sections[DEBUG_MACRO].data
     = multi_macro_off
@@ -10222,7 +10246,8 @@ optimize_multifile (void)
       if (debug_sections[DEBUG_LINE].data != MAP_FAILED)
 	munmap (debug_sections[DEBUG_LINE].data,
 		debug_sections[DEBUG_LINE].size);
-      if (debug_sections[DEBUG_STR].data != MAP_FAILED)
+      if (debug_sections[DEBUG_STR].data != MAP_FAILED
+	  && debug_sections[DEBUG_STR].data != NULL)
 	munmap (debug_sections[DEBUG_STR].data,
 		debug_sections[DEBUG_STR].size);
       if (debug_sections[DEBUG_MACRO].data != MAP_FAILED
@@ -10232,26 +10257,7 @@ optimize_multifile (void)
       return -1;
     }
 
-  if (multi_endian == ELFDATA2LSB)
-    {
-      do_read_16 = buf_read_ule16;
-      do_read_32 = buf_read_ule32;
-      do_read_64 = buf_read_ule64;
-      do_write_16 = buf_write_le16;
-      do_write_32 = buf_write_le32;
-      do_write_64 = buf_write_le64;
-    }
-  else if (multi_endian == ELFDATA2MSB)
-    {
-      do_read_16 = buf_read_ube16;
-      do_read_32 = buf_read_ube32;
-      do_read_64 = buf_read_ube64;
-      do_write_16 = buf_write_be16;
-      do_write_32 = buf_write_be32;
-      do_write_64 = buf_write_be64;
-    }
-  else
-    abort ();
+  init_endian (multi_endian);
   ptr_size = multi_ptr_size;
   memset (&dsobuf, '\0', sizeof (dsobuf));
   dso = &dsobuf;
@@ -10279,6 +10285,7 @@ optimize_multifile (void)
     {
       struct dw_cu **cup;
       unsigned char *p, *q;
+      unsigned int strp_count;
 
       obstack_init (&ob);
       obstack_init (&ob2);
@@ -10293,7 +10300,10 @@ optimize_multifile (void)
 
       *cup = NULL;
 
-      strp_htab = htab_try_create (debug_sections[DEBUG_STR].size / 64,
+      strp_count = debug_sections[DEBUG_STR].size / 64;
+      if (strp_count < 64)
+	strp_count = 64;
+      strp_htab = htab_try_create (strp_count,
 				   strp_hash2, strp_eq2, NULL);
       if (strp_htab == NULL)
 	dwz_oom ();
@@ -10506,7 +10516,8 @@ optimize_multifile (void)
   munmap (debug_sections[DEBUG_ABBREV].data,
 	  debug_sections[DEBUG_ABBREV].size);
   munmap (debug_sections[DEBUG_LINE].data, debug_sections[DEBUG_LINE].size);
-  munmap (debug_sections[DEBUG_STR].data, debug_sections[DEBUG_STR].size);
+  if (debug_sections[DEBUG_STR].data)
+    munmap (debug_sections[DEBUG_STR].data, debug_sections[DEBUG_STR].size);
   if (debug_sections[DEBUG_MACRO].data)
     munmap (debug_sections[DEBUG_MACRO].data,
 	    debug_sections[DEBUG_MACRO].size);
