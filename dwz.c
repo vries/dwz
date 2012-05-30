@@ -4806,7 +4806,10 @@ read_debug_info (DSO *dso, int kind)
 	      goto fail;
 	    }
 	  if (unlikely (low_mem))
-	    ref->die_referenced = 1;
+	    {
+	      ref->die_referenced = 1;
+	      ref->die_intercu_referenced = 1;
+	    }
 	}
       if (unlikely (low_mem))
 	{
@@ -9138,15 +9141,34 @@ write_aranges (DSO *dso)
   return 0;
 }
 
+static int
+gdb_index_tu_cmp (const void *p, const void *q)
+{
+  unsigned int *t1 = (unsigned int *) p;
+  unsigned int *t2 = (unsigned int *) q;
+
+  if (t1[0] < t2[0])
+    return -1;
+  if (t1[0] > t2[0])
+    return 1;
+
+  if (t1[1] < t2[1])
+    return -1;
+  if (t1[1] > t2[1])
+    return 1;
+  return 0;
+}
+
 /* Construct new .gdb_index section in malloced memory
    if it needs adjustment.  */
 static void
 write_gdb_index (void)
 {
-  struct dw_cu *cu;
+  struct dw_cu *cu, *first_tu = NULL;
   unsigned char *gdb_index, *ptr, *inptr, *end;
-  unsigned int ncus = 0, npus = 0, ver;
+  unsigned int ncus = 0, npus = 0, ntus = 0, ver;
   unsigned int culistoff, cutypesoff, addressoff, symboloff, constoff;
+  unsigned int *tuindices = NULL, tuidx = 0;
 
   debug_sections[GDB_INDEX].new_size = 0;
   if (debug_sections[GDB_INDEX].data == NULL
@@ -9166,7 +9188,7 @@ write_gdb_index (void)
     else if (cu->cu_kind == CU_NORMAL)
       ncus++;
     else if (cu->cu_kind == CU_TYPES)
-      break;
+      ntus++;
   culistoff = buf_read_ule32 (inptr + 0x04);
   cutypesoff = buf_read_ule32 (inptr + 0x08);
   addressoff = buf_read_ule32 (inptr + 0x0c);
@@ -9174,8 +9196,7 @@ write_gdb_index (void)
   constoff = buf_read_ule32 (inptr + 0x14);
   if (culistoff != 0x18
       || cutypesoff != 0x18 + ncus * 16
-      || addressoff < cutypesoff
-      || ((addressoff - cutypesoff) % 24) != 0
+      || addressoff != cutypesoff + ntus * 24
       || symboloff < addressoff
       || ((symboloff - addressoff) % 20) != 0
       || constoff < symboloff
@@ -9191,6 +9212,29 @@ write_gdb_index (void)
 	  return;
 	inptr += 16;
       }
+    else if (cu->cu_kind == CU_TYPES)
+      {
+	if (tuindices == NULL)
+	  {
+	    tuindices = (unsigned int *)
+			obstack_alloc (&ob2, ntus * 2 * sizeof (unsigned int));
+	    first_tu = cu;
+	  }
+	tuindices[2 * tuidx] = buf_read_ule64 (inptr);
+	tuindices[2 * tuidx + 1] = tuidx * 24;
+	tuidx++;
+	inptr += 24;
+      }
+  if (ntus)
+    {
+      qsort (tuindices, ntus, 2 * sizeof (unsigned int), gdb_index_tu_cmp);
+      for (tuidx = 0, cu = first_tu; tuidx < ntus; tuidx++, cu = cu->cu_next)
+	if (tuindices[2 * tuidx] != cu->cu_offset)
+	  {
+	    obstack_free (&ob2, (void *) tuindices);
+	    return;
+	  }
+    }
 
   debug_sections[GDB_INDEX].new_size
     = debug_sections[GDB_INDEX].size + npus * 16;
@@ -9218,10 +9262,23 @@ write_gdb_index (void)
       buf_write_le64 (ptr + 8, next_off - cu->cu_new_offset);
       ptr += 16;
     }
-  /* Copy types CU list unmodified.  */
-  memcpy (ptr, inptr, addressoff - cutypesoff);
-  ptr += addressoff - cutypesoff;
-  inptr += addressoff - cutypesoff;
+  /* Write new TU list.  */
+  for (tuidx = 0; cu; cu = cu->cu_next, tuidx++)
+    {
+      unsigned char *p;
+      unsigned int tuoff = tuindices[2 * tuidx + 1];
+      dw_die_ref ref;
+      assert (cu->cu_kind == CU_TYPES);
+      buf_write_le64 (ptr + tuoff, cu->cu_new_offset);
+      p = debug_sections[DEBUG_TYPES].data + cu->cu_offset + 19;
+      ref = off_htab_lookup (cu, cu->cu_offset + read_32 (p));
+      assert (ref && ref->die_dup == NULL);
+      buf_write_le64 (ptr + tuoff + 8, ref->u.p2.die_new_offset);
+      memcpy (ptr + tuoff + 16, p - 12, 8);
+    }
+  ptr += ntus * 24;
+  obstack_free (&ob2, (void *) tuindices);
+  tuindices = NULL;
   end = inptr + (symboloff - addressoff);
   /* Copy address area, adjusting all CU indexes.  */
   while (inptr < end)
