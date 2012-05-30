@@ -9274,7 +9274,8 @@ write_gdb_index (void)
       ref = off_htab_lookup (cu, cu->cu_offset + read_32 (p));
       assert (ref && ref->die_dup == NULL);
       buf_write_le64 (ptr + tuoff + 8, ref->u.p2.die_new_offset);
-      memcpy (ptr + tuoff + 16, p - 12, 8);
+      p -= 12;
+      buf_write_le64 (ptr + tuoff + 16, read_64 (p));
     }
   ptr += ntus * 24;
   obstack_free (&ob2, (void *) tuindices);
