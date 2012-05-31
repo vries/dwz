@@ -9278,7 +9278,8 @@ write_gdb_index (void)
       buf_write_le64 (ptr + tuoff + 16, read_64 (p));
     }
   ptr += ntus * 24;
-  obstack_free (&ob2, (void *) tuindices);
+  if (tuindices)
+    obstack_free (&ob2, (void *) tuindices);
   tuindices = NULL;
   end = inptr + (symboloff - addressoff);
   /* Copy address area, adjusting all CU indexes.  */
