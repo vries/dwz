@@ -3755,7 +3755,11 @@ finalize_strp (bool build_tail_offset_list)
   unsigned char *p;
 
   if (strp_htab == NULL)
-    return NULL;
+    {
+      debug_sections[DEBUG_STR].new_data = NULL;
+      debug_sections[DEBUG_STR].new_size = 0;
+      return NULL;
+    }
   count = htab_elements (strp_htab);
   arr = (struct strp_entry **)
 	obstack_alloc (&ob, count * sizeof (struct strp_entry *));
@@ -9567,6 +9571,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   GElf_Word shstrtabadd = 0;
   char *shstrtab = NULL;
   bool remove_gdb_index = false;
+  bool remove_debug_str = false;
 
   ehdr = dso->ehdr;
   if (multi_ehdr.e_ident[0] == '\0')
@@ -9599,7 +9604,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		       > (unsigned int) addsec)
 		  dso->shdr[j].sh_info++;
 	      }
-	    if (ehdr.e_shstrndx > addsec)
+	    if (dso->ehdr.e_shstrndx > addsec)
 	      ehdr.e_shstrndx++;
 	    len = strlen (debug_sections[i].name) + 1;
 	    dso->shdr[dso->ehdr.e_shstrndx].sh_size += len;
@@ -9624,10 +9629,13 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  ehdr.e_shoff += diff;
 	dso->shdr[debug_sections[i].sec].sh_size
 	  = debug_sections[i].new_size;
-	if (i == GDB_INDEX
+	if ((i == GDB_INDEX || i == DEBUG_STR)
 	    && debug_sections[i].new_size == 0)
 	  {
-	    remove_gdb_index = true;
+	    if (i == GDB_INDEX)
+	      remove_gdb_index = true;
+	    else
+	      remove_debug_str = true;
 	    ehdr.e_shnum--;
 	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
 	      {
@@ -9643,7 +9651,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		       > (unsigned int) debug_sections[i].sec)
 		  dso->shdr[j].sh_info--;
 	      }
-	    if (ehdr.e_shstrndx > debug_sections[i].sec)
+	    if (dso->ehdr.e_shstrndx > debug_sections[i].sec)
 	      ehdr.e_shstrndx--;
 	  }
       }
@@ -9741,6 +9749,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 
       if (remove_gdb_index
 	  && i == debug_sections[GDB_INDEX].sec)
+	continue;
+      if (remove_debug_str
+	  && i == debug_sections[DEBUG_STR].sec)
 	continue;
       scn = elf_newscn (elf);
       elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
