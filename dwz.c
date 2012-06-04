@@ -423,6 +423,10 @@ static unsigned char multifile_mode;
 /* Filename if inter-file size optimization should be performed.  */
 static const char *multifile;
 
+static const char *multifile_name;
+
+static bool multifile_relative;
+
 static unsigned char multifile_sha1[0x14];
 
 static bool quiet;
@@ -10554,22 +10558,84 @@ dwz (const char *file, const char *outfile, struct file_result *res,
       else if (write_aranges (dso))
 	{
 	  cleanup ();
+	failure:
 	  ret = 1;
 	}
       else
 	{
 	  if (unlikely (fi_multifile))
 	    {
-	      size_t len = strlen (multifile) + 1;
+	      size_t len;
+	      const char *name = multifile_name;
+	      if (multifile_name == NULL)
+		{
+		  if (!multifile_relative)
+		    name = multifile;
+		  else
+		    {
+		      char *p1 = realpath (file, NULL);
+		      char *p2 = realpath (multifile, NULL);
+		      char *p3, *p4, *p5, *p6;
+		      unsigned int dotdot = 0;
+		      if (p1 == NULL || p2 == NULL)
+			{
+			  if (p1)
+			    free (p1);
+			  else if (p2)
+			    free (p2);
+			  error (0, 0, "Could not compute relative multifile "
+				       "pathname from %s to %s",
+				 file, multifile);
+			  goto failure;
+			}
+		      p3 = p1;
+		      p4 = p2;
+		      do
+			{
+			  p5 = strchr (p3, '/');
+			  p6 = strchr (p4, '/');
+			  if (p5 == NULL
+			      || p6 == NULL
+			      || p5 - p3 != p6 - p4
+			      || memcmp (p3, p4, p5 - p3) != 0)
+			    break;
+			  p3 = p5 + 1;
+			  p4 = p6 + 1;
+			}
+		      while (1);
+		      while (p5 != NULL)
+			{
+			  dotdot++;
+			  p5 = strchr (p5 + 1, '/');
+			}
+		      len = strlen (p4);
+		      p3 = (char *) malloc (dotdot * 3 + len + 1);
+		      if (p3 == NULL)
+			dwz_oom ();
+		      p5 = p3;
+		      while (dotdot)
+			{
+			  memcpy (p5, "../", 3);
+			  p5 += 3;
+			  dotdot--;
+			}
+		      memcpy (p5, p4, len + 1);
+		      free (p1);
+		      free (p2);
+		      name = p3;
+		    }
+		}
+	      len = strlen (name) + 1;
 	      debug_sections[GNU_DEBUGALTLINK].new_size = len + 0x14;
 	      debug_sections[GNU_DEBUGALTLINK].new_data
 		= malloc (debug_sections[GNU_DEBUGALTLINK].new_size);
 	      if (debug_sections[GNU_DEBUGALTLINK].new_data == NULL)
 		dwz_oom ();
-	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data, multifile,
-		      len);
+	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data, name, len);
 	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data + len,
 		      multifile_sha1, 0x14);
+	      if (name != multifile_name && name != multifile)
+		free ((void *) name);
 	      write_macro ();
 	    }
 	  write_abbrev ();
@@ -11127,7 +11193,9 @@ static struct option dwz_options[] =
   { "quiet",		 no_argument,	    0, 'q' },
   { "hardlink",		 no_argument,	    0, 'h' },
   { "low-mem-die-limit", required_argument, 0, 'l' },
-  { "max-die-limit",	 required_argument, 0, 'L' }
+  { "max-die-limit",	 required_argument, 0, 'L' },
+  { "multifile-name",	 required_argument, 0, 'M' },
+  { "relative",		 no_argument,	    0, 'r' }
 };
 
 /* Print usage and exit.  */
@@ -11136,7 +11204,7 @@ usage (void)
 {
   error (1, 0,
 	 "Usage:\n"
-	 "  dwz [-q] [-h] [-l COUNT] [-L COUNT] [-m COMMONFILE] [FILES]\n"
+	 "  dwz [-q] [-h] [-l COUNT] [-L COUNT] [-m COMMONFILE] [-M NAME] [-r] [FILES]\n"
 	 "  dwz [-q] [-l COUNT] [-L COUNT] -o OUTFILE FILE\n");
 }
 
@@ -11157,7 +11225,7 @@ main (int argc, char *argv[])
   while (1)
     {
       int option_index;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r", dwz_options, &option_index);
       if (c == -1)
 	break;
       switch (c)
@@ -11182,6 +11250,14 @@ main (int argc, char *argv[])
 	  hardlink = true;
 	  break;
 
+	case 'M':
+	  multifile_name = optarg;
+	  break;
+
+	case 'r':
+	  multifile_relative = true;
+	  break;
+
 	case 'l':
 	  l = strtoul (optarg, &end, 0);
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
@@ -11197,6 +11273,9 @@ main (int argc, char *argv[])
 	  break;
 	}
     }
+
+  if (multifile_relative && multifile_name)
+    error (1, 0, "-M and -r options can't be specified together");
 
   if (optind == argc || optind + 1 == argc)
     {
