@@ -39,6 +39,61 @@
 #include "hashtab.h"
 #include "sha1.h"
 
+/* Theory of operation:
+   The DWZ tool can either optimize debug sections of a single
+   executable or shared library at a time, or, when -m option
+   is used, optimize debug sections even in between different
+   executables or shared libraries by constructing a new ET_REL
+   ELF object containing debug sections to which the individual
+   debug sections in the various executables or shared libraries
+   can refer.  As debug info can be pretty large, the multifile
+   optimization is done in several phases in order to decrease
+   memory usage of the tool, which can still be quite high.
+
+   The dwz () function optimizes a single file, and at the end,
+   after processing that single file, it frees all allocated memory.
+   Without -m, the dwz () function is called once on each argument.
+
+   When -m has been passed, the dwz () function is first called on
+   each argument, and during it in addition to performing the same
+   optimizations as dwz tool does without -m it also may append
+   data to several temporary files (one for each .debug_* section
+   that is needed for the multifile optimization).  During
+   preparation of the additions to the temporary files (write_multifile
+   function), wr_multifile flag is true.
+
+   Next phase (optimize_multifile) is that all these temporary files
+   are mmapped, it is determined what DIEs, strings, .debug_macro
+   sequences etc. might be beneficial to have in the common debug
+   sections and finally a new ET_REL ELF object is written.  During
+   this phase the op_multifile flag is true.  This is often very
+   memory consuming phase, so extra hacks are used to decrease
+   the memory usage during it.
+
+   Next phase (read_multifile) is where the previously written ET_REL
+   ELF object is parsed again and needed hash tables and other data
+   structures filled in.  The rd_multifile flag is set during this
+   phase.  The reason why this phase is separate from the previous one,
+   as opposed to just populating the hash tables right away in
+   optimize_multifile, is that the memory consumption during that phase
+   can be very big and keeping malloced data around would mean the address
+   space would be unnecessarily fragmented.  read_multifile usually needs
+   to allocate only small fragment of the memory optimize_multifile
+   needs, on the other side that memory needs to be kept around until
+   the end of the last phase.
+
+   During the last phase, the dwz () function is called second
+   time on each argument, with fi_multifile flag set.  During this
+   phase duplicates in the common debug sections are referenced
+   from the local debug sections where possible.
+
+   If some executable or shared library has too large debug information
+   (number of DIEs in .debug_info section) that there would be
+   risk of too high memory consumption, that file isn't multifile
+   optimized, instead it is processed by dwz () in a low-memory mode
+   with low_mem flag set.  This can decrease memory consumption to
+   half in some very large cases.  */
+
 #define DW_FORM_GNU_ref_alt	0x1f20
 #define DW_FORM_GNU_strp_alt	0x1f21
 
@@ -79,6 +134,8 @@ static struct obstack ob;
 /* Short lived obstack, global only to free it on allocation failures.  */
 static struct obstack ob2;
 
+/* After read_multifile ob and ob2 are moved over to these variables
+   and restored during final cleanup.  */
 static struct obstack alt_ob, alt_ob2;
 
 typedef struct
@@ -320,6 +377,7 @@ buf_write_be64 (unsigned char *data, uint64_t v)
   buf_write_be32 (data + 4, v);
 }
 
+/* Return a DW_FORM_* name.  */
 static const char *
 get_DW_FORM_str (unsigned int form)
 {
@@ -331,6 +389,7 @@ get_DW_FORM_str (unsigned int form)
   return buf;
 }
 
+/* Return a DW_OP_* name.  */
 static const char *
 get_DW_OP_str (unsigned int op)
 {
@@ -342,6 +401,7 @@ get_DW_OP_str (unsigned int op)
   return buf;
 }
 
+/* Return a DW_AT_* name.  */
 static const char *
 get_DW_AT_str (unsigned int at)
 {
@@ -399,11 +459,15 @@ static struct
     { NULL, NULL, NULL, 0, 0, 0 }
   };
 #define SAVED_SECTIONS (DEBUG_TYPES + 1)
-/* Pointers that might need cleaning up during write_multifile.  */
+
+/* Copies of .new_data fields during write_multifile.  */
 static unsigned char *saved_new_data[SAVED_SECTIONS];
+/* Copies of .new_size fields during write_multifile.  */
 static size_t saved_new_size[SAVED_SECTIONS];
 
+/* Copies of .data fields after read_multifile.  */
 static unsigned char *alt_data[SAVED_SECTIONS];
+/* Copies of .size fields after read_multifile.  */
 static size_t alt_size[SAVED_SECTIONS];
 
 /* How many bytes of each of /tmp/dwz.debug_*.XXXXXX have we written
@@ -411,6 +475,7 @@ static size_t alt_size[SAVED_SECTIONS];
 static unsigned int multi_info_off, multi_abbrev_off;
 static unsigned int multi_line_off, multi_str_off;
 static unsigned int multi_macro_off;
+/* And corresponding file descriptors.  */
 static int multi_info_fd = -1, multi_abbrev_fd = -1;
 static int multi_line_fd = -1, multi_str_fd = -1;
 static int multi_macro_fd = -1;
@@ -418,7 +483,10 @@ static int multi_macro_fd = -1;
 /* Copy of one of the input file's ehdr.  */
 static GElf_Ehdr multi_ehdr;
 
+/* Pointer size of all debug info sources accumulated during
+   write_multifile.  */
 static int multi_ptr_size;
+/* And their endianity.  */
 static int multi_endian;
 
 /* Number of DIEs, above which dwz retries processing
@@ -456,12 +524,19 @@ static unsigned char multifile_mode;
 /* Filename if inter-file size optimization should be performed.  */
 static const char *multifile;
 
+/* Argument of -M option, i.e. preferred name that should be stored
+   into the .gnu_debugaltlink section.  */
 static const char *multifile_name;
 
+/* True if -r option is present, i.e. .gnu_debugaltlink section
+   should contain a filename relative to the directory in which
+   the particular file is present.  */
 static bool multifile_relative;
 
+/* SHA1 checksum (build-id) of the common file.  */
 static unsigned char multifile_sha1[0x14];
 
+/* True if -q option has been passed.  */
 static bool quiet;
 
 /* A single attribute in abbreviations.  */
@@ -498,6 +573,7 @@ struct abbrev_tag
 };
 
 typedef struct dw_die *dw_die_ref;
+typedef struct dw_cu *dw_cu_ref;
 struct import_cu;
 
 /* An entry from .debug_line file table.  */
@@ -520,7 +596,7 @@ struct dw_cu
      from the common file.  */
   enum { CU_NORMAL, CU_PU, CU_TYPES, CU_ALT } cu_kind;
   /* CUs linked from first_cu through this chain.  */
-  struct dw_cu *cu_next;
+  dw_cu_ref cu_next;
   /* Offset in original .debug_info if CU_NORMAL or .debug_types
      if CU_TYPES, otherwise a unique index of the newly created
      partial CU.  */
@@ -541,7 +617,7 @@ struct dw_cu
     {
       /* Pointer to another struct dw_cu that owns
 	 cu_new_abbrev for this CU.  */
-      struct dw_cu *cu_new_abbrev_owner;
+      dw_cu_ref cu_new_abbrev_owner;
       /* Pointer used during create_import_tree.  */
       struct import_cu *cu_icu;
     } u1;
@@ -668,6 +744,7 @@ struct dw_die
 	  unsigned int die_intracu_udata_size;
 	} p2;
      } u;
+
   /* The remaining fields are present only if die_toplevel is
      1.  */
 
@@ -682,12 +759,16 @@ struct dw_die
   dw_die_ref die_nextdup;
 };
 
-static inline struct dw_cu *
+/* Return CU structure pointer for a DIE.  In order to save memory,
+   individual DIEs don't have a dw_cu_ref field, and the pointer can
+   be only found by overriding the die_parent pointer in a
+   DW_TAG_{compile,partial}_unit descriptor, which has no parent.  */
+static inline dw_cu_ref
 die_cu (dw_die_ref die)
 {
   while (!die->die_root)
     die = die->die_parent;
-  return (struct dw_cu *) die->die_parent;
+  return (dw_cu_ref) die->die_parent;
 }
 
 /* Safe variant that check die_toplevel.  Can't be used on LHS.  */
@@ -710,10 +791,16 @@ ALIGN_STRUCT (dw_die)
    too much, and allocates too small chunks.  All these objects are only freed
    together.  */
 
+/* Pointer to the start of the current pool chunk, current first free byte
+   in the chunk and byte after the end of the current pool chunk.  */
 static unsigned char *pool, *pool_next, *pool_limit;
 
+/* After read_multifile, pool variable is moved over to this variable
+   as the pool from read_multifile needs to be around for subsequent dwz
+   calls.  Freed only during the final cleanup at the very end.  */
 static unsigned char *alt_pool;
 
+/* Allocate SIZE bytes with ALIGN bytes alignment from the pool.  */
 static void *
 pool_alloc_1 (unsigned int align, unsigned int size)
 {
@@ -741,6 +828,7 @@ pool_alloc_1 (unsigned int align, unsigned int size)
   return ret;
 }
 
+/* Free the whole pool.  */
 static void
 pool_destroy (void)
 {
@@ -902,7 +990,7 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 /* Read the directory and file table from .debug_line offset OFF,
    record it in CU.  */
 static int
-read_debug_line (DSO *dso, struct dw_cu *cu, uint32_t off)
+read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
 {
   unsigned char *ptr = debug_sections[DEBUG_LINE].data, *dir, *file;
   unsigned char **dirt;
@@ -1063,14 +1151,17 @@ off_eq (const void *p, const void *q)
 /* Hash table to map die_offset values to struct dw_die pointers.  */
 static htab_t off_htab;
 
+/* After read_multifile off_htab is copied over to this variable.
+   Offsets in the alternate .debug_info are found using this hash table.  */
 static htab_t alt_off_htab;
 
+/* Offset hash table for .debug_types section.  */
 static htab_t types_off_htab;
 
 /* Function to add DIE into the hash table (and create the hash table
    when not already created).  */
 static int
-off_htab_add_die (struct dw_cu *cu, dw_die_ref die)
+off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
 {
   void **slot;
 
@@ -1112,7 +1203,7 @@ off_htab_add_die (struct dw_cu *cu, dw_die_ref die)
    to that value.  Return NULL if no DIE is at that position (buggy
    DWARF input?).  */
 static dw_die_ref
-off_htab_lookup (struct dw_cu *cu, unsigned int die_offset)
+off_htab_lookup (dw_cu_ref cu, unsigned int die_offset)
 {
   struct dw_die die;
   die.die_offset = die_offset;
@@ -1133,7 +1224,7 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
   struct abbrev_tag *t = die->die_abbrev;
   unsigned int i;
   unsigned char *ptr;
-  struct dw_cu *cu = die_cu (die);
+  dw_cu_ref cu = die_cu (die);
   if (unlikely (fi_multifile) && cu->cu_kind == CU_ALT)
     ptr = alt_data[DEBUG_INFO];
   else if (cu->cu_kind == CU_TYPES)
@@ -1312,7 +1403,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
   unsigned char op;
   GElf_Addr addr;
   dw_die_ref ref;
-  struct dw_cu *cu;
+  dw_cu_ref cu;
 
   while (ptr < end)
     {
@@ -1550,7 +1641,7 @@ struct debug_loc_adjust
   unsigned int end_offset;
   /* Owning CU.  We give up if the same .debug_loc part that needs adjusting
      is owned by more than one CU.  */
-  struct dw_cu *cu;
+  dw_cu_ref cu;
 };
 ALIGN_STRUCT (debug_loc_adjust)
 
@@ -1672,7 +1763,7 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
    or other reasons).  TOP_DIE is initially NULL when DW_TAG_*_unit or
    die_named_namespace dies are walked.  */
 static int
-checksum_die (DSO *dso, struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die)
+checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 {
   unsigned short s;
   struct abbrev_tag *t;
@@ -2193,7 +2284,7 @@ checksum_ref_die_cmp (const void *p, const void *q)
    hash in their u.p1.die_ref_hash, otherwise (DIEs on the current cycle(s))
    hash in their u.p1.die_hash.  */
 static unsigned int
-checksum_ref_die (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die,
+checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 		  unsigned int *second_idx, hashval_t *second_hash)
 {
   struct abbrev_tag *t;
@@ -2576,11 +2667,16 @@ die_hash (const void *p)
   return die->u.p1.die_ref_hash;
 }
 
+/* Freelist of !die->die_toplevel DIEs, chained through die_sib fields.  */
 static dw_die_ref die_nontoplevel_freelist;
+/* Freelist of die->die_collapsed_child DIEs, chained through die_parent
+   fields.  */
 static dw_die_ref die_collapsed_child_freelist;
 
+/* Return pointer after the attributes of a DIE from CU which uses abbrevs
+   T and starts at PTR.  */
 static unsigned char *
-skip_attrs (struct dw_cu *cu, struct abbrev_tag *t, unsigned char *ptr)
+skip_attrs (dw_cu_ref cu, struct abbrev_tag *t, unsigned char *ptr)
 {
   unsigned int i;
   for (i = 0; i < t->nattr; ++i)
@@ -2656,10 +2752,15 @@ skip_attrs (struct dw_cu *cu, struct abbrev_tag *t, unsigned char *ptr)
   return ptr;
 }
 
+/* Expand children of TOP_DIE that have been collapsed by
+   collapse_child.  CHECKSUM is true if checksum should be
+   computed - expansion is performed during read_debug_info
+   when duplicates are looked for - or false, if the expansion
+   is performed late (e.g. during compute_abbrevs or write_{info,types}.  */
 static void
 expand_child (dw_die_ref top_die, bool checksum)
 {
-  struct dw_cu *cu = die_cu (top_die);
+  dw_cu_ref cu = die_cu (top_die);
   dw_die_ref *diep = &top_die->die_child;
   dw_die_ref parent = top_die, child;
   unsigned char *ptr, *base;
@@ -2779,6 +2880,7 @@ expand_child (dw_die_ref top_die, bool checksum)
       checksum_die (NULL, cu, top_die, child);
 }
 
+/* Call expand_child on all collapsed toplevel children DIEs.  */
 static bool
 expand_children (dw_die_ref die)
 {
@@ -2801,7 +2903,7 @@ expand_children (dw_die_ref die)
    hopefully ensure that in most cases this function actually
    just verifies matching.  */
 static int
-die_eq_1 (struct dw_cu *cu1, struct dw_cu *cu2,
+die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  dw_die_ref top_die1, dw_die_ref top_die2,
 	  dw_die_ref die1, dw_die_ref die2)
 {
@@ -3287,7 +3389,7 @@ die_eq_1 (struct dw_cu *cu1, struct dw_cu *cu2,
 	  else
 	    {
 	      dw_die_ref reft1 = ref1, reft2 = ref2;
-	      struct dw_cu *refcu1, *refcu2;
+	      dw_cu_ref refcu1, refcu2;
 	      while (reft1->die_toplevel == 0)
 		reft1 = reft1->die_parent;
 	      while (reft2->die_toplevel == 0)
@@ -3430,6 +3532,7 @@ die_eq (const void *p, const void *q)
    its children together with it).  */
 static htab_t dup_htab;
 
+/* After read_multifile dup_htab is moved to this variable.  */
 static htab_t alt_dup_htab;
 
 /* First CU, start of the linked list of CUs, and the tail
@@ -3437,9 +3540,10 @@ static htab_t alt_dup_htab;
    CUs, later on newly created partial units are added
    to the beginning of the list and optionally .debug_types
    CUs are added to its tail.  */
-static struct dw_cu *first_cu, *last_cu;
+static dw_cu_ref first_cu, last_cu;
 
-static struct dw_cu *alt_first_cu;
+/* After read_multifile first_cu is copied to this variable.  */
+static dw_cu_ref alt_first_cu;
 
 /* Compute approximate size of DIE and all its children together.  */
 static unsigned long
@@ -3483,6 +3587,9 @@ find_dups (dw_die_ref parent)
   return 0;
 }
 
+/* Like find_dups, but for the last multifile optimization phase,
+   where it only looks at duplicates in the common .debug_info
+   section.  */
 static int
 find_dups_fi (dw_die_ref parent)
 {
@@ -3519,19 +3626,48 @@ dump_dies (int depth, dw_die_ref die)
 }
 #endif
 
+/* Hash table for .debug_str.  Depending on multifile optimization
+   phase this hash table has 3 different hash/equality functions.
+   The first set is used to record tail optimized strings, during
+   write_multifile the whole .debug_str section is written as is,
+   plus then all the strings which are just suffixes of other
+   strings.  E.g. if .debug_str section contains "foobar" string
+   and .debug_info section refers to the whole "foobar" string
+   as well as "bar" by refering to "foobar" + 3.
+   The second set is used during op_multifile and fi_multifile,
+   noting each string and in addition to that how many times it
+   has been seen (0, 1 or more than 1).  If 0 then it isn't present
+   in the hash table, 1 has lowest bit of new_off clear, more than 1
+   the LSB of new_off is set.
+   The final set is used during finalize_strp and afterwards, it is
+   then used to map strings to their location in the new .debug_str
+   section.  */
 static htab_t strp_htab;
+/* Current offset in .debug_str when adding the tail optimized strings.
+   This is initially the size of .debug_str section in the object,
+   and as unique tail optimized strings are found, this is increased
+   each time.  */
 static unsigned int max_strp_off;
 
+/* At the end of read_multifile strp_htab is moved to this variable,
+   which is used to find strings in the shared .debug_str section.  */
 static htab_t alt_strp_htab;
 
+/* Structure describing strings in strp_htab.  */
 struct strp_entry
 {
+  /* Original .debug_str offset.  */
   unsigned int off;
+  /* New .debug_str offset, or when using strp_{hash,eq}2
+     this is initially iterative hash of the string with the
+     LSB bit used for whether the string has been seen just once
+     or more than once.  */
   unsigned int new_off;
 };
 ALIGN_STRUCT (strp_entry)
 
-/* Hash function in strp_htab.  */
+/* Hash function in strp_htab used for discovery of tail optimized
+   strings.  */
 static hashval_t
 strp_hash (const void *p)
 {
@@ -3540,7 +3676,7 @@ strp_hash (const void *p)
   return s->off;
 }
 
-/* Equality function in strp_htab.  */
+/* Corresponding equality function in strp_htab.  */
 static int
 strp_eq (const void *p, const void *q)
 {
@@ -3550,7 +3686,8 @@ strp_eq (const void *p, const void *q)
   return s1->off == s2->off;
 }
 
-/* Hash function in strp_htab.  */
+/* Hash function in strp_htab used to find what strings are
+   used by more than one object.  */
 static hashval_t
 strp_hash2 (const void *p)
 {
@@ -3559,7 +3696,7 @@ strp_hash2 (const void *p)
   return s->new_off & ~1U;
 }
 
-/* Equality function in strp_htab.  */
+/* Corresponding equality function in strp_htab.  */
 static int
 strp_eq2 (const void *p, const void *q)
 {
@@ -3570,20 +3707,27 @@ strp_eq2 (const void *p, const void *q)
 		 (char *) debug_sections[DEBUG_STR].data + s2->off) == 0;
 }
 
-/* Hash function in strp_htab.  */
+/* Hash function in strp_htab used from finalize_strp onwards,
+   mapping strings into strings in the new .debug_str section.  */
 static hashval_t
 strp_hash3 (const void *p)
 {
   return iterative_hash (p, strlen (p), 0);
 }
 
-/* Equality function in strp_htab.  */
+/* Corresponding equality function in strp_htab.  */
 static int
 strp_eq3 (const void *p, const void *q)
 {
   return strcmp (p, q) == 0;
 }
 
+/* Called for each DW_FORM_strp offset seen during initial
+   .debug_{info,types,macro} parsing.  Before fi_multifile phase
+   this records just tail optimized strings, during fi_multifile
+   it checks whether the string is already in the shared .debug_str
+   section and if not, notes that it will need to be added to the
+   new local .debug_str section.  */
 static void
 note_strp_offset (unsigned int off)
 {
@@ -3664,6 +3808,9 @@ note_strp_offset (unsigned int off)
     }
 }
 
+/* Map offset in original .debug_str section into
+   offset in new .debug_str, either the shared .debug_str
+   or new local .debug_str.  */
 static unsigned
 lookup_strp_offset (unsigned int off)
 {
@@ -3699,6 +3846,10 @@ lookup_strp_offset (unsigned int off)
   return s->new_off + multi_str_off;
 }
 
+/* Note .debug_str offset during write_macro or compute_abbrevs,
+   return either DW_FORM_strp if the string will be in the local
+   .debug_str section, or DW_FORM_GNU_strp_alt if it will be in
+   the shared .debug_str section.  */
 static enum dwarf_form
 note_strp_offset2 (unsigned int off)
 {
@@ -3786,6 +3937,9 @@ strrevcmp (const void *p, const void *q)
   return 0;
 }
 
+/* Compute new .debug_str section, from strp_htab content,
+   replace strp_htab hash table with a new one, which maps strings
+   to new .debug_str locations.  */
 static unsigned int *
 finalize_strp (bool build_tail_offset_list)
 {
@@ -3920,7 +4074,7 @@ finalize_strp (bool build_tail_offset_list)
 /* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
    unless already marked.  */
 static bool
-mark_refs (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die, int mode)
+mark_refs (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die, int mode)
 {
   struct abbrev_tag *t;
   unsigned int i;
@@ -4084,8 +4238,10 @@ mark_refs (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die, int mode)
   return true;
 }
 
+/* Remove completely unneeded children of DIE and remove unreferenced DIEs
+   from offset hash tables.  */
 static void
-remove_dies (struct dw_cu *cu, dw_die_ref die, bool remove)
+remove_dies (dw_cu_ref cu, dw_die_ref die, bool remove)
 {
   dw_die_ref child, next;
   if (die->die_toplevel && die->die_ref_seen == 0 && !low_mem)
@@ -4115,8 +4271,12 @@ remove_dies (struct dw_cu *cu, dw_die_ref die, bool remove)
     die->die_child = NULL;
 }
 
+/* Remove unneeded children DIEs.  During phase 0 die_ref_seen
+   of toplevel DIEs is computed, during phase 1 mark_refs is called
+   to find referenced DIEs, during phase 2 unneeded children DIEs
+   are removed.  */
 static void
-remove_unneeded (struct dw_cu *cu, dw_die_ref die, unsigned int phase)
+remove_unneeded (dw_cu_ref cu, dw_die_ref die, unsigned int phase)
 {
   dw_die_ref child;
   for (child = die->die_child; child; child = child->die_sib)
@@ -4145,13 +4305,20 @@ remove_unneeded (struct dw_cu *cu, dw_die_ref die, unsigned int phase)
     }
 }
 
+/* Entries in meta_abbrev_htab, mapping .debug_abbrev section offsets
+   to abbrev hash tables.  */
 struct meta_abbrev_entry
 {
+  /* .debug_abbrev offset.  */
   unsigned int abbrev_off;
+  /* Corresponding hash table.  */
   htab_t abbrev_htab;
 };
 
+/* Hash table for mapping of .debug_abbrev section offsets to
+   abbrev hash tables.  */
 static htab_t meta_abbrev_htab;
+/* Dummy entry used during OOM handling.  */
 static struct meta_abbrev_entry meta_abbrev_fallback;
 
 /* Hash function for meta_abbrev_htab.  */
@@ -4183,8 +4350,9 @@ meta_abbrev_del (void *p)
     htab_delete (m->abbrev_htab);
 }
 
+/* Collapse children of TOP_DIE to decrease memory usage.  */
 static void
-collapse_child (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die,
+collapse_child (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 		unsigned int *tick)
 {
   dw_die_ref child, next;
@@ -4244,8 +4412,9 @@ collapse_child (struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die,
     }
 }
 
+/* Collapse children of all toplevel DIEs that can be collapsed.  */
 static void
-collapse_children (struct dw_cu *cu, dw_die_ref die)
+collapse_children (dw_cu_ref cu, dw_die_ref die)
 {
   dw_die_ref child;
   for (child = die->die_child; child; child = child->die_sib)
@@ -4263,7 +4432,8 @@ collapse_children (struct dw_cu *cu, dw_die_ref die)
       }
 }
 
-/* First phase of the DWARF compression.  Parse .debug_info section,
+/* First phase of the DWARF compression.  Parse .debug_info section
+   (for kind == DEBUG_INFO) or .debug_types section (for kind == DEBUG_TYPES)
    for each CU in it construct internal represetnation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
 static int
@@ -4280,7 +4450,7 @@ read_debug_info (DSO *dso, int kind)
 			 && !rd_multifile && !low_mem;
   struct abbrev_tag tag, *t;
   unsigned int cu_chunk = 0;
-  struct dw_cu *cu_tail = NULL, *cu_collapse = NULL;
+  dw_cu_ref cu_tail = NULL, cu_collapse = NULL;
   unsigned int cu_kind = rd_multifile ? CU_ALT
 			 : kind == DEBUG_TYPES ? CU_TYPES : CU_NORMAL;
   void *to_free = NULL;
@@ -4314,7 +4484,7 @@ read_debug_info (DSO *dso, int kind)
       unsigned int cu_offset = ptr - debug_sections[kind].data;
       unsigned int tick = 0, culen;
       int cu_version;
-      struct dw_cu *cu;
+      dw_cu_ref cu;
       dw_die_ref *diep, parent, die;
       bool present;
       unsigned int debug_line_off;
@@ -4383,7 +4553,7 @@ read_debug_info (DSO *dso, int kind)
 	{
 	  if (ptr == endcu)
 	    {
-	      struct dw_cu *cuf = cu_tail ? cu_tail->cu_next : first_cu;
+	      dw_cu_ref cuf = cu_tail ? cu_tail->cu_next : first_cu;
 	      /* Inside of optimize_multifile, DIE hashes are computed
 		 only after all the CUs from a particular DSO or
 		 executable have been parsed, as we follow
@@ -4874,7 +5044,7 @@ read_debug_info (DSO *dso, int kind)
     ;
   else if (unlikely (meta_abbrev_htab != NULL))
     {
-      struct dw_cu *cu;
+      dw_cu_ref cu;
 
       if (unlikely (op_multifile))
 	for (cu = first_cu; cu; cu = cu->cu_next)
@@ -4892,7 +5062,7 @@ read_debug_info (DSO *dso, int kind)
 
   if (unlikely (rd_multifile || fi_multifile))
     {
-      struct dw_cu *cu;
+      dw_cu_ref cu;
 
       /* Inside of read_multifile, DIE hashes are computed
 	 only after all the PUs are parsed, as we follow
@@ -4929,7 +5099,7 @@ read_debug_info (DSO *dso, int kind)
 fail:
   if (unlikely (meta_abbrev_htab != NULL))
     {
-      struct dw_cu *cu;
+      dw_cu_ref cu;
 
       for (cu = first_cu; cu; cu = cu->cu_next)
 	cu->cu_abbrev = NULL;
@@ -4956,12 +5126,12 @@ partition_cmp (const void *p, const void *q)
   dw_die_ref die1 = *(dw_die_ref *) p;
   dw_die_ref die2 = *(dw_die_ref *) q;
   dw_die_ref ref1, ref2;
-  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
+  dw_cu_ref last_cu1 = NULL, last_cu2 = NULL;
   for (ref1 = die1, ref2 = die2;;
        ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
     {
-      struct dw_cu *ref1cu = NULL;
-      struct dw_cu *ref2cu = NULL;
+      dw_cu_ref ref1cu = NULL;
+      dw_cu_ref ref2cu = NULL;
       while (ref1 && (ref1cu = die_cu (ref1)) == last_cu1)
 	ref1 = ref1->die_nextdup;
       while (ref2 && (ref2cu = die_cu (ref2)) == last_cu2)
@@ -5065,13 +5235,13 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   return new_die;
 }
 
-/* Helper function of partition_dups_1.  Decide what DIEs matching in multiple
-   CUs might be worthwhile to be moved into partial units, construct those
-   partial units.  */
+/* Helper function of partition_dups_1.  Decide what DIEs matching in
+   multiple CUs might be worthwhile to be moved into partial units,
+   construct those partial units.  */
 static bool
 partition_dups_1 (dw_die_ref *arr, size_t vec_size,
-		  struct dw_cu **first_partial_cu,
-		  struct dw_cu **last_partial_cu,
+		  dw_cu_ref *first_partial_cu,
+		  dw_cu_ref *last_partial_cu,
 		  bool second_phase)
 {
   size_t i, j;
@@ -5089,13 +5259,13 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       for (j = i + 1; j < vec_size; j++)
 	{
 	  dw_die_ref ref1, ref2;
-	  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
+	  dw_cu_ref last_cu1 = NULL, last_cu2 = NULL;
 	  size_t this_cnt = 0;
 	  for (ref1 = arr[i], ref2 = arr[j];;
 	       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
 	    {
-	      struct dw_cu *ref1cu = NULL;
-	      struct dw_cu *ref2cu = NULL;
+	      dw_cu_ref ref1cu = NULL;
+	      dw_cu_ref ref2cu = NULL;
 	      while (ref1 && (ref1cu = die_cu (ref1)) == last_cu1)
 		ref1 = ref1->die_nextdup;
 	      while (ref2 && (ref2cu = die_cu (ref2)) == last_cu2)
@@ -5115,10 +5285,10 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	}
       if (cnt == 0)
 	{
-	  struct dw_cu *last_cu1 = NULL;
+	  dw_cu_ref last_cu1 = NULL;
 	  for (ref = arr[i];; ref = ref->die_nextdup)
 	    {
-	      struct dw_cu *refcu = NULL;
+	      dw_cu_ref refcu = NULL;
 	      while (ref && (refcu = die_cu (ref)) == last_cu1)
 		ref = ref->die_nextdup;
 	      if (ref == NULL)
@@ -5206,8 +5376,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       if (force)
 	{
 	  dw_die_ref die, *diep;
-	  struct dw_cu *refcu = die_cu (arr[i]);
-	  struct dw_cu *partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
+	  dw_cu_ref refcu = die_cu (arr[i]);
+	  dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
 	  memset (partial_cu, '\0', sizeof (*partial_cu));
 	  partial_cu->cu_kind = CU_PU;
 	  partial_cu->cu_offset = *last_partial_cu == NULL
@@ -5297,7 +5467,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		continue;
 	      for (ref = arr[k]; ref; ref = next)
 		{
-		  struct dw_cu *refcu = die_cu (ref);
+		  dw_cu_ref refcu = die_cu (ref);
 		  next = ref->die_nextdup;
 		  ref->die_dup = NULL;
 		  ref->die_nextdup = NULL;
@@ -5326,7 +5496,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 static int
 partition_dups (void)
 {
-  struct dw_cu *cu, *first_partial_cu = NULL, *last_partial_cu = NULL;
+  dw_cu_ref cu, first_partial_cu = NULL, last_partial_cu = NULL;
   size_t vec_size, i;
   unsigned char *to_free;
 
@@ -5384,7 +5554,7 @@ struct import_cu
 {
   /* Corresponding CU.  CU->u1.cu_icu points back to this
      structure while in create_import_tree.  */
-  struct dw_cu *cu;
+  dw_cu_ref cu;
   /* Linked list of incoming resp. outgoing edges.  */
   struct import_edge *incoming, *outgoing;
   /* Next import_cu (used to chain PUs together).  */
@@ -5555,7 +5725,7 @@ verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
 static int
 create_import_tree (void)
 {
-  struct dw_cu *pu, *cu, *last_partial_cu = NULL;
+  dw_cu_ref pu, cu, last_partial_cu = NULL;
   unsigned int i, new_pu_version = 2, min_cu_version, npus, ncus;
   struct import_cu **ipus, *ipu, *icu;
   unsigned int cu_off;
@@ -5591,7 +5761,7 @@ create_import_tree (void)
        pu && pu->cu_kind != CU_NORMAL; pu = pu->cu_next)
     {
       dw_die_ref die, rdie;
-      struct dw_cu *prev_cu;
+      dw_cu_ref prev_cu;
 
       last_partial_cu = pu;
       for (rdie = pu->cu_die->die_child;
@@ -5615,7 +5785,7 @@ create_import_tree (void)
       for (die = rdie->die_nextdup, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
-	  struct dw_cu *diecu = die_cu (die);
+	  dw_cu_ref diecu = die_cu (die);
 	  if (diecu == prev_cu)
 	    continue;
 	  ipu->incoming_count++;
@@ -5629,7 +5799,7 @@ create_import_tree (void)
       for (die = rdie->die_nextdup, i = 0, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
-	  struct dw_cu *diecu = die_cu (die);
+	  dw_cu_ref diecu = die_cu (die);
 	  if (diecu == prev_cu)
 	    continue;
 	  icu = diecu->u1.cu_icu;
@@ -6118,7 +6288,7 @@ create_import_tree (void)
   for (ipu = ipus[npus - 1]->next; ipu; ipu = ipu->next)
     {
       dw_die_ref die;
-      struct dw_cu *partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
+      dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
       memset (partial_cu, '\0', sizeof (*partial_cu));
       partial_cu->cu_kind = CU_PU;
       partial_cu->cu_offset = cu_off++;
@@ -6187,6 +6357,7 @@ create_import_tree (void)
   return 0;
 }
 
+/* Helper function for die_find_dup, when ORIG has collapsed children.  */
 static dw_die_ref
 die_find_collapsed_dup (dw_die_ref die, unsigned int *tick)
 {
@@ -6248,13 +6419,18 @@ size_of_uleb128 (uint64_t val)
   return size;
 }
 
+/* Hash table mapping original file IDs to new ids.  */
 static htab_t line_htab;
+/* Current new maximum file ID.  */
 static unsigned int max_line_id;
 
 struct line_entry
 {
+  /* File pointer.  */
   struct dw_file *file;
+  /* Precomputed hash value.  */
   unsigned int hash;
+  /* Corresponding new file ID.  */
   unsigned int new_id;
 };
 ALIGN_STRUCT (line_entry)
@@ -6288,8 +6464,9 @@ line_eq (const void *p, const void *q)
   return s1->file->time == s2->file->time && s1->file->size == s2->file->size;
 }
 
+/* Map original file ID to new file ID.  */
 static unsigned int
-line_htab_lookup (struct dw_cu *cu, unsigned int id)
+line_htab_lookup (dw_cu_ref cu, unsigned int id)
 {
   void **slot;
   struct line_entry le;
@@ -6328,14 +6505,24 @@ line_htab_lookup (struct dw_cu *cu, unsigned int id)
     return ((struct line_entry *) *slot)->new_id;
 }
 
+/* Hash table for finding duplicate .debug_macro opcode sequences.
+   This hash table is used with two different sets of hash/equality
+   callbacks.  One is used either within handle_macro function (from within
+   optimize_multifile), or from handle_macro onwards (read_multifile).
+   The second set is used from read_macro onwards during fi_multifile.  */
 static htab_t macro_htab;
 
+/* At the end of read_multifile macro_htab is copied to this variable.  */
 static htab_t alt_macro_htab;
 
 struct macro_entry
 {
+  /* Start of the sequence.  */
   unsigned char *ptr;
+  /* Precomputed hash value.  LSB bit is used for a flag whether
+     a particular .debug_macro sequence is seen more than once.  */
   unsigned int hash;
+  /* And it's length or 0 if non-shareable.  */
   unsigned int len;
 };
 ALIGN_STRUCT (macro_entry)
@@ -6424,6 +6611,13 @@ macro_eq2 (const void *p, const void *q)
   return m1->ptr == m2->ptr;
 }
 
+/* Parse .debug_macro section, either during write_multifile
+   or during fi_multifile phase.  During write_multifile it
+   selects potentially shareable .debug_macro sequences and
+   writes them into debug_sections[DEBUG_MACRO].new_data
+   block it allocates.  During fi_multifile it populates
+   macro_htab.  In both cases it calls note_strp_offset
+   on DW_FORM_strp offsets.  */
 static int
 read_macro (DSO *dso)
 {
@@ -6505,9 +6699,7 @@ read_macro (DSO *dso)
 	      strp = read_32 (ptr);
 	      note_strp_offset (strp);
 	      if (wr_multifile)
-		{
-		  break;
-		}
+		break;
 	      if (can_share)
 		hash = iterative_hash (s, ptr - 4 - s, hash);
 	      if (can_share)
@@ -6670,6 +6862,9 @@ read_macro (DSO *dso)
   return 0;
 }
 
+/* Helper function for handle_macro, called through htab_traverse.
+   Write .debug_macro opcode sequence seen by more than one
+   executable or shared library.  */
 static int
 optimize_write_macro (void **slot, void *data)
 {
@@ -6714,6 +6909,13 @@ optimize_write_macro (void **slot, void *data)
   return 1;
 }
 
+/* Parse .debug_macro section, during optimize_multifile
+   or during read_multifile.  It parses .debug_macro written
+   by write_multifile, so it only contains shareable sequences.
+   Find duplicate sequences, during optimize_multifile write them
+   into debug_sections[DEBUG_MACRO].new_data it allocates,
+   during read_multifile just populates macro_htab (soon to be
+   alt_macro_htab).  */
 static void
 handle_macro (void)
 {
@@ -6823,6 +7025,7 @@ handle_macro (void)
     }
 }
 
+/* Write new content of .debug_macro section during fi_multifile phase.  */
 static void
 write_macro (void)
 {
@@ -6927,8 +7130,8 @@ write_macro (void)
    in the tree, and record pairs of referrer/referree DIEs for
    intra-CU references into obstack vector VEC.  */
 static int
-build_abbrevs_for_die (htab_t h, struct dw_cu *cu, dw_die_ref die,
-		       struct dw_cu *refcu, dw_die_ref ref,
+build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
+		       dw_cu_ref refcu, dw_die_ref ref,
 		       struct abbrev_tag *t, unsigned int *ndies,
 		       struct obstack *vec, bool recompute)
 {
@@ -7453,7 +7656,7 @@ build_abbrevs_for_die (htab_t h, struct dw_cu *cu, dw_die_ref die,
 /* Build new abbreviations for CU.  T, NDIES and VEC arguments like
    for build_abbrevs_for_die.  */
 static int
-build_abbrevs (struct dw_cu *cu, struct abbrev_tag *t, unsigned int *ndies,
+build_abbrevs (dw_cu_ref cu, struct abbrev_tag *t, unsigned int *ndies,
 	       struct obstack *vec)
 {
   htab_t h = htab_try_create (50, abbrev_hash, abbrev_eq2, NULL);
@@ -7609,7 +7812,7 @@ update_new_die_offsets (dw_die_ref die, unsigned int off,
    decided what intra-CU form will be used.  Can return -1U if
    a problem is detected and the tool should give up.  */
 static unsigned int
-finalize_new_die_offsets (struct dw_cu *cu, dw_die_ref die, unsigned int off,
+finalize_new_die_offsets (dw_cu_ref cu, dw_die_ref die, unsigned int off,
 			  unsigned int intracusize, dw_die_ref **intracuvec)
 {
   dw_die_ref child;
@@ -7670,8 +7873,8 @@ finalize_new_die_offsets (struct dw_cu *cu, dw_die_ref die, unsigned int off,
 static int
 cu_abbrev_cmp (const void *p, const void *q)
 {
-  struct dw_cu *cu1 = *(struct dw_cu **)p;
-  struct dw_cu *cu2 = *(struct dw_cu **)q;
+  dw_cu_ref cu1 = *(dw_cu_ref *)p;
+  dw_cu_ref cu2 = *(dw_cu_ref *)q;
   unsigned int nabbrevs1 = htab_elements (cu1->cu_new_abbrev);
   unsigned int nabbrevs2 = htab_elements (cu2->cu_new_abbrev);
 
@@ -7691,15 +7894,13 @@ cu_abbrev_cmp (const void *p, const void *q)
   return 0;
 }
 
-struct dw_cu *test_cu;
-
 /* Compute new abbreviations for all CUs, size the new
    .debug_abbrev section and all new .debug_info CUs.  */
 static int
 compute_abbrevs (DSO *dso)
 {
   unsigned long total_size = 0, types_size = 0, abbrev_size = 0;
-  struct dw_cu *cu, **cuarr;
+  dw_cu_ref cu, *cuarr;
   struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
 
@@ -7892,8 +8093,7 @@ compute_abbrevs (DSO *dso)
   if (wr_multifile)
     total_size += 11;
   obstack_free (&ob2, (void *) t);
-  cuarr = (struct dw_cu **) obstack_alloc (&ob2,
-					   ncus * sizeof (struct dw_cu *));
+  cuarr = (dw_cu_ref *) obstack_alloc (&ob2, ncus * sizeof (dw_cu_ref));
   for (cu = first_cu, i = 0; cu; cu = cu->cu_next)
     if (cu->u1.cu_new_abbrev_owner == NULL
 	&& (likely (!fi_multifile)
@@ -7901,7 +8101,7 @@ compute_abbrevs (DSO *dso)
 	    || !cu->cu_die->die_remove))
       cuarr[i++] = cu;
   assert (i == ncus);
-  qsort (cuarr, ncus, sizeof (struct dw_cu *), cu_abbrev_cmp);
+  qsort (cuarr, ncus, sizeof (dw_cu_ref), cu_abbrev_cmp);
   /* For CUs with < 128 abbrevs, try to see if either all of the
      abbrevs are at < 128 positions in >= 128 abbrev CUs, or
      can be merged with some other small abbrev table to form
@@ -8129,7 +8329,7 @@ compute_abbrevs (DSO *dso)
       continue;
     else if (cu->u2.cu_new_abbrev_offset == -1U)
       {
-	struct dw_cu *owner = cu;
+	dw_cu_ref owner = cu;
 	unsigned int cu_new_abbrev_offset;
 	while (owner->u1.cu_new_abbrev_owner != NULL)
 	  owner = owner->u1.cu_new_abbrev_owner;
@@ -8167,7 +8367,7 @@ abbrev_entry_cmp (const void *p, const void *q)
 static void
 write_abbrev (void)
 {
-  struct dw_cu *cu;
+  dw_cu_ref cu;
   unsigned char *abbrev = malloc (debug_sections[DEBUG_ABBREV].new_size);
   unsigned char *ptr = abbrev;
 
@@ -8217,7 +8417,7 @@ write_abbrev (void)
 /* Adjust DWARF expression starting at PTR, LEN bytes long, referenced by
    DIE, with REF being the original DIE.  */
 static void
-adjust_exprloc (struct dw_cu *cu, dw_die_ref die, struct dw_cu *refcu,
+adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 		dw_die_ref ref, unsigned char *ptr, size_t len)
 {
   unsigned char *end = ptr + len, *orig_ptr = NULL;
@@ -8409,8 +8609,8 @@ adjust_exprloc (struct dw_cu *cu, dw_die_ref die, struct dw_cu *refcu,
 /* Write DIE (with REF being the corresponding original DIE) to
    memory starting at PTR, return pointer after the DIE.  */
 static unsigned char *
-write_die (unsigned char *ptr, struct dw_cu *cu, dw_die_ref die,
-	   struct dw_cu *refcu, dw_die_ref ref)
+write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
+	   dw_cu_ref refcu, dw_die_ref ref)
 {
   uint64_t low_pc = 0;
   dw_die_ref child, sib = NULL, origin = NULL;
@@ -8671,7 +8871,7 @@ write_die (unsigned char *ptr, struct dw_cu *cu, dw_die_ref die,
 		    }
 		  else
 		    {
-		      struct dw_cu *refdcu = die_cu (refd);
+		      dw_cu_ref refdcu = die_cu (refd);
 		      value = refd->u.p2.die_new_offset;
 		      assert (value && refdcu->cu_kind != CU_ALT);
 		      if (t->attr[j].form == DW_FORM_ref_addr)
@@ -8883,8 +9083,11 @@ write_die (unsigned char *ptr, struct dw_cu *cu, dw_die_ref die,
   return ptr;
 }
 
+/* Recompute abbrevs for CU.  If any children were collapsed during
+   compute_abbrevs, their ->u.p2.die_new_abbrev and ->u.p2.die_new_offset
+   fields are no longer available and need to be computed again.  */
 static void
-recompute_abbrevs (struct dw_cu *cu, unsigned int cu_size)
+recompute_abbrevs (dw_cu_ref cu, unsigned int cu_size)
 {
   unsigned int headersz = cu->cu_kind == CU_TYPES ? 23 : 11;
   struct abbrev_tag *t;
@@ -8945,7 +9148,7 @@ recompute_abbrevs (struct dw_cu *cu, unsigned int cu_size)
 static void
 write_info (void)
 {
-  struct dw_cu *cu, *cu_next;
+  dw_cu_ref cu, cu_next;
   unsigned char *info = malloc (debug_sections[DEBUG_INFO].new_size);
   unsigned char *ptr = info;
 
@@ -9056,7 +9259,7 @@ write_loc (void)
 static void
 write_types (void)
 {
-  struct dw_cu *cu;
+  dw_cu_ref cu;
   unsigned char *types, *ptr, *inptr;
   dw_die_ref ref;
 
@@ -9102,7 +9305,7 @@ write_types (void)
 static int
 write_aranges (DSO *dso)
 {
-  struct dw_cu *cu, *cufirst = NULL, *cucur;
+  dw_cu_ref cu, cufirst = NULL, cucur;
   unsigned char *aranges, *ptr, *end;
 
   if (debug_sections[DEBUG_ARANGES].data == NULL)
@@ -9186,6 +9389,11 @@ write_aranges (DSO *dso)
   return 0;
 }
 
+/* Helper function of write_gdb_index, called through qsort.
+   Sort an array of unsigned integer pairs, by increasing
+   first integer.  The first integer is the TU offset
+   in the .gdb_index TU table, the second is its index in
+   the TU table from the start of that table.  */
 static int
 gdb_index_tu_cmp (const void *p, const void *q)
 {
@@ -9209,7 +9417,7 @@ gdb_index_tu_cmp (const void *p, const void *q)
 static void
 write_gdb_index (void)
 {
-  struct dw_cu *cu, *first_tu = NULL;
+  dw_cu_ref cu, first_tu = NULL;
   unsigned char *gdb_index, *ptr, *inptr, *end;
   unsigned int ncus = 0, npus = 0, ntus = 0, ver;
   unsigned int culistoff, cutypesoff, addressoff, symboloff, constoff;
@@ -9409,6 +9617,8 @@ strptr (DSO *dso, int sec, off_t offset)
   return NULL;
 }
 
+/* Initialize do_read_* and do_write_* callbacks based on
+   ENDIANITY.  */
 static void
 init_endian (int endianity)
 {
@@ -9891,7 +10101,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 static void
 cleanup (void)
 {
-  struct dw_cu *cu;
+  dw_cu_ref cu;
   unsigned int i;
 
   for (cu = first_cu; cu; cu = cu->cu_next)
@@ -9954,6 +10164,8 @@ cleanup (void)
   max_line_id = 0;
 }
 
+/* Returns true if DIE contains any toplevel children that can be
+   potentially shared between different executables or shared libraries.  */
 static bool
 check_multifile (dw_die_ref die)
 {
@@ -10009,6 +10221,7 @@ strp_off_cmp (const void *p, const void *q)
   return 0;
 }
 
+/* Write tail optimized strings into the temporary .debug_str file.  */
 static int
 write_multifile_strp (void)
 {
@@ -10086,6 +10299,11 @@ line_id_cmp (const void *p, const void *q)
   return 0;
 }
 
+/* Write a minimal .debug_line entry.  If not op_multifile, write it
+   into the temporary .debug_line file (if line_htab is non-NULL, fill
+   its directory and file table from it, otherwise emit an entry
+   with no directories or files), if op_multifile, store the entry
+   into debug_sections[DEBUG_LINE].new_data which it allocates.  */
 static int
 write_multifile_line (void)
 {
@@ -10253,10 +10471,12 @@ write_multifile_line (void)
   return ret;
 }
 
+/* Collect potentially shareable DIEs, strings and .debug_macro
+   opcode sequences into temporary .debug_* files.  */
 static int
 write_multifile (DSO *dso)
 {
-  struct dw_cu *cu;
+  dw_cu_ref cu;
   bool any_cus = false;
   unsigned int i;
   int ret = 0;
@@ -10290,7 +10510,7 @@ write_multifile (DSO *dso)
     }
   if (any_cus)
     {
-      struct dw_cu **cup;
+      dw_cu_ref *cup;
 
       for (cup = &first_cu; *cup && (*cup)->cu_kind != CU_TYPES; )
 	if ((*cup)->cu_die->die_no_multifile == 0)
@@ -10372,6 +10592,13 @@ write_multifile (DSO *dso)
   return ret;
 }
 
+/* During fi_multifile phase, see what DIEs in a partial unit
+   contain no children worth keeping where all real DIEs have
+   dups in the shared .debug_info section and what remains is
+   just the DW_TAG_partial_unit, a single DW_TAG_imported_unit
+   and perhaps some empty named namespaces.  Then all the
+   references to that partial unit can be replaced by references
+   to the shared partial unit DW_TAG_import_unit has been importing.  */
 static bool
 remove_empty_pu (dw_die_ref die)
 {
@@ -10428,10 +10655,11 @@ remove_empty_pu (dw_die_ref die)
   return true;
 }
 
+/* Call remove_empty_pu on all partial units.  */
 static int
 remove_empty_pus (void)
 {
-  struct dw_cu *cu;
+  dw_cu_ref cu;
   for (cu = first_cu; cu; cu = cu->cu_next)
     if (cu->cu_kind == CU_NORMAL
 	&& cu->cu_die->die_tag == DW_TAG_partial_unit)
@@ -10439,6 +10667,7 @@ remove_empty_pus (void)
   return 0;
 }
 
+/* Helper structure for hardlink discovery.  */
 struct file_result
 {
   int res;
@@ -10714,8 +10943,14 @@ dwz (const char *file, const char *outfile, struct file_result *res,
   return ret;
 }
 
+/* In order to free all malloced memory at the end of optimize_multifile,
+   communicate .debug_str tail optimized offset list from optimize_multifile
+   to read_multifile using an mmaped chunk of memory pointed by this
+   variable.  */
 static unsigned int *strp_tail_off_list;
 
+/* Process temporary .debug_* files, see what can be beneficially shared
+   and write a new ET_REL file, containing the shared .debug_* sections.  */
 static int
 optimize_multifile (void)
 {
@@ -10831,7 +11066,7 @@ optimize_multifile (void)
     }
   else
     {
-      struct dw_cu **cup;
+      dw_cu_ref *cup;
       unsigned char *p, *q;
       unsigned int strp_count;
 
@@ -11085,6 +11320,9 @@ optimize_multifile (void)
   return fd;
 }
 
+/* Parse the .debug_* sections from shared ET_REL file written
+   by optimize_multifile into data structures for fi_multifile
+   phase.  */
 static DSO *
 read_multifile (int fd)
 {
@@ -11206,6 +11444,8 @@ read_multifile (int fd)
   return ret;
 }
 
+/* Clear all die_nextdup fields among in toplevel children
+   of DIE.  */
 static void
 alt_clear_dups (dw_die_ref die)
 {
@@ -11409,7 +11649,7 @@ main (int argc, char *argv[])
 	    {
 	      for (i = optind; i < argc; i++)
 		{
-		  struct dw_cu *cu;
+		  dw_cu_ref cu;
 		  multifile_mode = MULTIFILE_MODE_FI;
 		  /* Don't process again files that couldn't
 		     be processed successfully.  */
