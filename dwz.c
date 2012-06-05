@@ -320,6 +320,39 @@ buf_write_be64 (unsigned char *data, uint64_t v)
   buf_write_be32 (data + 4, v);
 }
 
+static const char *
+get_DW_FORM_str (unsigned int form)
+{
+  const char *name = get_DW_FORM_name (form);
+  static char buf[9 + 3 * sizeof (int)];
+  if (name)
+    return name;
+  sprintf (buf, "DW_FORM_%u", form);
+  return buf;
+}
+
+static const char *
+get_DW_OP_str (unsigned int op)
+{
+  const char *name = get_DW_OP_name (op);
+  static char buf[7 + 3 * sizeof (int)];
+  if (name)
+    return name;
+  sprintf (buf, "DW_OP_%u", op);
+  return buf;
+}
+
+static const char *
+get_DW_AT_str (unsigned int at)
+{
+  const char *name = get_DW_AT_name (at);
+  static char buf[7 + 3 * sizeof (int)];
+  if (name)
+    return name;
+  sprintf (buf, "DW_AT_%u", at);
+  return buf;
+}
+
 /* Details about standard DWARF sections.  */
 static struct
   {
@@ -815,8 +848,8 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	  if (form == 2
 	      || (form > DW_FORM_flag_present && form != DW_FORM_ref_sig8))
 	    {
-	      error (0, 0, "%s: Unknown DWARF DW_FORM_%d",
-		     dso->filename, form);
+	      error (0, 0, "%s: Unknown DWARF %s",
+		     dso->filename, get_DW_FORM_str (form));
 	      htab_delete (h);
 	      return NULL;
 	    }
@@ -1351,8 +1384,8 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ref = off_htab_lookup (cu, cu->cu_offset + addr);
 	  if (ref == NULL)
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by DW_OP_%d",
-		     dso->filename, op);
+	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
+		     dso->filename, get_DW_OP_str (op));
 	      return 1;
 	    }
 	  if (op == DW_OP_call2)
@@ -1397,8 +1430,8 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ref = off_htab_lookup (NULL, addr);
 	  if (ref == NULL)
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by DW_OP_%d",
-		     dso->filename, op);
+	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
+		     dso->filename, get_DW_OP_str (op));
 	      return 1;
 	    }
 	  if (unlikely (low_mem))
@@ -1476,8 +1509,8 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ref = off_htab_lookup (cu, cu->cu_offset + addr);
 	  if (ref == NULL)
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by DW_OP_%d",
-		     dso->filename, op);
+	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
+		     dso->filename, get_DW_OP_str (op));
 	      return 1;
 	    }
 	  if (unlikely (low_mem))
@@ -1495,7 +1528,8 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	    *need_adjust = true;
 	  break;
 	default:
-	  error (0, 0, "%s: Unknown DWARF DW_OP_%d", dso->filename, op);
+	  error (0, 0, "%s: Unknown DWARF %s",
+		 dso->filename, get_DW_OP_str (op));
 	  return 1;
 	}
     }
@@ -1745,8 +1779,9 @@ checksum_die (DSO *dso, struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die)
 	    case DW_FORM_udata:
 	      value = read_uleb128 (ptr); handled = true; break;
 	    default:
-	      error (0, 0, "%s: Unhandled DW_FORM_%d for DW_AT_%d",
-		     dso->filename, form, t->attr[i].attr);
+	      error (0, 0, "%s: Unhandled %s for %s",
+		     dso->filename, get_DW_FORM_str (form),
+		     get_DW_AT_str (t->attr[i].attr));
 	      return 1;
 	    }
 	  if (handled)
@@ -1755,8 +1790,9 @@ checksum_die (DSO *dso, struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die)
 	      ptr = old_ptr;
 	      if (value > cu->cu_nfiles)
 		{
-		  error (0, 0, "%s: Invalid DW_AT_%d file number %d",
-			 dso->filename, t->attr[i].attr, (int) value);
+		  error (0, 0, "%s: Invalid %s file number %d",
+			 dso->filename, get_DW_AT_str (t->attr[i].attr),
+			 (int) value);
 		  return 1;
 		}
 	      if (value == 0)
@@ -1834,8 +1870,8 @@ checksum_die (DSO *dso, struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die)
 	      ref = off_htab_lookup (cu, value);
 	      if (ref == NULL)
 		{
-		  error (0, 0, "%s: Couldn't find DIE referenced by DW_AT_%d",
-			 dso->filename, t->attr[i].attr);
+		  error (0, 0, "%s: Couldn't find DIE referenced by %s",
+			 dso->filename, get_DW_AT_str (t->attr[i].attr));
 		  return 1;
 		}
 	      if (unlikely (op_multifile) && ref->die_collapsed_child)
@@ -1898,8 +1934,8 @@ checksum_die (DSO *dso, struct dw_cu *cu, dw_die_ref top_die, dw_die_ref die)
 		= off_htab_lookup (cu, cu->cu_offset + value);
 	      if (ref == NULL)
 		{
-		  error (0, 0, "%s: Couldn't find DIE referenced by DW_AT_%d",
-			 dso->filename, t->attr[i].attr);
+		  error (0, 0, "%s: Couldn't find DIE referenced by %s",
+			 dso->filename, get_DW_AT_str (t->attr[i].attr));
 		  return 1;
 		}
 	      if (die->die_ck_state != CK_BAD)
@@ -4685,8 +4721,8 @@ read_debug_info (DSO *dso, int kind)
 		  form = DW_FORM_block1;
 		  break;
 		default:
-		  error (0, 0, "%s: Unknown DWARF DW_FORM_%d",
-			 dso->filename, form);
+		  error (0, 0, "%s: Unknown DWARF %s",
+			 dso->filename, get_DW_FORM_str (form));
 		  goto fail;
 		}
 
@@ -4715,9 +4751,9 @@ read_debug_info (DSO *dso, int kind)
 			  || t->attr[i].attr
 			     > DW_AT_GNU_call_site_target_clobbered))
 		    {
-		      error (0, 0, "%s: Unknown DWARF DW_AT_%d with "
+		      error (0, 0, "%s: Unknown DWARF %s with "
 				   "block DW_FORM",
-			     dso->filename, t->attr[i].attr);
+			     dso->filename, get_DW_AT_str (t->attr[i].attr));
 		      goto fail;
 		    }
 
@@ -7029,8 +7065,9 @@ build_abbrevs_for_die (htab_t h, struct dw_cu *cu, dw_die_ref die,
 		    case DW_FORM_data8: value = read_64 (ptr); break;
 		    case DW_FORM_udata: value = read_uleb128 (ptr); break;
 		    default:
-		      error (0, 0, "Unhandled DW_FORM_%d for DW_AT_%d",
-			     form, reft->attr[i].attr);
+		      error (0, 0, "Unhandled %s for %s",
+			     get_DW_FORM_str (form),
+			     get_DW_AT_str (reft->attr[i].attr));
 		      return 1;
 		    }
 		  value = line_htab_lookup (refcu, value);
@@ -7067,8 +7104,8 @@ build_abbrevs_for_die (htab_t h, struct dw_cu *cu, dw_die_ref die,
 		      value = read_32 (ptr);
 		      break;
 		    default:
-		      error (0, 0, "Unhandled DW_FORM_%d for DW_AT_GNU_macros",
-			     form);
+		      error (0, 0, "Unhandled %s for DW_AT_GNU_macros",
+			     get_DW_FORM_str (form));
 		      return 1;
 		    }
 		  me.ptr = debug_sections[DEBUG_MACRO].data + value;
