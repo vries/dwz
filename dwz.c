@@ -440,6 +440,7 @@ static struct
 #define DEBUG_GDB_SCRIPTS	13
 #define GDB_INDEX		14
 #define GNU_DEBUGALTLINK	15
+#define SECTION_COUNT		16
     { ".debug_info", NULL, NULL, 0, 0, 0 },
     { ".debug_abbrev", NULL, NULL, 0, 0, 0 },
     { ".debug_line", NULL, NULL, 0, 0, 0 },
@@ -9704,19 +9705,6 @@ read_dwarf (DSO *dso, bool quieter)
       return 1;
     }
 
-  if (debug_sections[DEBUG_PUBTYPES].data != NULL)
-    {
-      error (0, 0, "%s: .debug_pubtypes adjusting unimplemented",
-	     dso->filename);
-      return 1;
-    }
-  if (debug_sections[DEBUG_PUBNAMES].data != NULL)
-    {
-      error (0, 0, "%s: .debug_pubnames adjusting unimplemented",
-	     dso->filename);
-      return 1;
-    }
-
   if (debug_sections[DEBUG_INFO].data == NULL)
     {
       if (!quieter)
@@ -9821,9 +9809,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   char *filename = NULL;
   GElf_Word shstrtabadd = 0;
   char *shstrtab = NULL;
-  bool remove_gdb_index = false;
-  bool remove_debug_str = false;
+  bool remove_sections[SECTION_COUNT];
 
+  memset (remove_sections, '\0', sizeof (remove_sections));
   ehdr = dso->ehdr;
   if (multi_ehdr.e_ident[0] == '\0')
     multi_ehdr = ehdr;
@@ -9880,13 +9868,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  ehdr.e_shoff += diff;
 	dso->shdr[debug_sections[i].sec].sh_size
 	  = debug_sections[i].new_size;
-	if ((i == GDB_INDEX || i == DEBUG_STR)
-	    && debug_sections[i].new_size == 0)
+	if (debug_sections[i].new_size == 0)
 	  {
-	    if (i == GDB_INDEX)
-	      remove_gdb_index = true;
-	    else
-	      remove_debug_str = true;
+	    remove_sections[i] = true;
 	    ehdr.e_shnum--;
 	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
 	      {
@@ -9998,11 +9982,10 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       Elf_Scn *scn;
       Elf_Data *data1, *data2;
 
-      if (remove_gdb_index
-	  && i == debug_sections[GDB_INDEX].sec)
-	continue;
-      if (remove_debug_str
-	  && i == debug_sections[DEBUG_STR].sec)
+      for (j = 0; debug_sections[j].name; j++)
+	if (i == debug_sections[j].sec)
+	  break;
+      if (debug_sections[j].name && remove_sections[j])
 	continue;
       scn = elf_newscn (elf);
       elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
@@ -10010,16 +9993,12 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       data1 = elf_getdata (dso->scn[i], NULL);
       data2 = elf_newdata (scn);
       memcpy (data2, data1, sizeof (*data1));
-      for (j = 0; debug_sections[j].name; j++)
-	if (i == debug_sections[j].sec)
-	  {
-	    if (debug_sections[j].new_data != NULL)
-	      {
-		data2->d_buf = debug_sections[j].new_data;
-		data2->d_size = dso->shdr[i].sh_size;
-	      }
-	    break;
-	  }
+      if (debug_sections[j].name
+	  && debug_sections[j].new_data != NULL)
+	{
+	  data2->d_buf = debug_sections[j].new_data;
+	  data2->d_size = dso->shdr[i].sh_size;
+	}
       if (i == dso->ehdr.e_shstrndx && shstrtabadd)
 	{
 	  memcpy (shstrtab, data1->d_buf,
@@ -10909,6 +10888,12 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	  write_loc ();
 	  write_types ();
 	  write_gdb_index ();
+	  /* These sections are optional and it is unclear
+	     how to adjust them.  Just remove them.  */
+	  debug_sections[DEBUG_PUBNAMES].new_data = NULL;
+	  debug_sections[DEBUG_PUBNAMES].new_size = 0;
+	  debug_sections[DEBUG_PUBTYPES].new_data = NULL;
+	  debug_sections[DEBUG_PUBTYPES].new_size = 0;
 
 	  if (multifile && !fi_multifile && !low_mem)
 	    write_multifile (dso);
