@@ -413,34 +413,41 @@ get_DW_AT_str (unsigned int at)
   return buf;
 }
 
+/* This must match the debug_sections array content
+   below.  */
+enum debug_section_kind
+{
+  DEBUG_INFO,
+  DEBUG_ABBREV,
+  DEBUG_LINE,
+  DEBUG_STR,
+  DEBUG_MACRO,
+  DEBUG_TYPES,
+  DEBUG_ARANGES,
+  DEBUG_PUBNAMES,
+  DEBUG_PUBTYPES,
+  DEBUG_MACINFO,
+  DEBUG_LOC,
+  DEBUG_FRAME,
+  DEBUG_RANGES,
+  DEBUG_GDB_SCRIPTS,
+  GDB_INDEX,
+  GNU_DEBUGALTLINK,
+  SECTION_COUNT,
+  SAVED_SECTIONS = DEBUG_TYPES + 1
+};
+
 /* Details about standard DWARF sections.  */
 static struct
+{
+  const char *name;
+  unsigned char *data;
+  unsigned char *new_data;
+  size_t size;
+  size_t new_size;
+  int sec;
+} debug_sections[] =
   {
-    const char *name;
-    unsigned char *data;
-    unsigned char *new_data;
-    size_t size;
-    size_t new_size;
-    int sec;
-  } debug_sections[] =
-  {
-#define DEBUG_INFO		0
-#define DEBUG_ABBREV		1
-#define DEBUG_LINE		2
-#define DEBUG_STR		3
-#define DEBUG_MACRO		4
-#define DEBUG_TYPES		5
-#define DEBUG_ARANGES		6
-#define DEBUG_PUBNAMES		7
-#define DEBUG_PUBTYPES		8
-#define DEBUG_MACINFO		9
-#define DEBUG_LOC		10
-#define DEBUG_FRAME		11
-#define DEBUG_RANGES		12
-#define DEBUG_GDB_SCRIPTS	13
-#define GDB_INDEX		14
-#define GNU_DEBUGALTLINK	15
-#define SECTION_COUNT		16
     { ".debug_info", NULL, NULL, 0, 0, 0 },
     { ".debug_abbrev", NULL, NULL, 0, 0, 0 },
     { ".debug_line", NULL, NULL, 0, 0, 0 },
@@ -459,7 +466,6 @@ static struct
     { ".gnu_debugaltlink", NULL, NULL, 0, 0, 0 },
     { NULL, NULL, NULL, 0, 0, 0 }
   };
-#define SAVED_SECTIONS (DEBUG_TYPES + 1)
 
 /* Copies of .new_data fields during write_multifile.  */
 static unsigned char *saved_new_data[SAVED_SECTIONS];
@@ -500,12 +506,16 @@ static unsigned int low_mem_die_limit = 10000000;
 static unsigned int max_die_limit = 50000000;
 
 /* Phase of multifile handling.  */
-#define MULTIFILE_MODE_WR	1
-#define MULTIFILE_MODE_OP	2
-#define MULTIFILE_MODE_RD	4
-#define MULTIFILE_MODE_FI	8
-#define MULTIFILE_MODE_LOW_MEM	16
 static unsigned char multifile_mode;
+
+enum multifile_mode_kind
+{
+  MULTIFILE_MODE_WR = 1,
+  MULTIFILE_MODE_OP = 2,
+  MULTIFILE_MODE_RD = 4,
+  MULTIFILE_MODE_FI = 8,
+  MULTIFILE_MODE_LOW_MEM = 16
+};
 
 /* True while in write_multifile.  */
 #define wr_multifile (multifile_mode & MULTIFILE_MODE_WR)
@@ -4068,9 +4078,12 @@ finalize_strp (bool build_tail_offset_list)
   return tail_offset_list;
 }
 
-#define MARK_REFS_FOLLOW_DUPS	1
-#define MARK_REFS_RETURN_VAL	2
-#define MARK_REFS_REFERENCED	4
+enum mark_refs_mode
+{
+  MARK_REFS_FOLLOW_DUPS = 1,
+  MARK_REFS_RETURN_VAL = 2,
+  MARK_REFS_REFERENCED = 4
+};
 
 /* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
    unless already marked.  */
