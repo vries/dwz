@@ -495,6 +495,8 @@ static GElf_Ehdr multi_ehdr;
 static int multi_ptr_size;
 /* And their endianity.  */
 static int multi_endian;
+/* Highest .gdb_index version seen.  */
+static unsigned int multi_gdb_index_ver;
 
 /* Number of DIEs, above which dwz retries processing
    in low_mem mode (and give up on multifile optimizing
@@ -9431,31 +9433,70 @@ gdb_index_tu_cmp (const void *p, const void *q)
 static void
 write_gdb_index (void)
 {
-  dw_cu_ref cu, first_tu = NULL;
+  dw_cu_ref cu, cu_next, first_tu = NULL;
   unsigned char *gdb_index, *ptr, *inptr, *end;
-  unsigned int ncus = 0, npus = 0, ntus = 0, ver;
+  unsigned int ncus = 0, npus = 0, ntus = 0, ndelcus = 0, ver;
   unsigned int culistoff, cutypesoff, addressoff, symboloff, constoff;
-  unsigned int *tuindices = NULL, tuidx = 0;
+  unsigned int *tuindices = NULL, tuidx = 0, *cumap = NULL, i, j;
+  bool fail = false;
 
   debug_sections[GDB_INDEX].new_size = 0;
-  if (debug_sections[GDB_INDEX].data == NULL
-      || debug_sections[GDB_INDEX].size < 0x18)
+  if (likely (!op_multifile)
+      && (debug_sections[GDB_INDEX].data == NULL
+	  || debug_sections[GDB_INDEX].size < 0x18))
     return;
   inptr = (unsigned char *) debug_sections[GDB_INDEX].data;
-  ver = buf_read_ule32 (inptr);
+  if (unlikely (op_multifile))
+    ver = multi_gdb_index_ver;
+  else
+    ver = buf_read_ule32 (inptr);
   if (ver < 4 || ver > 6)
-    return;
-
-  if (unlikely (fi_multifile))
     return;
 
   for (cu = first_cu; cu; cu = cu->cu_next)
     if (cu->cu_kind == CU_PU)
       npus++;
     else if (cu->cu_kind == CU_NORMAL)
-      ncus++;
+      {
+	ncus++;
+	if (unlikely (fi_multifile) && cu->cu_die->die_remove)
+	  ndelcus++;
+      }
     else if (cu->cu_kind == CU_TYPES)
       ntus++;
+
+  if (unlikely (op_multifile))
+    {
+      assert (ncus == 0 && ntus == 0);
+      debug_sections[GDB_INDEX].new_size
+	= 0x18 + npus * 16 + 16;
+      gdb_index = malloc (debug_sections[GDB_INDEX].new_size);
+      if (gdb_index == NULL)
+	dwz_oom ();
+      debug_sections[GDB_INDEX].new_data = gdb_index;
+      /* Write new header.  */
+      buf_write_le32 (gdb_index + 0x00, ver);
+      buf_write_le32 (gdb_index + 0x04, 0x18);
+      buf_write_le32 (gdb_index + 0x08, 0x18 + npus * 16);
+      buf_write_le32 (gdb_index + 0x0c, 0x18 + npus * 16);
+      buf_write_le32 (gdb_index + 0x10, 0x18 + npus * 16);
+      buf_write_le32 (gdb_index + 0x14, 0x18 + npus * 16 + 16);
+      ptr = gdb_index + 0x18;
+      /* Write new CU list.  */
+      for (cu = first_cu; cu; cu = cu->cu_next)
+	{
+	  unsigned long next_off = debug_sections[DEBUG_INFO].new_size;
+	  if (cu->cu_next)
+	    next_off = cu->cu_next->cu_new_offset;
+	  buf_write_le64 (ptr, cu->cu_new_offset);
+	  buf_write_le64 (ptr + 8, next_off - cu->cu_new_offset);
+	  ptr += 16;
+	}
+      /* Write an empty hash table (with two entries).  */
+      memset (ptr, '\0', 16);
+      return;
+    }
+
   culistoff = buf_read_ule32 (inptr + 0x04);
   cutypesoff = buf_read_ule32 (inptr + 0x08);
   addressoff = buf_read_ule32 (inptr + 0x0c);
@@ -9472,12 +9513,26 @@ write_gdb_index (void)
       || debug_sections[GDB_INDEX].size < constoff)
     return;
   inptr += 0x18;
-  for (cu = first_cu; cu; cu = cu->cu_next)
+  if (ndelcus)
+    cumap = (unsigned int *)
+	    obstack_alloc (&ob2, ncus * sizeof (unsigned int));
+  for (cu = first_cu, i = 0, j = 0; cu; cu = cu->cu_next)
     if (cu->cu_kind == CU_NORMAL)
       {
 	if (buf_read_ule64 (inptr) != cu->cu_offset)
-	  return;
+	  {
+	    if (cumap)
+	      obstack_free (&ob2, (void *) cumap);
+	    return;
+	  }
 	inptr += 16;
+	if (cumap)
+	  {
+	    if (cu->cu_die->die_remove)
+	      cumap[i++] = -1U;
+	    else
+	      cumap[i++] = j++;
+	  }
       }
     else if (cu->cu_kind == CU_TYPES)
       {
@@ -9498,13 +9553,22 @@ write_gdb_index (void)
       for (tuidx = 0, cu = first_tu; tuidx < ntus; tuidx++, cu = cu->cu_next)
 	if (tuindices[2 * tuidx] != cu->cu_offset)
 	  {
-	    obstack_free (&ob2, (void *) tuindices);
+	    if (cumap)
+	      obstack_free (&ob2, (void *) cumap);
+	    else
+	      obstack_free (&ob2, (void *) tuindices);
 	    return;
 	  }
     }
 
+  if (multifile
+      && !fi_multifile
+      && !low_mem
+      && multi_gdb_index_ver < ver)
+    multi_gdb_index_ver = ver;
+
   debug_sections[GDB_INDEX].new_size
-    = debug_sections[GDB_INDEX].size + npus * 16;
+    = debug_sections[GDB_INDEX].size + npus * 16 - ndelcus * 16;
   gdb_index = malloc (debug_sections[GDB_INDEX].new_size);
   if (gdb_index == NULL)
     dwz_oom ();
@@ -9512,19 +9576,29 @@ write_gdb_index (void)
   /* Write new header.  */
   buf_write_le32 (gdb_index + 0x00, ver);
   buf_write_le32 (gdb_index + 0x04, culistoff);
-  buf_write_le32 (gdb_index + 0x08, cutypesoff + npus * 16);
-  buf_write_le32 (gdb_index + 0x0c, addressoff + npus * 16);
-  buf_write_le32 (gdb_index + 0x10, symboloff + npus * 16);
-  buf_write_le32 (gdb_index + 0x14, constoff + npus * 16);
+  buf_write_le32 (gdb_index + 0x08, cutypesoff + npus * 16 - ndelcus * 16);
+  buf_write_le32 (gdb_index + 0x0c, addressoff + npus * 16 - ndelcus * 16);
+  buf_write_le32 (gdb_index + 0x10, symboloff + npus * 16 - ndelcus * 16);
+  buf_write_le32 (gdb_index + 0x14, constoff + npus * 16 - ndelcus * 16);
   ptr = gdb_index + 0x18;
   /* Write new CU list.  */
-  for (cu = first_cu; cu; cu = cu->cu_next)
+  for (cu = first_cu; cu; cu = cu_next)
     {
       unsigned long next_off = debug_sections[DEBUG_INFO].new_size;
       if (cu->cu_kind == CU_TYPES)
 	break;
-      if (cu->cu_next && cu->cu_next->cu_kind != CU_TYPES)
-	next_off = cu->cu_next->cu_new_offset;
+      cu_next = cu->cu_next;
+      if (unlikely (fi_multifile))
+	{
+	  while (cu_next
+		 && cu_next->cu_kind == CU_NORMAL
+		 && cu_next->cu_die->die_remove)
+	    cu_next = cu_next->cu_next;
+	  if (cu->cu_die->die_remove)
+	    continue;
+	}
+      if (cu_next && cu_next->cu_kind != CU_TYPES)
+	next_off = cu_next->cu_new_offset;
       buf_write_le64 (ptr, cu->cu_new_offset);
       buf_write_le64 (ptr + 8, next_off - cu->cu_new_offset);
       ptr += 16;
@@ -9545,15 +9619,21 @@ write_gdb_index (void)
       buf_write_le64 (ptr + tuoff + 16, read_64 (p));
     }
   ptr += ntus * 24;
-  if (tuindices)
-    obstack_free (&ob2, (void *) tuindices);
-  tuindices = NULL;
   end = inptr + (symboloff - addressoff);
   /* Copy address area, adjusting all CU indexes.  */
   while (inptr < end)
     {
       memcpy (ptr, inptr, 16);
-      buf_write_le32 (ptr + 16, buf_read_ule32 (inptr + 16) + npus);
+      i = buf_read_ule32 (inptr + 16);
+      if (cumap && i < ncus)
+	{
+	  if (cumap[i] == -1U)
+	    fail = true;
+	  i = cumap[i] + npus;
+	}
+      else
+	i += npus - ndelcus;
+      buf_write_le32 (ptr + 16, i);
       ptr += 20;
       inptr += 20;
     }
@@ -9596,15 +9676,35 @@ write_gdb_index (void)
 	}
       if (buf_read_ule32 (ptr + cuvec) == 0)
 	{
-	  unsigned int count = buf_read_ule32 (end + cuvec), i;
+	  unsigned int count = buf_read_ule32 (end + cuvec);
 	  if (count * 4
 	      > debug_sections[GDB_INDEX].size - constoff - cuvec - 4)
 	    goto fail;
 	  buf_write_le32 (ptr + cuvec, count);
 	  for (i = 0; i < count; i++)
-	    buf_write_le32 (ptr + cuvec + 4 + i,
-			    buf_read_ule32 (end + cuvec + 4 + i) + npus);
+	    {
+	      j = buf_read_ule32 (end + cuvec + 4 + i);
+	      if (cumap && j < ncus)
+		{
+		  if (cumap[j] == -1U)
+		    fail = true;
+		  j = cumap[j] + npus;
+		}
+	      else
+		j += npus - ndelcus;
+	      buf_write_le32 (ptr + cuvec + 4 + i, j);
+	    }
 	}
+    }
+  if (cumap)
+    obstack_free (&ob2, (void *) cumap);
+  else if (tuindices)
+    obstack_free (&ob2, (void *) tuindices);
+  if (fail)
+    {
+      free (debug_sections[GDB_INDEX].new_data);
+      debug_sections[GDB_INDEX].new_data = NULL;
+      debug_sections[GDB_INDEX].new_size = 0;
     }
 }
 
@@ -10961,7 +11061,7 @@ optimize_multifile (void)
   Elf_Data *data;
   char *e_ident;
   const char shstrtab[]
-    = "\0.shstrtab\0.note.gnu.build-id\0"
+    = "\0.shstrtab\0.note.gnu.build-id\0.gdb_index\0"
       ".debug_info\0.debug_abbrev\0.debug_line\0.debug_str\0.debug_macro";
   const char *p;
   unsigned char note[0x24], *np;
@@ -11123,6 +11223,7 @@ optimize_multifile (void)
 
 	  write_abbrev ();
 	  write_info ();
+	  write_gdb_index ();
 	  if (write_multifile_line ())
 	    goto fail;
 	}
