@@ -9683,7 +9683,7 @@ write_gdb_index (void)
 	  buf_write_le32 (ptr + cuvec, count);
 	  for (i = 0; i < count; i++)
 	    {
-	      j = buf_read_ule32 (end + cuvec + 4 + i);
+	      j = buf_read_ule32 (end + cuvec + (i + 1) * 4);
 	      if (cumap && j < ncus)
 		{
 		  if (cumap[j] == -1U)
@@ -9692,7 +9692,7 @@ write_gdb_index (void)
 		}
 	      else
 		j += npus - ndelcus;
-	      buf_write_le32 (ptr + cuvec + 4 + i, j);
+	      buf_write_le32 (ptr + cuvec + (i + 1) * 4, j);
 	    }
 	}
     }
