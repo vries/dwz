@@ -1958,7 +1958,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
       switch (form)
 	{
 	case DW_FORM_ref_addr:
-	  if (unlikely (op_multifile || rd_multifile))
+	  if (unlikely (op_multifile || rd_multifile || fi_multifile))
 	    {
 	      dw_die_ref ref;
 
@@ -2339,7 +2339,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
       switch (t->attr[i].form)
 	{
 	case DW_FORM_ref_addr:
-	  if (unlikely (op_multifile || rd_multifile))
+	  if (unlikely (op_multifile || rd_multifile || fi_multifile))
 	    i = -2U;
 	  break;
 	case DW_FORM_ref_udata:
@@ -2368,7 +2368,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	  switch (form)
 	    {
 	    case DW_FORM_ref_addr:
-	      if (unlikely (op_multifile || rd_multifile))
+	      if (unlikely (op_multifile || rd_multifile || fi_multifile))
 		{
 		  value = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
 		  ptr += cu->cu_version == 2 ? ptr_size : 4;
