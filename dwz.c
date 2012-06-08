@@ -11563,7 +11563,7 @@ alt_clear_dups (dw_die_ref die)
 /* Options for getopt_long.  */
 static struct option dwz_options[] =
 {
-  { "help",		 no_argument,	    0, 0 },
+  { "help",		 no_argument,	    0, '?' },
   { "output",		 required_argument, 0, 'o' },
   { "multifile",	 required_argument, 0, 'm' },
   { "quiet",		 no_argument,	    0, 'q' },
@@ -11601,12 +11601,13 @@ main (int argc, char *argv[])
   while (1)
     {
       int option_index;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?", dwz_options, &option_index);
       if (c == -1)
 	break;
       switch (c)
 	{
 	default:
+	case '?':
 	  usage ();
 	  break;
 
