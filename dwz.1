@@ -121,7 +121,7 @@ will attempt to optimize debugging information in
 .I bin/foo.debug, bin/foo2.debug
 and
 .I lib/libbar.so.debug
-and when beneficial also will create
+(by modifying the files in place) and when beneficial also will create
 .I .dwz/foobar-1.2.debug
 file.
 .I .gnu_debugaltlink
@@ -141,6 +141,18 @@ but instead store the ELF object with optimized debugging information
 if successful into
 .I foo.dwz
 file it creates.
+.RS
+$ dwz *.debug foo/*.debug
+.RE
+will attempt to optimize debugging information in *.debug and foo/*.debug
+files, optimizing each file individually in place.
+.RS
+$ dwz
+.RE
+is equivalent to
+.I
+dwz a.out
+command.
 .SH SEE ALSO
 .BR http://dwarfstd.org/doc/DWARF4.pdf
 ,
