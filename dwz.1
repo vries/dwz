@@ -9,7 +9,7 @@ dwz
 is a program that attempts to optimize DWARF debugging information
 contained in ELF shared libraries and ELF executables for size, by
 replacing DWARF information representation with equivalent smaller
-representation where possible and by reducing amount of duplication
+representation where possible and by reducing the amount of duplication
 using techniques from DWARF standard appendix E - creating
 .I DW_TAG_partial_unit
 compilation units (CUs) for duplicated information and using
@@ -142,6 +142,8 @@ if successful into
 .I foo.dwz
 file it creates.
 .SH SEE ALSO
+.BR http://dwarfstd.org/doc/DWARF4.pdf
+,
 .BR gdb (1).
 .SH AUTHORS
 Jakub Jelinek <jakub@redhat.com>.
