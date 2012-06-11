@@ -1,4 +1,4 @@
-CFLAGS = -O2 -g -Wall -W -D_FILE_OFFSET_BITS=64
+CFLAGS = -O2 -g -Wall -W
 OBJECTS = dwz.o hashtab.o
 dwz: $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lelf
