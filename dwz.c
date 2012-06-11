@@ -3207,335 +3207,14 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   return new_die;
 }
 
-/* Mark all DIEs referenced from DIE by setting die_ref_seen to 1,
-   unless already marked.  */
-static void
-mark_refs (dw_die_ref top_die, dw_die_ref die)
-{
-  struct abbrev_tag *t;
-  unsigned int i;
-  unsigned char *ptr;
-  dw_die_ref child;
-
-  t = die->die_abbrev;
-  for (i = 0; i < t->nattr; ++i)
-    if (t->attr[i].attr != DW_AT_sibling)
-      switch (t->attr[i].form)
-	{
-	case DW_FORM_ref_udata:
-	case DW_FORM_ref1:
-	case DW_FORM_ref2:
-	case DW_FORM_ref4:
-	case DW_FORM_ref8:
-	case DW_FORM_indirect:
-	  i = -2U;
-	  break;
-	}
-  if (i == -1U)
-    {
-      ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
-      read_uleb128 (ptr);
-      for (i = 0; i < t->nattr; ++i)
-	{
-	  uint32_t form = t->attr[i].form;
-	  size_t len = 0;
-	  uint64_t value;
-	  dw_die_ref ref, reft;
-
-	  while (form == DW_FORM_indirect)
-	    form = read_uleb128 (ptr);
-
-	  switch (form)
-	    {
-	    case DW_FORM_ref_addr:
-	      ptr += die->die_cu->cu_version == 2 ? ptr_size : 4;
-	      break;
-	    case DW_FORM_addr:
-	      ptr += ptr_size;
-	      break;
-	    case DW_FORM_flag_present:
-	      break;
-	    case DW_FORM_flag:
-	    case DW_FORM_data1:
-	      ++ptr;
-	      break;
-	    case DW_FORM_data2:
-	      ptr += 2;
-	      break;
-	    case DW_FORM_data4:
-	    case DW_FORM_sec_offset:
-	    case DW_FORM_strp:
-	      ptr += 4;
-	      break;
-	    case DW_FORM_data8:
-	    case DW_FORM_ref_sig8:
-	      ptr += 8;
-	      break;
-	    case DW_FORM_sdata:
-	    case DW_FORM_udata:
-	      read_uleb128 (ptr);
-	      break;
-	    case DW_FORM_ref_udata:
-	    case DW_FORM_ref1:
-	    case DW_FORM_ref2:
-	    case DW_FORM_ref4:
-	    case DW_FORM_ref8:
-	      switch (form)
-		{
-		case DW_FORM_ref_udata: value = read_uleb128 (ptr); break;
-		case DW_FORM_ref1: value = read_8 (ptr); break;
-		case DW_FORM_ref2: value = read_16 (ptr); break;
-		case DW_FORM_ref4: value = read_32 (ptr); break;
-		case DW_FORM_ref8: value = read_64 (ptr); break;
-		default: abort ();
-		}
-	      if (t->attr[i].attr == DW_AT_sibling)
-		break;
-	      ref = off_htab_lookup (die->die_cu->cu_offset + value);
-	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
-		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
-		break;
-	      reft = ref;
-	      while (reft->die_parent != NULL
-		     && reft->die_parent->die_tag != DW_TAG_compile_unit
-		     && reft->die_parent->die_tag != DW_TAG_partial_unit
-		     && !reft->die_parent->die_named_namespace)
-		reft = reft->die_parent;
-	      if (reft->die_ref_seen == 0)
-		{
-		  reft->die_ref_seen = 1;
-		  mark_refs (reft, reft);
-		}
-	      break;
-	    case DW_FORM_string:
-	      ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
-	      break;
-	    case DW_FORM_indirect:
-	      abort ();
-	    case DW_FORM_block1:
-	      len = *ptr++;
-	      break;
-	    case DW_FORM_block2:
-	      len = read_16 (ptr);
-	      form = DW_FORM_block1;
-	      break;
-	    case DW_FORM_block4:
-	      len = read_32 (ptr);
-	      form = DW_FORM_block1;
-	      break;
-	    case DW_FORM_block:
-	    case DW_FORM_exprloc:
-	      len = read_uleb128 (ptr);
-	      form = DW_FORM_block1;
-	      break;
-	    default:
-	      abort ();
-	    }
-
-	  if (form == DW_FORM_block1)
-	    ptr += len;
-	}
-    }
-
-  for (child = die->die_child; child; child = child->die_sib)
-    mark_refs (top_die, child);
-}
-
-/* Helper function of partition_dups_1.  Decide what DIEs matching in multiple
-   CUs might be worthwhile to be moved into partial units, construct those
-   partial units.  */
-static bool
-partition_dups_1 (dw_die_ref *arr, size_t vec_size,
-		  struct dw_cu **first_partial_cu,
-		  struct dw_cu **last_partial_cu,
-		  bool second_phase)
-{
-  size_t i, j;
-  bool ret = false;
-  for (i = 0; i < vec_size; i = j)
-    {
-      dw_die_ref ref;
-      size_t cnt = 0, size = 0, k, orig_size, new_size, namespaces = 0;
-      bool force = false;
-      if (arr[i]->die_dup != NULL)
-	{
-	  j = i + 1;
-	  continue;
-	}
-      for (j = i + 1; j < vec_size; j++)
-	{
-	  dw_die_ref ref1, ref2;
-	  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
-	  size_t this_cnt = 0;
-	  for (ref1 = arr[i]->die_nextdup, ref2 = arr[j]->die_nextdup;;
-	       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
-	    {
-	      while (ref1 && ref1->die_cu == last_cu1)
-		ref1 = ref1->die_nextdup;
-	      while (ref2 && ref2->die_cu == last_cu2)
-		ref2 = ref2->die_nextdup;
-	      if (ref1 == NULL || ref2 == NULL)
-		break;
-	      last_cu1 = ref1->die_cu;
-	      last_cu2 = ref2->die_cu;
-	      if (last_cu1 != last_cu2)
-		break;
-	      else
-		this_cnt++;
-	    }
-	  if (ref1 || ref2)
-	    break;
-	  cnt = this_cnt;
-	}
-      if (cnt == 0)
-	{
-	  struct dw_cu *last_cu1 = NULL;
-	  for (ref = arr[i]->die_nextdup;; ref = ref->die_nextdup)
-	    {
-	      while (ref && ref->die_cu == last_cu1)
-		ref = ref->die_nextdup;
-	      if (ref == NULL)
-		break;
-	      last_cu1 = ref->die_cu;
-	      cnt++;
-	    }
-	}
-      for (k = i; k < j; k++)
-	{
-	  if (second_phase && arr[k]->die_ref_seen)
-	    force = true;
-	  size += calc_sizes (arr[k]);
-	  for (ref = arr[k]->die_parent;
-	       ref->die_named_namespace && ref->die_dup == NULL;
-	       ref = ref->die_parent)
-	    {
-	      ref->die_dup = arr[k];
-	      namespaces++;
-	    }
-	}
-      if (namespaces)
-	{
-	  for (k = i; k < j; k++)
-	    for (ref = arr[k]->die_parent; ref->die_named_namespace;
-		 ref = ref->die_parent)
-	      ref->die_dup = NULL;
-	}
-      orig_size = size * (cnt + 1);
-      /* Estimated size of CU header and DW_TAG_partial_unit
-	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
-	 21 (also child end byte), plus in each CU referencing it
-	 DW_TAG_imported_unit with DW_AT_import attribute
-	 (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).
-	 For DW_TAG_namespace or DW_TAG_module needed as
-	 parents of the DIEs conservatively assume 10 bytes
-	 for the abbrev index, DW_AT_name attribute and
-	 DW_AT_sibling attribute and child end.  */
-      new_size = size + 21
-		 + (arr[i]->die_cu->cu_version == 2
-		    ? 1 + ptr_size : 5) * (cnt + 1)
-		 + 10 * namespaces;
-      if (orig_size > new_size || force)
-	{
-	  dw_die_ref die, *diep;
-	  struct dw_cu *partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
-	  memset (partial_cu, '\0', sizeof (*partial_cu));
-	  partial_cu->cu_kind = CU_PU;
-	  partial_cu->cu_offset = *last_partial_cu == NULL
-				  ? 0 : (*last_partial_cu)->cu_offset + 1;
-	  partial_cu->cu_version = arr[i]->die_cu->cu_version;
-	  if (*first_partial_cu == NULL)
-	    *first_partial_cu = *last_partial_cu = partial_cu;
-	  else
-	    {
-	      (*last_partial_cu)->cu_next = partial_cu;
-	      *last_partial_cu = partial_cu;
-	    }
-	  die = pool_alloc (dw_die, sizeof (struct dw_die));
-	  memset (die, '\0', sizeof (*die));
-	  die->die_toplevel = 1;
-	  partial_cu->cu_die = die;
-	  die->die_tag = DW_TAG_partial_unit;
-	  die->die_offset = -1U;
-	  die->die_cu = partial_cu;
-	  die->die_nextdup = arr[i]->die_cu->cu_die;
-	  die->die_size = 9;
-	  diep = &die->die_child;
-	  for (k = i; k < j; k++)
-	    {
-	      dw_die_ref child = copy_die_tree (die, arr[k]);
-	      for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
-		ref->die_dup = child;
-	      if (namespaces)
-		{
-		  for (ref = arr[k]->die_parent;
-		       ref->die_named_namespace && ref->die_dup == NULL;
-		       ref = ref->die_parent)
-		    {
-		      dw_die_ref namespc
-			= pool_alloc (dw_die, sizeof (struct dw_die));
-		      memset (namespc, '\0', sizeof (struct dw_die));
-		      namespc->die_toplevel = 1;
-		      namespc->die_tag = ref->die_tag;
-		      namespc->die_offset = -1U;
-		      namespc->die_cu = partial_cu;
-		      namespc->die_nextdup = ref;
-		      namespc->die_child = child;
-		      namespc->die_parent = die;
-		      namespc->die_size = 9;
-		      namespc->die_named_namespace = 1;
-		      child->die_parent = namespc;
-		      ref->die_dup = namespc;
-		      child = namespc;
-		    }
-		  if (ref->die_dup != NULL)
-		    {
-		      dw_die_ref *diep2;
-		      for (diep2 = &ref->die_dup->die_child->die_sib;
-			   *diep2; diep2 = &(*diep2)->die_sib)
-			;
-		      *diep2 = child;
-		      child->die_parent = ref->die_dup;
-		      continue;
-		    }
-		}
-	      *diep = child;
-	      diep = &child->die_sib;
-	    }
-	  if (namespaces)
-	    {
-	      for (k = i; k < j; k++)
-		for (ref = arr[k]->die_parent;
-		     ref->die_named_namespace; ref = ref->die_parent)
-		  ref->die_dup = NULL;
-	    }
-	}
-      else if (!second_phase)
-	ret = true;
-      else
-	{
-	  dw_die_ref next;
-	  for (k = i; k < j; k++)
-	    {
-	      for (ref = arr[k]; ref; ref = next)
-		{
-		  next = ref->die_nextdup;
-		  ref->die_dup = NULL;
-		  ref->die_nextdup = NULL;
-		  ref->die_remove = 0;
-		}
-	    }
-	}
-    }
-  return ret;
-}
-
 /* Decide what DIEs matching in multiple CUs might be worthwhile
    to be moved into partial units, construct those partial units.  */
 static int
 partition_dups (void)
 {
+  unsigned int cu_off = 0;
   struct dw_cu *cu, *first_partial_cu = NULL, *last_partial_cu = NULL;
-  size_t vec_size, i;
+  size_t vec_size, i, j;
   unsigned char *to_free = obstack_alloc (&alt_ob, 1);
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
@@ -3545,18 +3224,173 @@ partition_dups (void)
 	{
 	  dw_die_ref *arr = (dw_die_ref *) obstack_finish (&alt_ob);
 	  qsort (arr, vec_size, sizeof (dw_die_ref), partition_cmp);
-	  if (partition_dups_1 (arr, vec_size, &first_partial_cu,
-				&last_partial_cu, false))
+	  for (i = 0; i < vec_size; i = j)
 	    {
-	      for (i = 0; i < vec_size; i++)
-		arr[i]->die_ref_seen = arr[i]->die_dup != NULL;
-	      for (i = 0; i < vec_size; i++)
-		if (arr[i]->die_dup != NULL)
-		  mark_refs (arr[i], arr[i]);
-	      partition_dups_1 (arr, vec_size, &first_partial_cu,
-				&last_partial_cu, true);
-	      for (i = 0; i < vec_size; i++)
-		arr[i]->die_ref_seen = 0;
+	      dw_die_ref ref;
+	      size_t cnt = 0, size = 0, k, orig_size, new_size, namespaces = 0;
+	      for (j = i + 1; j < vec_size; j++)
+		{
+		  dw_die_ref ref1, ref2;
+		  struct dw_cu *last_cu1 = NULL, *last_cu2 = NULL;
+		  size_t this_cnt = 0;
+		  for (ref1 = arr[i]->die_nextdup, ref2 = arr[j]->die_nextdup;;
+		       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
+		    {
+		      while (ref1 && ref1->die_cu == last_cu1)
+			ref1 = ref1->die_nextdup;
+		      while (ref2 && ref2->die_cu == last_cu2)
+			ref2 = ref2->die_nextdup;
+		      if (ref1 == NULL || ref2 == NULL)
+			break;
+		      last_cu1 = ref1->die_cu;
+		      last_cu2 = ref2->die_cu;
+		      if (last_cu1 != last_cu2)
+			break;
+		      else
+			this_cnt++;
+		    }
+		  if (ref1 || ref2)
+		    break;
+		  cnt = this_cnt;
+		}
+	      if (cnt == 0)
+		{
+		  struct dw_cu *last_cu1 = NULL;
+		  for (ref = arr[i]->die_nextdup;; ref = ref->die_nextdup)
+		    {
+		      while (ref && ref->die_cu == last_cu1)
+			ref = ref->die_nextdup;
+		      if (ref == NULL)
+			break;
+		      last_cu1 = ref->die_cu;
+		      cnt++;
+		    }
+		}
+	      for (k = i; k < j; k++)
+		{
+		  size += calc_sizes (arr[k]);
+		  for (ref = arr[k]->die_parent;
+		       ref->die_named_namespace && ref->die_dup == NULL;
+		       ref = ref->die_parent)
+		    {
+		      ref->die_dup = arr[k];
+		      namespaces++;
+		    }
+		}
+	      if (namespaces)
+		{
+		  for (k = i; k < j; k++)
+		    for (ref = arr[k]->die_parent; ref->die_named_namespace;
+			 ref = ref->die_parent)
+		      ref->die_dup = NULL;
+		}
+	      orig_size = size * (cnt + 1);
+	      /* Estimated size of CU header and DW_TAG_partial_unit
+		 with DW_AT_stmt_list and DW_AT_comp_dir attributes
+		 21 (also child end byte), plus in each CU referencing it
+		 DW_TAG_imported_unit with DW_AT_import attribute
+		 (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).
+		 For DW_TAG_namespace or DW_TAG_module needed as
+		 parents of the DIEs conservatively assume 10 bytes
+		 for the abbrev index, DW_AT_name attribute and
+		 DW_AT_sibling attribute and child end.  */
+	      new_size = size + 21
+			 + (cu->cu_version == 2 ? 1 + ptr_size : 5) * (cnt + 1)
+			 + 10 * namespaces;
+	      if (orig_size > new_size)
+		{
+		  dw_die_ref die, *diep;
+		  struct dw_cu *partial_cu
+		    = pool_alloc (dw_cu, sizeof (struct dw_cu));
+		  memset (partial_cu, '\0', sizeof (*partial_cu));
+		  partial_cu->cu_kind = CU_PU;
+		  partial_cu->cu_offset = cu_off++;
+		  partial_cu->cu_version = cu->cu_version;
+		  if (first_partial_cu == NULL)
+		    first_partial_cu = last_partial_cu = partial_cu;
+		  else
+		    {
+		      last_partial_cu->cu_next = partial_cu;
+		      last_partial_cu = partial_cu;
+		    }
+		  die = pool_alloc (dw_die, sizeof (struct dw_die));
+		  memset (die, '\0', sizeof (*die));
+		  die->die_toplevel = 1;
+		  partial_cu->cu_die = die;
+		  die->die_tag = DW_TAG_partial_unit;
+		  die->die_offset = -1U;
+		  die->die_cu = partial_cu;
+		  die->die_nextdup = cu->cu_die;
+		  die->die_size = 9;
+		  diep = &die->die_child;
+		  for (k = i; k < j; k++)
+		    {
+		      dw_die_ref child = copy_die_tree (die, arr[k]);
+		      for (ref = arr[k]->die_nextdup;
+			   ref; ref = ref->die_nextdup)
+			ref->die_dup = child;
+		      if (namespaces)
+			{
+			  for (ref = arr[k]->die_parent;
+			       ref->die_named_namespace
+			       && ref->die_dup == NULL;
+			       ref = ref->die_parent)
+			    {
+			      dw_die_ref namespc
+				= pool_alloc (dw_die,
+					      sizeof (struct dw_die));
+			      memset (namespc, '\0', sizeof (struct dw_die));
+			      namespc->die_toplevel = 1;
+			      namespc->die_tag = ref->die_tag;
+			      namespc->die_offset = -1U;
+			      namespc->die_cu = partial_cu;
+			      namespc->die_nextdup = ref;
+			      namespc->die_child = child;
+			      namespc->die_parent = die;
+			      namespc->die_size = 9;
+			      namespc->die_named_namespace = 1;
+			      child->die_parent = namespc;
+			      ref->die_dup = namespc;
+			      child = namespc;
+			    }
+			  if (ref->die_dup != NULL)
+			    {
+			      dw_die_ref *diep2;
+			      for (diep2 = &ref->die_dup->die_child->die_sib;
+				   *diep2; diep2 = &(*diep2)->die_sib)
+				;
+			      *diep2 = child;
+			      child->die_parent = ref->die_dup;
+			      continue;
+			    }
+			}
+		      *diep = child;
+		      diep = &child->die_sib;
+		    }
+		  if (namespaces)
+		    {
+		      for (k = i; k < j; k++)
+			for (ref = arr[k]->die_parent;
+			     ref->die_named_namespace;
+			     ref = ref->die_parent)
+			  ref->die_dup = NULL;
+		    }
+		}
+	      else
+		{
+		  dw_die_ref next;
+		  for (k = i; k < j; k++)
+		    {
+		      for (ref = arr[k]; ref; ref = next)
+			{
+			  next = ref->die_nextdup;
+			  ref->die_dup = NULL;
+			  ref->die_nextdup = NULL;
+			  ref->die_remove = 0;
+			}
+		      arr[k] = NULL;
+		    }
+		}
 	    }
 	  obstack_free (&alt_ob, (void *) arr);
 	}
@@ -6869,8 +6703,6 @@ cleanup (void)
 
   obstack_free (&alt_ob, NULL);
   obstack_free (&ob, NULL);
-  memset (&alt_ob, '\0', sizeof (alt_ob));
-  memset (&ob, '\0', sizeof (alt_ob));
   pool_destroy ();
   first_cu = NULL;
   last_cu = NULL;
