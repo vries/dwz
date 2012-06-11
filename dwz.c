@@ -2265,6 +2265,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   unsigned char *ptr1, *ptr2;
   dw_die_ref ref1, ref2;
   dw_die_ref child1, child2;
+  bool inside1, inside2;
 
 #define FAIL goto fail
   if (die1 == die2 || die_safe_dup (die2) == die1)
@@ -2283,15 +2284,17 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   assert (die1->die_parent != NULL
 	  && die2->die_parent != NULL);
 
-  t1 = die1->die_abbrev;
-  t2 = die2->die_abbrev;
-  ptr1 = debug_sections[DEBUG_INFO].data + die1->die_offset;
-  ptr2 = debug_sections[DEBUG_INFO].data + die2->die_offset;
-  read_uleb128 (ptr1);
-  read_uleb128 (ptr2);
-  i = 0;
-  j = 0;
-  if (die1->die_toplevel)
+  inside1 = die1->u.p1.die_enter >= top_die1->u.p1.die_enter
+	    && die1->u.p1.die_exit <= top_die1->u.p1.die_exit;
+  inside2 = die2->u.p1.die_enter >= top_die2->u.p1.die_enter
+	    && die2->u.p1.die_exit <= top_die2->u.p1.die_exit;
+  if (inside1 ^ inside2)
+    return 0;
+  if (inside1
+      && die1->u.p1.die_enter - top_die1->u.p1.die_enter
+	 != die2->u.p1.die_enter - top_die2->u.p1.die_enter)
+    return 0;
+  if (!inside1)
     {
       for (ref1 = die1->die_parent, ref2 = die2->die_parent;
 	   ref1 && ref2; ref1 = ref1->die_parent, ref2 = ref2->die_parent)
@@ -2313,6 +2316,17 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	}
       if (ref1 == NULL || ref2 == NULL)
 	return 0;
+    }
+  t1 = die1->die_abbrev;
+  t2 = die2->die_abbrev;
+  ptr1 = debug_sections[DEBUG_INFO].data + die1->die_offset;
+  ptr2 = debug_sections[DEBUG_INFO].data + die2->die_offset;
+  read_uleb128 (ptr1);
+  read_uleb128 (ptr2);
+  i = 0;
+  j = 0;
+  if (die1->die_toplevel)
+    {
       /* For each toplevel die seen, record optimistically
 	 that we expect them to match, to avoid recursing
 	 on it again.  If non-match is determined later,
