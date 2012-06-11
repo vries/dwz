@@ -69,7 +69,6 @@ higher_prime_number (n)
   /* These are primes that are near, but slightly smaller than, a
      power of two.  */
   static unsigned long primes[] = {
-    (unsigned long) 2,
     (unsigned long) 7,
     (unsigned long) 13,
     (unsigned long) 31,
@@ -229,21 +228,27 @@ find_empty_slot_for_expand (htab, hash)
      hashval_t hash;
 {
   size_t size = htab->size;
-  hashval_t hash2 = 1 + hash % (size - 2);
   unsigned int index = hash % size;
+  void **slot = htab->entries + index;
+  hashval_t hash2;
 
+  if (*slot == EMPTY_ENTRY)
+    return slot;
+  else if (*slot == DELETED_ENTRY)
+    abort ();
+
+  hash2 = 1 + hash % (size - 2);
   for (;;)
     {
-      void **slot = htab->entries + index;
+      index += hash2;
+      if (index >= size)
+	index -= size;
 
+      slot = htab->entries + index;
       if (*slot == EMPTY_ENTRY)
 	return slot;
       else if (*slot == DELETED_ENTRY)
 	abort ();
-
-      index += hash2;
-      if (index >= size)
-	index -= size;
     }
 }
 
@@ -368,50 +373,59 @@ htab_find_slot_with_hash (htab, element, hash, insert)
   unsigned int index;
   hashval_t hash2;
   size_t size;
+  void * entry;
 
   if (insert == INSERT && htab->size * 3 <= htab->n_elements * 4
       && htab_expand (htab) == 0)
     return NULL;
 
   size = htab->size;
-  hash2 = 1 + hash % (size - 2);
   index = hash % size;
 
   htab->searches++;
   first_deleted_slot = NULL;
 
+  entry = htab->entries[index];
+  if (entry == EMPTY_ENTRY)
+    goto empty_entry;
+  else if (entry == DELETED_ENTRY)
+    first_deleted_slot = &htab->entries[index];
+  else if ((*htab->eq_f) (entry, element))
+    return &htab->entries[index];
+
+  hash2 = 1 + hash % (size - 2);
   for (;;)
     {
-      void * entry = htab->entries[index];
-      if (entry == EMPTY_ENTRY)
-	{
-	  if (insert == NO_INSERT)
-	    return NULL;
-
-	  htab->n_elements++;
-
-	  if (first_deleted_slot)
-	    {
-	      *first_deleted_slot = EMPTY_ENTRY;
-	      return first_deleted_slot;
-	    }
-
-	  return &htab->entries[index];
-	}
-
-      if (entry == DELETED_ENTRY)
-	{
-	  if (!first_deleted_slot)
-	    first_deleted_slot = &htab->entries[index];
-	}
-      else  if ((*htab->eq_f) (entry, element))
-	return &htab->entries[index];
-
       htab->collisions++;
       index += hash2;
       if (index >= size)
 	index -= size;
+
+      entry = htab->entries[index];
+      if (entry == EMPTY_ENTRY)
+	goto empty_entry;
+      else if (entry == DELETED_ENTRY)
+	{
+	  if (!first_deleted_slot)
+	    first_deleted_slot = &htab->entries[index];
+	}
+      else if ((*htab->eq_f) (entry, element))
+	return &htab->entries[index];
     }
+
+ empty_entry:
+  if (insert == NO_INSERT)
+    return NULL;
+
+  htab->n_elements++;
+
+  if (first_deleted_slot)
+    {
+      *first_deleted_slot = EMPTY_ENTRY;
+      return first_deleted_slot;
+    }
+
+  return &htab->entries[index];
 }
 
 /* Like htab_find_slot_with_hash, but compute the hash value from the
