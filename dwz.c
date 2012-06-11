@@ -6740,7 +6740,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	}
     }
 
-  elf = elf_begin (fd, ELF_C_WRITE, NULL);
+  elf = elf_begin (fd, ELF_C_WRITE_MMAP, NULL);
   if (elf == NULL)
     {
       error (0, 0, "cannot open ELF file: %s", elf_errmsg (-1));
