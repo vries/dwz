@@ -2272,6 +2272,7 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
   if (die1->u.p1.die_hash != die2->u.p1.die_hash
       || die1->u.p1.die_ref_hash != die2->u.p1.die_ref_hash
       || die1->die_tag != die2->die_tag
+      || die1->die_cu == die2->die_cu
       || die1->u.p1.die_exit - die1->u.p1.die_enter
 	 != die2->u.p1.die_exit - die2->u.p1.die_enter
       || die_safe_dup (die2) != NULL
@@ -2317,25 +2318,12 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	 on it again.  If non-match is determined later,
 	 die_eq wrapper undoes this (which is why the DIE
 	 pointer is added to the vector).  */
+      die2->die_dup = die1;
       if (!die2->die_op_type_referenced)
 	die2->die_remove = 1;
-      obstack_ptr_grow (&ob, die2);
-      if (die2->die_nextdup == NULL)
-	{
-	  die2->die_dup = die1;
-	  die2->die_nextdup = die1->die_nextdup;
-	  obstack_ptr_grow (&ob, NULL);
-	}
-      else
-	{
-	  dw_die_ref next;
-	  for (next = die2; next->die_nextdup; next = next->die_nextdup)
-	    next->die_dup = die1;
-	  next->die_dup = die1;
-	  next->die_nextdup = die1->die_nextdup;
-	  obstack_ptr_grow (&ob, next);
-	}
+      die2->die_nextdup = die1->die_nextdup;
       die1->die_nextdup = die2;
+      obstack_ptr_grow (&ob, die2);
     }
   while (1)
     {
@@ -2631,21 +2619,6 @@ die_eq_1 (dw_die_ref top_die1, dw_die_ref top_die2,
 	      if (ref1->u.p1.die_enter - reft1->u.p1.die_enter
 		  != ref2->u.p1.die_enter - reft2->u.p1.die_enter)
 		FAIL;
-	      if (reft1->die_cu == reft2->die_cu)
-		{
-		  if (reft1->die_dup
-		      && reft1->die_dup->die_cu == reft1->die_cu)
-		    reft1 = reft1->die_dup;
-		  if (reft2->die_dup
-		      && reft2->die_dup->die_cu == reft2->die_cu)
-		    reft2 = reft2->die_dup;
-		  if (reft2->die_offset < reft1->die_offset)
-		    {
-		      dw_die_ref tem = reft1;
-		      reft1 = reft2;
-		      reft2 = tem;
-		    }
-		}
 	      /* If reft1 (die1 or whatever refers to it is already
 		 in the hash table) already has a dup, follow to that
 		 dup.  Don't do the same for reft2, {{top_,}die,reft,child}2
@@ -2701,38 +2674,19 @@ die_eq (const void *p, const void *q)
   if (die1->u.p1.die_hash != die2->u.p1.die_hash
       || die1->u.p1.die_ref_hash != die2->u.p1.die_ref_hash)
     return 0;
-  ret = die_eq_1 (die1, die2, die1, die2);
+  if (die1->die_cu->cu_offset < die2->die_cu->cu_offset)
+    ret = die_eq_1 (die1, die2, die1, die2);
+  else
+    ret = die_eq_1 (die2, die1, die2, die1);
   count = obstack_object_size (&ob) / sizeof (void *);
   arr = (dw_die_ref *) obstack_finish (&ob);
   if (!ret)
     for (i = count; i;)
       {
-	dw_die_ref die;
-	i -= 2;
-	die = arr[i]->die_dup;
-	if (arr[i + 1] == NULL)
-	  {
-	    die->die_nextdup = arr[i]->die_nextdup;
-	    arr[i]->die_nextdup = NULL;
-	    arr[i]->die_dup = NULL;
-	  }
-	else
-	  {
-	    dw_die_ref next;
-	    assert (die->die_nextdup == arr[i]);
-	    for (next = arr[i]->die_nextdup;
-		 next != arr[i + 1];
-		 next = next->die_nextdup)
-	      {
-		assert (next->die_dup == die);
-		next->die_dup = arr[i];
-	      }
-	    assert (next->die_dup == die);
-	    next->die_dup = arr[i];
-	    die->die_nextdup = next->die_nextdup;
-	    next->die_nextdup = NULL;
-	    arr[i]->die_dup = NULL;
-	  }
+	dw_die_ref die = arr[--i]->die_dup;
+	die->die_nextdup = arr[i]->die_nextdup;
+	arr[i]->die_nextdup = NULL;
+	arr[i]->die_dup = NULL;
 	arr[i]->die_remove = 0;
       }
   obstack_free (&ob, (void *) arr);
@@ -3197,21 +3151,7 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
       if (child->die_nextdup != NULL
 	  && child->die_dup == NULL
 	  && child->die_offset != -1U)
-	{
-	  dw_die_ref prev = NULL, die, next;
-
-	  /* Sort the die_nextdup list by increasing die_cu->cu_chunk.
-	     When it is originally added, child has the lowest
-	     cu_offset, then the DIEs are sorted in the linked list
-	     from highest cu_offset down to lowest or second lowest.  */
-	  for (die = child->die_nextdup; die; prev = die, die = next)
-	    {
-	      next = die->die_nextdup;
-	      die->die_nextdup = prev;
-	    }
-	  child->die_nextdup = prev;
-	  obstack_ptr_grow (vec, child);
-	}
+	obstack_ptr_grow (vec, child);
       else if (child->die_named_namespace)
 	partition_find_dups (vec, child);
     }
@@ -3631,18 +3571,6 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		  ref->die_dup = NULL;
 		  ref->die_nextdup = NULL;
 		  ref->die_remove = 0;
-		  /* If there are dups within a single CU
-		     (arguably a bug in the DWARF producer),
-		     keep them linked together, but don't link
-		     DIEs across different CUs.  */
-		  while (next && ref->die_cu == next->die_cu)
-		    {
-		      dw_die_ref cur = next;
-		      next = cur->die_nextdup;
-		      cur->die_dup = ref;
-		      cur->die_nextdup = ref->die_nextdup;
-		      ref->die_nextdup = cur;
-		    }
 		}
 	    }
 	}
