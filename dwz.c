@@ -94,13 +94,6 @@
    with low_mem flag set.  This can decrease memory consumption to
    half in some very large cases.  */
 
-#define DW_FORM_GNU_ref_alt	0x1f20
-#define DW_FORM_GNU_strp_alt	0x1f21
-
-#define DW_MACRO_GNU_define_indirect_alt	8
-#define DW_MACRO_GNU_undef_indirect_alt		9
-#define DW_MACRO_GNU_transparent_include_alt	10
-
 #ifndef IGNORE_LOCUS
 # define IGNORE_LOCUS 0
 #endif
