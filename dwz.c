@@ -2953,7 +2953,7 @@ read_debug_info (DSO *dso)
 	      while (form == DW_FORM_indirect)
 		{
 		  form = read_uleb128 (ptr);
-		  if (ptr > endcu)
+		  if (ptr >= endcu)
 		    {
 		      error (0, 0, "%s: Attributes extend beyond end of CU",
 			     dso->filename);
@@ -3038,7 +3038,7 @@ read_debug_info (DSO *dso)
 		  goto fail;
 		}
 
-	      if (ptr > endcu)
+	      if (ptr >= endcu)
 		{
 		  error (0, 0, "%s: Attributes extend beyond end of CU",
 			 dso->filename);
