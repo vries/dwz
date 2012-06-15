@@ -11565,7 +11565,8 @@ static struct option dwz_options[] =
   { "low-mem-die-limit", required_argument, 0, 'l' },
   { "max-die-limit",	 required_argument, 0, 'L' },
   { "multifile-name",	 required_argument, 0, 'M' },
-  { "relative",		 no_argument,	    0, 'r' }
+  { "relative",		 no_argument,	    0, 'r' },
+  { NULL,		 no_argument,	    0, 0 }
 };
 
 /* Print usage and exit.  */
