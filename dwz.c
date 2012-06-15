@@ -9911,7 +9911,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   Elf *elf = NULL;
   GElf_Ehdr ehdr;
   char *e_ident;
-  int fd, i, j, addsec = -1;
+  int fd, i, j, addsec = -1, ret;
   GElf_Off off, diff;
   char *filename = NULL;
   GElf_Word shstrtabadd = 0;
@@ -10170,7 +10170,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
     }
 
   free (shstrtab);
-  fchown (fd, st->st_uid, st->st_gid);
+  ret = fchown (fd, st->st_uid, st->st_gid);
   fchmod (fd, st->st_mode & 07777);
   close (fd);
 
@@ -10179,6 +10179,8 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       error (0, errno, "Failed to rename temporary file over %s",
 	     dso->filename);
       unlink (file);
+      /* | (ret & 1) to silence up __wur warning for fchown.  */
+      return 1 | (ret & 1);
     }
   return 0;
 }
