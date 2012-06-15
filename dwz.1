@@ -1,19 +1,18 @@
-.TH dwz 1 "08 June 2012"
+.TH dwz 1 "15 June 2012"
 .SH NAME
 dwz \- DWARF optimization and duplicate removal tool
 .SH SYNOPSIS
 dwz
 .RB [OPTION...]\ [FILES]
 .SH DESCRIPTION
-.B dwz
-is a program that attempts to optimize DWARF debugging information
+\fBdwz\fR is a program that attempts to optimize DWARF debugging information
 contained in ELF shared libraries and ELF executables for size, by
 replacing DWARF information representation with equivalent smaller
 representation where possible and by reducing the amount of duplication
 using techniques from DWARF standard appendix E - creating
-.I DW_TAG_partial_unit
+\fIDW_TAG_partial_unit\fR
 compilation units (CUs) for duplicated information and using
-.I DW_TAG_imported_unit
+\fIDW_TAG_imported_unit\fR
 to import it into each CU that needs it.
 
 The tool handles DWARF 32-bit format debugging sections of versions
@@ -21,15 +20,13 @@ The tool handles DWARF 32-bit format debugging sections of versions
 or worst case DWARF 3 is strongly recommended.
 
 The tool has two main modes of operation, without the
-.I -m
-option it attempts to optimize DWARF debugging information in each
+\fI-m\fR option it attempts to optimize DWARF debugging information in each
 given object (executable or shared library) individually, with the
-.I -m
-option it afterwards attempts to optimize even more by moving
+\fI-m\fR option it afterwards attempts to optimize even more by moving
 DWARF debugging information entries (DIEs), strings and macro descriptions
 duplicated in more than one object into a newly created ELF ET_REL
 object whose filename is given as
-.I -m
+\fI-m\fR
 option argument.  The debug sections in the executables and shared libraries
 specified on the command line are then modified again, referring to
 the entities in the newly created object.
@@ -39,7 +36,7 @@ the entities in the newly created object.
 Multifile mode.
 After processing all named executables and shared libraries, attempt to
 create ELF object
-.I FILE
+\fIFILE\fR
 and put debugging information duplicated in more than one object there,
 afterwards optimize each named executable or shared library even further
 if possible.
@@ -51,24 +48,15 @@ rest to the first one again.
 .TP
 .B \-M NAME \-\-multifile-name NAME
 Specify the name of the common file that should be put into the
-.I .gnu_debugaltlink
-section alongside with its build ID.  By default
-.B dwz
-puts there the argument of the
-.B -m
-option.
+\fI.gnu_debugaltlink\fR section alongside with its build ID.  By default
+\fBdwz\fR puts there the argument of the \fB-m\fR option.
 .TP
 .B \-r \-\-relative
 Specify that the name of the common file to be put into the
-.I .gnu_debugaltlink
+\fI.gnu_debugaltlink\fR
 section is supposed to be relative path from the directory containing
 the executable or shared library to the file named in the argument
-of the
-.B -m
-option.  Either
-.B -M
-or
-.B -r
+of the \fB-m\fR option.  Either \fB-M\fR or \fB-r\fR
 option can be specified, but not both.
 .TP
 .B \-q \-\-quiet
@@ -76,36 +64,28 @@ Silence up some of the most common messages.
 .TP
 .B \-o FILE \-\-output FILE
 This option instructs
-.B dwz
-not to overwrite the specified file, but instead store the new content
-into
-.B FILE
-\.  Nothing is written if
-.B dwz
+\fBdwz\fR not to overwrite the specified file, but instead store the new content
+into \fBFILE\fR.  Nothing is written if \fBdwz\fR
 exits with non-zero exit code.  Can be used only with a single executable
 or shared library (if there are no arguments at all,
-.I a.out
+\fIa.out\fR
 is assumed).
 .TP
 .B \-l COUNT \-\-low\-mem\-die\-limit COUNT
 Handle executables or shared libraries containing more than
-.I COUNT
-debugging information entries in their
-.I .debug_info
+\fICOUNT\fR debugging information entries in their \fI.debug_info\fR
 section using a slower and more memory usage friendly mode and don't
 attempt to optimize that object in multifile mode.
 The default is 10 million DIEs.  There is a risk that for very large
 amounts of debugging information in a single shared library or executable
-there might not be enough memory (especially when
-.B dwz
+there might not be enough memory (especially when \fBdwz\fR
 tool is 32-bit binary, it might run out of available virtual address
 space even sooner).
 .TP
 .B \-L COUNT \-\-max\-die\-limit COUNT
 Don't attempt to optimize executables or shared libraries
 containing more than
-.I COUNT
-DIEs at all.  The default is 50 million DIEs.
+\fICOUNT\fR DIEs at all.  The default is 50 million DIEs.
 .TP
 .B \-? \-\-help
 Print short help and exit.
@@ -118,28 +98,21 @@ $ dwz -m .dwz/foobar-1.2.debug -rh \\
   bin/foo.debug bin/foo2.debug foo/lib/libbar.so.debug
 .RE
 will attempt to optimize debugging information in
-.I bin/foo.debug, bin/foo2.debug
-and
-.I lib/libbar.so.debug
-(by modifying the files in place) and when beneficial also will create
-.I .dwz/foobar-1.2.debug
-file.
-.I .gnu_debugaltlink
-section in the first two files will refer to
-.I ../.dwz/foobar-1.2.debug
-and in the last file to
-.I ../../.dwz/foobar-1.2.debug
-\.  If e.g. bin/foo.debug and bin/foo2.debug were hardlinked
+\fIbin/foo.debug\fR, \fIbin/foo2.debug\fR and
+\fIlib/libbar.so.debug\fR (by modifying the files in place) and
+when beneficial also will create \fI.dwz/foobar-1.2.debug\fR file.
+\fI.gnu_debugaltlink\fR section in the first two files will refer to
+\fI../.dwz/foobar-1.2.debug\fR and in the last file to
+\fI../../.dwz/foobar-1.2.debug\fR.  If e.g.
+\fIbin/foo.debug\fR and \fIbin/foo2.debug\fR were hardlinked
 together initially, they will be hardlinked again and for multifile
 optimizations considered just as a single file rather than two.
 .RS
 $ dwz -o foo.dwz foo
 .RE
-will not modify
-.I foo
+will not modify \fIfoo\fR
 but instead store the ELF object with optimized debugging information
-if successful into
-.I foo.dwz
+if successful into \fIfoo.dwz\fR
 file it creates.
 .RS
 $ dwz *.debug foo/*.debug
@@ -149,10 +122,7 @@ files, optimizing each file individually in place.
 .RS
 $ dwz
 .RE
-is equivalent to
-.I
-dwz a.out
-command.
+is equivalent to \fIdwz a.out\fR command.
 .SH SEE ALSO
 .BR http://dwarfstd.org/doc/DWARF4.pdf
 ,
