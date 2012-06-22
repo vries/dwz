@@ -4465,7 +4465,7 @@ read_debug_info (DSO *dso, int kind)
 			 : kind == DEBUG_TYPES ? CU_TYPES : CU_NORMAL;
   void *to_free = NULL;
   int ret = 1;
-  unsigned int ndies = 0;
+  unsigned int ndies;
   bool low_mem_phase1 = low_mem && kind == DEBUG_INFO;
   struct dw_cu cu_buf;
   struct dw_die die_buf;
@@ -4487,6 +4487,7 @@ read_debug_info (DSO *dso, int kind)
     }
 
  low_mem_phase2:
+  ndies = 0;
   ptr = debug_sections[kind].data;
   endsec = ptr + debug_sections[kind].size;
   while (ptr < endsec)
