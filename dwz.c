@@ -9432,7 +9432,7 @@ write_gdb_index (void)
   unsigned char *gdb_index, *ptr, *inptr, *end;
   unsigned int ncus = 0, npus = 0, ntus = 0, ndelcus = 0, ver;
   unsigned int culistoff, cutypesoff, addressoff, symboloff, constoff;
-  unsigned int *tuindices = NULL, tuidx = 0, *cumap = NULL, i, j;
+  unsigned int *tuindices = NULL, tuidx = 0, *cumap = NULL, i, j, k;
   bool fail = false;
 
   debug_sections[GDB_INDEX].new_size = 0;
@@ -9445,7 +9445,7 @@ write_gdb_index (void)
     ver = multi_gdb_index_ver;
   else
     ver = buf_read_ule32 (inptr);
-  if (ver < 4 || ver > 6)
+  if (ver < 4 || ver > 7)
     return;
 
   for (cu = first_cu; cu; cu = cu->cu_next)
@@ -9459,6 +9459,11 @@ write_gdb_index (void)
       }
     else if (cu->cu_kind == CU_TYPES)
       ntus++;
+
+  /* Starting with version 7 CU indexes are limited to 24 bits,
+     so if we have more CUs, give up.  */
+  if (npus + ncus + ntus - ndelcus >= (1U << 24))
+    return;
 
   if (unlikely (op_multifile))
     {
@@ -9679,14 +9684,22 @@ write_gdb_index (void)
 	  for (i = 0; i < count; i++)
 	    {
 	      j = buf_read_ule32 (end + cuvec + (i + 1) * 4);
-	      if (cumap && j < ncus)
+	      if (ver >= 7)
+		k = j & ((1U << 24) - 1);
+	      else
+		k = j;
+	      if (cumap && k < ncus)
 		{
-		  if (cumap[j] == -1U)
+		  if (cumap[k] == -1U)
 		    fail = true;
-		  j = cumap[j] + npus;
+		  k = cumap[k] + npus;
 		}
 	      else
-		j += npus - ndelcus;
+		k += npus - ndelcus;
+	      if (ver >= 7)
+		j = (j & (~0U << 24)) | k;
+	      else
+		j = k;
 	      buf_write_le32 (ptr + cuvec + (i + 1) * 4, j);
 	    }
 	}
