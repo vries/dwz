@@ -95,16 +95,20 @@
    with low_mem flag set.  This can decrease memory consumption to
    half in some very large cases.  */
 
+#ifndef NT_GNU_BUILD_ID
+# define NT_GNU_BUILD_ID 3
+#endif
+
 #ifndef IGNORE_LOCUS
 # define IGNORE_LOCUS 0
 #endif
 
 #if defined __GNUC__ && __GNUC__ >= 3
-#define likely(x) __builtin_expect (!!(x), 1)
-#define unlikely(x) __builtin_expect (!!(x), 0)
+# define likely(x) __builtin_expect (!!(x), 1)
+# define unlikely(x) __builtin_expect (!!(x), 0)
 #else
-#define likely(x) x
-#define unlikely(x) x
+# define likely(x) x
+# define unlikely(x) x
 #endif
 
 #define obstack_chunk_alloc     malloc
