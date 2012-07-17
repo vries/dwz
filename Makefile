@@ -1,5 +1,6 @@
 CFLAGS = -O2 -g
-override CFLAGS += -Wall -W -D_FILE_OFFSET_BITS=64
+DWZ_VERSION := $(shell cat VERSION)
+override CFLAGS += -Wall -W -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"$(DWZ_VERSION)"'
 prefix = /usr
 exec_prefix = $(prefix)
 bindir = $(exec_prefix)/bin

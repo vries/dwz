@@ -11582,6 +11582,7 @@ static struct option dwz_options[] =
   { "max-die-limit",	 required_argument, 0, 'L' },
   { "multifile-name",	 required_argument, 0, 'M' },
   { "relative",		 no_argument,	    0, 'r' },
+  { "version",		 no_argument,	    0, 'v' },
   { NULL,		 no_argument,	    0, 0 }
 };
 
@@ -11591,8 +11592,22 @@ usage (void)
 {
   error (1, 0,
 	 "Usage:\n"
-	 "  dwz [-q] [-h] [-l COUNT] [-L COUNT] [-m COMMONFILE] [-M NAME] [-r] [FILES]\n"
-	 "  dwz [-q] [-l COUNT] [-L COUNT] -o OUTFILE FILE\n");
+	 "  dwz [-v] [-q] [-h] [-l COUNT] [-L COUNT] [-m COMMONFILE] [-M NAME] [-r] [FILES]\n"
+	 "  dwz [-v] [-q] [-l COUNT] [-L COUNT] -o OUTFILE FILE\n");
+}
+
+/* Print version and exit.  */
+static void
+version (void)
+{
+  fprintf (stderr,
+	   "dwz version " DWZ_VERSION "\n"
+	   "Copyright (C) 2001-2012 Red Hat, Inc.\n"
+	   "Copyright (C) 2003 Free Software Foundation, Inc.\n"
+	   "This program is free software; you may redistribute it under the terms of\n"
+	   "the GNU General Public License version 3 or (at your option) any later version.\n"
+	   "This program has absolutely no warranty.\n");
+  exit (0);
 }
 
 int
@@ -11612,7 +11627,7 @@ main (int argc, char *argv[])
   while (1)
     {
       int option_index;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v", dwz_options, &option_index);
       if (c == -1)
 	break;
       switch (c)
@@ -11658,6 +11673,10 @@ main (int argc, char *argv[])
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
 	    error (1, 0, "invalid argument -L %s", optarg);
 	  max_die_limit = l;
+	  break;
+
+	case 'v':
+	  version ();
 	  break;
 	}
     }
