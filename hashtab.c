@@ -38,6 +38,11 @@ Boston, MA 02110-1301, USA.  */
 #include <stdio.h>
 #include "hashtab.h"
 
+#include <endian.h>
+#if __BYTE_ORDER == __BIG_ENDIAN
+# define WORDS_BIGENDIAN 1
+#endif
+
 /* This macro defines reserved value for empty table entry. */
 
 #define EMPTY_ENTRY    ((void *) 0)
