@@ -7236,6 +7236,11 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	    case DW_FORM_indirect:
 	      i = -2U;
 	      break;
+	    case DW_FORM_data4:
+	    case DW_FORM_data8:
+	      if (reft->attr[i].attr == DW_AT_high_pc)
+		i = -2U;
+	      break;
 	    case DW_FORM_addr:
 	      if (reft->attr[i].attr == DW_AT_high_pc
 		  && cu->cu_version >= 4)
@@ -7386,7 +7391,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 			{
 			  unsigned int nform = 0;
 			  unsigned int sz = size_of_uleb128 (high_pc - low_pc);
-			  if (sz <= 4 && sz < (unsigned) ptr_size)
+			  if (sz <= 4 && sz <= (unsigned) ptr_size)
 			    nform = DW_FORM_udata;
 			  else if (ptr_size > 4
 				   && high_pc - low_pc <= 0xffffffff)
@@ -7394,7 +7399,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 			      nform = DW_FORM_data4;
 			      sz = 4;
 			    }
-			  else if (sz < (unsigned) ptr_size)
+			  else if (sz <= (unsigned) ptr_size)
 			    nform = DW_FORM_udata;
 			  if (nform)
 			    {
@@ -7416,10 +7421,50 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		  ptr += 2;
 		  break;
 		case DW_FORM_data4:
+		  if (reft->attr[i].attr == DW_AT_high_pc)
+		    {
+		      uint32_t range_len = read_32 (ptr);
+		      unsigned int sz = size_of_uleb128 (range_len);
+		      if (sz <= 4)
+			{
+			  t->attr[j].attr = reft->attr[i].attr;
+			  t->attr[j++].form = DW_FORM_udata;
+			  die->die_size += sz;
+			  continue;
+			}
+		      break;
+		    }
+		  ptr += 4;
+		  break;
 		case DW_FORM_sec_offset:
 		  ptr += 4;
 		  break;
 		case DW_FORM_data8:
+		  if (reft->attr[i].attr == DW_AT_high_pc)
+		    {
+		      unsigned int nform = 0;
+		      uint64_t range_len = read_64 (ptr);
+		      unsigned int sz = size_of_uleb128 (range_len);
+		      if (sz <= 4)
+			nform = DW_FORM_udata;
+		      else if (range_len <= 0xffffffff)
+			{
+			  nform = DW_FORM_data4;
+			  sz = 4;
+			}
+		      else if (sz <= 8)
+			nform = DW_FORM_udata;
+		      if (nform)
+			{
+			  t->attr[j].attr = reft->attr[i].attr;
+			  t->attr[j++].form = nform;
+			  die->die_size += sz;
+			  continue;
+			}
+		      break;
+		    }
+		  ptr += 8;
+		  break;
 		case DW_FORM_ref_sig8:
 		  ptr += 8;
 		  break;
@@ -8796,10 +8841,47 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	      inptr += 2;
 	      break;
 	    case DW_FORM_data4:
+	      if (reft->attr[i].attr == DW_AT_high_pc
+		  && t->attr[j].form != reft->attr[i].form)
+		{
+		  uint32_t range_len = read_32 (inptr);
+		  switch (t->attr[j].form)
+		    {
+		    case DW_FORM_udata:
+		      write_uleb128 (ptr, range_len);
+		      break;
+		    default:
+		      abort ();
+		    }
+		  j++;
+		  continue;
+		}
+	      inptr += 4;
+	      break;
 	    case DW_FORM_sec_offset:
 	      inptr += 4;
 	      break;
 	    case DW_FORM_data8:
+	      if (reft->attr[i].attr == DW_AT_high_pc
+		  && t->attr[j].form != reft->attr[i].form)
+		{
+		  uint64_t range_len = read_64 (inptr);
+		  switch (t->attr[j].form)
+		    {
+		    case DW_FORM_udata:
+		      write_uleb128 (ptr, range_len);
+		      break;
+		    case DW_FORM_data4:
+		      write_32 (ptr, range_len);
+		      break;
+		    default:
+		      abort ();
+		    }
+		  j++;
+		  continue;
+		}
+	      inptr += 8;
+	      break;
 	    case DW_FORM_ref_sig8:
 	      inptr += 8;
 	      break;
