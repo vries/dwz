@@ -9216,7 +9216,14 @@ recompute_abbrevs (dw_cu_ref cu, unsigned int cu_size)
     }
   else
     {
-      intracusize = size_of_uleb128 (cu_size);
+      /* Need to be conservatively high estimate, as update_new_die_offsets
+	 relies on the offsets always decreasing.  cu_size at this point is
+	 the size we will end up with in the end, but if cu_size is
+	 sufficiently close (from bottom) to some uleb128 boundary (say
+	 16384), init_new_die_offsets might return off above that boundary
+	 and then update_new_die_offsets might fail its assertions on
+	 reference to DIEs that crossed the uleb128 boundary.  */
+      intracusize = size_of_uleb128 (2 * cu_size);
 
       off = init_new_die_offsets (cu->cu_die, headersz, intracusize);
       do
