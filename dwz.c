@@ -3433,6 +3433,12 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 		      reft1 = reft2;
 		      reft2 = tem;
 		    }
+		  if (reft1->die_dup == NULL && reft2->die_dup != NULL)
+		    {
+		      dw_die_ref tem = reft1;
+		      reft1 = reft2;
+		      reft2 = tem;
+		    }
 		}
 	      /* If reft1 (die1 or whatever refers to it is already
 		 in the hash table) already has a dup, follow to that
