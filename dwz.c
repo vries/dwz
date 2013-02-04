@@ -3310,7 +3310,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  ptr2 += len;
 	  break;
 	case DW_FORM_ref_addr:
-	  if (likely (!op_multifile && !rd_multifile))
+	  if (likely (!op_multifile && !rd_multifile && !fi_multifile))
 	    {
 	      ptr1 += cu1->cu_version == 2 ? ptr_size : 4;
 	      ptr2 += cu2->cu_version == 2 ? ptr_size : 4;
