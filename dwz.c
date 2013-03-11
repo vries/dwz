@@ -7612,7 +7612,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	  {
 	    t->attr[0].attr = DW_AT_stmt_list;
 	    t->attr[0].form = cu->cu_version < 4
-			      ? DW_FORM_sec_offset : DW_FORM_data4;
+			      ? DW_FORM_data4 : DW_FORM_sec_offset;
 	    die->die_size += 4;
 	    t->nattr++;
 	  }
