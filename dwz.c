@@ -9544,7 +9544,7 @@ write_gdb_index (void)
     ver = multi_gdb_index_ver;
   else
     ver = buf_read_ule32 (inptr);
-  if (ver < 4 || ver > 7)
+  if (ver < 4 || ver > 8)
     return;
 
   for (cu = first_cu; cu; cu = cu->cu_next)
