@@ -1,4 +1,4 @@
-/* Copyright (C) 2001-2012 Red Hat, Inc.
+/* Copyright (C) 2001-2015 Red Hat, Inc.
    Copyright (C) 2003 Free Software Foundation, Inc.
    Written by Jakub Jelinek <jakub@redhat.com>, 2012.
 
@@ -10023,9 +10023,10 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 {
   Elf *elf = NULL;
   GElf_Ehdr ehdr;
+  GElf_Off min_shoff = ~(GElf_Off) 0;
   char *e_ident;
   int fd, i, j, addsec = -1, ret;
-  GElf_Off off, diff;
+  GElf_Off off, diff, addsize = 0;
   char *filename = NULL;
   GElf_Word shstrtabadd = 0;
   char *shstrtab = NULL;
@@ -10050,6 +10051,8 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		    && debug_sections[j].sec > addsec)
 		  addsec = debug_sections[j].sec;
 	    ehdr.e_shnum++;
+	    if (ehdr.e_shoff < min_shoff)
+	      min_shoff = ehdr.e_shoff;
 	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
 	      {
 		if (dso->shdr[j].sh_offset > ehdr.e_shoff)
@@ -10067,12 +10070,15 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	      ehdr.e_shstrndx++;
 	    len = strlen (debug_sections[i].name) + 1;
 	    dso->shdr[dso->ehdr.e_shstrndx].sh_size += len;
+	    if (dso->shdr[dso->ehdr.e_shstrndx].sh_offset < min_shoff)
+	      min_shoff = dso->shdr[dso->ehdr.e_shstrndx].sh_offset;
 	    for (j = dso->ehdr.e_shstrndx + 1; j < dso->ehdr.e_shnum; ++j)
 	      dso->shdr[j].sh_offset += len;
 	    if (ehdr.e_shoff > dso->shdr[dso->ehdr.e_shstrndx].sh_offset)
 	      ehdr.e_shoff += len;
 	    shstrtabadd += len;
 	    diff = debug_sections[i].new_size;
+	    addsize += diff;
 	    off = dso->shdr[addsec].sh_offset;
 	  }
 	else
@@ -10081,6 +10087,8 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		   - (GElf_Off) dso->shdr[debug_sections[i].sec].sh_size;
 	    off = dso->shdr[debug_sections[i].sec].sh_offset;
 	  }
+	if (off < min_shoff)
+	  min_shoff = off;
 	for (j = 1; j < dso->ehdr.e_shnum; ++j)
 	  if (dso->shdr[j].sh_offset > off)
 	    dso->shdr[j].sh_offset += diff;
@@ -10092,6 +10100,8 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  {
 	    remove_sections[i] = true;
 	    ehdr.e_shnum--;
+	    if (ehdr.e_shoff < min_shoff)
+	      min_shoff = ehdr.e_shoff;
 	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
 	      {
 		if (dso->shdr[j].sh_offset > ehdr.e_shoff)
@@ -10110,6 +10120,73 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	      ehdr.e_shstrndx--;
 	  }
       }
+
+  if (min_shoff != ~(GElf_Off) 0)
+    {
+      for (j = 1; j < dso->ehdr.e_shnum; ++j)
+	if (dso->shdr[j].sh_offset >= min_shoff
+	    && dso->shdr[j].sh_addralign > 1
+	    && (dso->shdr[j].sh_offset & (dso->shdr[j].sh_addralign - 1)) != 0)
+	  break;
+      if (j < dso->ehdr.e_shnum
+	  || (ehdr.e_shoff >= min_shoff
+	      && (ehdr.e_shoff & (ehdr.e_ident[EI_CLASS] == ELFCLASS64
+				  ? 7 : 3)) != 0))
+	{
+	  /* Need to fix up sh_offset/e_shoff.  Punt if all the sections
+	     >= min_shoff aren't non-ALLOC.  */
+	  GElf_Off last_shoff = 0;
+	  int k = -1;
+	  bool shdr_placed = false;
+	  for (j = 1; j < dso->ehdr.e_shnum; ++j)
+	    if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
+	      continue;
+	    else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
+	      {
+		error (0, 0, "Allocatable section in %s after non-allocatable "
+			     "ones", dso->filename);
+		return 1;
+	      }
+	    else if (dso->shdr[j].sh_offset < last_shoff)
+	      {
+		error (0, 0, "Section offsets in %s not monotonically "
+			     "increasing", dso->filename);
+		return 1;
+	      }
+	    else
+	      {
+		if (k == -1)
+		  k = j;
+		last_shoff = dso->shdr[j].sh_offset + dso->shdr[j].sh_size;
+	      }
+	  last_shoff = min_shoff;
+	  for (j = k; j <= dso->ehdr.e_shnum; ++j)
+	    {
+	      if (!shdr_placed
+		  && ehdr.e_shoff >= min_shoff
+		  && (j == dso->ehdr.e_shnum
+		      || ehdr.e_shoff < dso->shdr[j].sh_offset))
+		{
+		  if (ehdr.e_ident[EI_CLASS] == ELFCLASS64)
+		    ehdr.e_shoff = (last_shoff + 7) & -8;
+		  else
+		    ehdr.e_shoff = (last_shoff + 3) & -4;
+		  last_shoff = ehdr.e_shoff + ehdr.e_shnum * ehdr.e_shentsize;
+		  shdr_placed = true;
+		}
+	      if (j == dso->ehdr.e_shnum)
+		break;
+	      dso->shdr[j].sh_offset = last_shoff;
+	      if (dso->shdr[j].sh_addralign > 1)
+		dso->shdr[j].sh_offset
+		  = (last_shoff + dso->shdr[j].sh_addralign - 1)
+		    & ~(dso->shdr[j].sh_addralign - (GElf_Off) 1);
+	      last_shoff = dso->shdr[j].sh_offset + dso->shdr[j].sh_size;
+	      if (addsec != -1 && j == addsec)
+		last_shoff += addsize;
+	    }
+	}
+    }
 
   if (shstrtabadd != 0)
     {
@@ -11163,8 +11240,10 @@ optimize_multifile (void)
 {
   DSO dsobuf, *dso;
   int fd = -1;
+  volatile int vfd = -1;
   unsigned int i;
   Elf *elf = NULL;
+  Elf *volatile velf = NULL;
   GElf_Shdr shdr;
   Elf_Scn *scn;
   Elf_Data *data;
@@ -11220,12 +11299,12 @@ optimize_multifile (void)
       error (0, 0, "Error mmapping multi-file temporary files");
     fail:
       cleanup ();
-      if (elf)
-	elf_end (elf);
-      if (fd != -1)
+      if (velf)
+	elf_end (velf);
+      if (vfd != -1)
 	{
 	  unlink (multifile);
-	  close (fd);
+	  close (vfd);
 	}
       if (debug_sections[DEBUG_INFO].data != MAP_FAILED)
 	munmap (debug_sections[DEBUG_INFO].data,
@@ -11350,6 +11429,7 @@ optimize_multifile (void)
 
   cleanup ();
   fd = open (multifile, O_RDWR | O_CREAT, 0600);
+  vfd = fd;
   if (fd < 0)
     {
       error (0, errno, "Failed to open multi-file common file %s", multifile);
@@ -11357,6 +11437,7 @@ optimize_multifile (void)
     }
 
   elf = elf_begin (fd, ELF_C_WRITE, NULL);
+  velf = elf;
   if (elf == NULL)
     {
       error (0, 0, "cannot open ELF file: %s", elf_errmsg (-1));
@@ -11384,9 +11465,11 @@ optimize_multifile (void)
     {
     case ELFCLASS32:
       e_ident = (char *) elf32_newehdr (elf);
+      multi_ehdr.e_shoff = (multi_ehdr.e_shoff + 3) & -4;
       break;
     case ELFCLASS64:
       e_ident = (char *) elf64_newehdr (elf);
+      multi_ehdr.e_shoff = (multi_ehdr.e_shoff + 7) & -8;
       break;
     default:
       e_ident = NULL;
