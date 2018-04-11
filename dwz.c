@@ -1523,6 +1523,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
+	case DW_OP_GNU_variable_value:
 	  cu = die_cu (die);
 	  addr = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
 	  if (cu->cu_version == 2)
@@ -7823,8 +7824,8 @@ init_new_die_offsets (dw_die_ref die, unsigned int off,
 	  default:
 	    break;
 	  }
-	die->die_size += die->u.p2.die_intracu_udata_size;
-      }
+      die->die_size += die->u.p2.die_intracu_udata_size;
+    }
   off += die->die_size;
   for (child = die->die_child; child; child = child->die_sib)
     off = init_new_die_offsets (child, off, intracusize);
@@ -8577,6 +8578,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
+	case DW_OP_GNU_variable_value:
 	  addr = read_size (ptr, refcu->cu_version == 2 ? ptr_size : 4);
 	  assert (cu->cu_version == refcu->cu_version);
 	  refd = off_htab_lookup (NULL, addr);
