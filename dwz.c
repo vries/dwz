@@ -9886,6 +9886,14 @@ read_dwarf (DSO *dso, bool quieter)
 	    || strcmp (name, ".gdb_index") == 0
 	    || strcmp (name, ".gnu_debugaltlink") == 0)
 	  {
+	    if (dso->shdr[i].sh_flags & SHF_COMPRESSED)
+	      {
+		error (0, 0,
+		       "%s: Found compressed %s section, not attempting dwz"
+		       " compression",
+		       dso->filename, name);
+		return 1;
+	      }
 	    for (j = 0; debug_sections[j].name; ++j)
 	      if (strcmp (name, debug_sections[j].name) == 0)
 		{
