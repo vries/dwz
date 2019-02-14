@@ -1325,16 +1325,16 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
 /* Return an integer attribute AT of DIE.  Set *PRESENT to true
    if found.  */
 static uint64_t
-get_AT_int (dw_die_ref die, enum dwarf_attribute at, bool *present)
+get_AT_int (dw_die_ref die, enum dwarf_attribute at, bool *present,
+	    enum dwarf_form *formp)
 {
-  enum dwarf_form form;
   unsigned char *ptr;
-  ptr = get_AT (die, at, &form);
+  ptr = get_AT (die, at, formp);
   *present = false;
   if (ptr == NULL)
     return 0;
   *present = true;
-  switch (form)
+  switch (*formp)
     {
     case DW_FORM_ref_addr:
       return read_size (ptr, die_cu (die)->cu_version == 2 ? ptr_size : 4);
@@ -5000,9 +5000,18 @@ read_debug_info (DSO *dso, int kind)
 	}
 
       cu->cu_comp_dir = get_AT_string (cu->cu_die, DW_AT_comp_dir);
-      debug_line_off = get_AT_int (cu->cu_die, DW_AT_stmt_list, &present);
+      enum dwarf_form form;
+      debug_line_off
+	= get_AT_int (cu->cu_die, DW_AT_stmt_list, &present, &form);
       if (present)
 	{
+	  if (!(form == DW_FORM_sec_offset || form == DW_FORM_data4))
+	    {
+	      error (0, 0, "%s: DW_AT_stmt_list not DW_FORM_sec_offset or"
+		     " DW_FORM_data4", dso->filename);
+	      goto fail;
+	    }
+
 	  if (cu_files != NULL && last_debug_line_off == debug_line_off)
 	    {
 	      cu->cu_nfiles = cu_nfiles;
