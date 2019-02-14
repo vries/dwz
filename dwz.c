@@ -9906,7 +9906,13 @@ read_dwarf (DSO *dso, bool quieter)
 
 		  scn = dso->scn[i];
 		  data = elf_rawdata (scn, NULL);
-		  assert (data != NULL && data->d_buf != NULL);
+		  assert (data != NULL);
+		  if (data->d_buf == NULL)
+		    {
+		      error (0, 0, "%s: Found empty %s section, not attempting"
+			     " dwz compression", dso->filename, name);
+		      return 1;
+		    }
 		  assert (elf_rawdata (scn, data) == NULL);
 		  assert (data->d_off == 0);
 		  assert (data->d_size == dso->shdr[i].sh_size);
