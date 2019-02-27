@@ -1,0 +1,21 @@
+set tests [find $srcdir/$subdir *.sh]
+
+set pwd [pwd]
+
+set env(PATH) $pwd/$srcdir/scripts:$::env(PATH)
+
+foreach test $tests {
+    set dir [exec basename $test]
+    set dir $pwd/tmp.$dir
+    exec rm -Rf $dir
+    exec mkdir $dir
+
+    cd $dir
+    if { [catch { exec ../$test } msg] } {
+	puts "$msg"
+	fail "$test"
+    } else {
+	pass "$test"
+	exec rm -Rf $dir
+    }
+}

@@ -14,3 +14,17 @@ install: dwz
 	install -D -m 644 dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
 clean:
 	rm -f $(OBJECTS) *~ core* dwz
+
+PWD:=$(shell pwd -P)
+
+TEST_EXECS = hello
+
+hello:
+	$(CC) hello.c -o $@ -g
+
+check: dwz $(TEST_EXECS)
+	mkdir -p testsuite-bin
+	cd testsuite-bin; ln -sf $(PWD)/dwz .
+	export PATH=$(PWD)/testsuite-bin:$$PATH; \
+	runtest --tool=dwz -srcdir testsuite
+	rm -Rf testsuite-bin $(TEST_EXECS)
