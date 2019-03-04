@@ -12291,6 +12291,8 @@ main (int argc, char *argv[])
 	    }
 	  else if (resa[i - optind].res == 0)
 	    successcount++;
+	  else if (thisret == 1)
+	    ret = 1;
 	  if (hardlink
 	      && resa[i - optind].res >= 0
 	      && resa[i - optind].nlink > 1)

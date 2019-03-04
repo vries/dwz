@@ -9,11 +9,7 @@ if ! grep -q "Too many DIEs, not optimizing" dwz.err; then
     exit 1
 fi
 
-if [ $status -eq 0 ]; then
-    echo "PR24301 workaround used" > dwz.info
-else
-    [ $status -eq 1 ]
-fi
+[ $status -eq 1 ]
 
 cmp 1 $execs/hello
 cmp 2 $execs/hello

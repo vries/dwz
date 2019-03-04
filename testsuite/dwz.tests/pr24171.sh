@@ -10,6 +10,6 @@ if ! grep -q "DW_AT_stmt_list not DW_FORM_sec_offset or DW_FORM_data4" dwz.err; 
     exit 1
 fi
 
-[ $status -eq 0 ]
+[ $status -eq 1 ]
 
 rm -f 1 2 dwz.err
