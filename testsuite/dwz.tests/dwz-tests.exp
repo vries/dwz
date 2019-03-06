@@ -18,4 +18,5 @@ foreach test $tests {
 	pass "$test"
 	exec rm -Rf $dir
     }
+    cd $pwd
 }
