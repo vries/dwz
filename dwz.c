@@ -136,6 +136,8 @@ static struct obstack ob2;
    and restored during final cleanup.  */
 static struct obstack alt_ob, alt_ob2;
 
+static int tracing;
+
 typedef struct
 {
   Elf *elf;
@@ -4733,6 +4735,8 @@ read_debug_info (DSO *dso, int kind)
 		 caller that it should retry with low_mem.  */
 	      if (likely (!low_mem) && ndies == low_mem_die_limit)
 		{
+		  if (tracing)
+		    fprintf (stderr, "Hit low-mem die-limit\n");
 		  ret = 2;
 		  goto fail;
 		}
@@ -10824,6 +10828,8 @@ write_multifile (DSO *dso)
 	  *cup = (*cup)->cu_next;
       *cup = NULL;
       multifile_mode = MULTIFILE_MODE_WR;
+      if (tracing)
+	fprintf (stderr, "Write-multifile %s\n", dso->filename);
       if (compute_abbrevs (NULL))
 	ret = 1;
       else if (debug_sections[DEBUG_MACRO].data && read_macro (dso))
@@ -11029,6 +11035,9 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	     state.  */
 	  if (resa[n].res == 1)
 	    {
+	      if (tracing)
+		fprintf (stderr, "Skipping hardlink %s to unchanged file\n",
+			 file);
 	      close (fd);
 	      res->res = -2;
 	      return 1;
@@ -11039,6 +11048,9 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	      size_t len = strlen (file);
 	      char *filename = alloca (len + sizeof (".#dwz#.XXXXXX"));
 	      int fd2;
+	      if (tracing)
+		fprintf (stderr, "Updating hardlink %s to changed file\n",
+			 file);
 	      memcpy (filename, file, len);
 	      memcpy (filename + len, ".#dwz#.XXXXXX",
 		      sizeof (".#dwz#.XXXXXX"));
@@ -11060,6 +11072,20 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 		}
 	    }
 	}
+    }
+
+  if (tracing)
+    {
+      fprintf (stderr, "Compressing %s", file);
+      if (multifile_mode == 0)
+	;
+      else if (low_mem)
+	fprintf (stderr, " in low-mem mode");
+      else if (fi_multifile)
+	fprintf (stderr, " in finalize-multifile mode");
+      else
+	abort ();
+      fprintf (stderr, "\n");
     }
 
   dso = fdopen_dso (fd, file);
@@ -11358,6 +11384,8 @@ optimize_multifile (void)
   memset (&dsobuf, '\0', sizeof (dsobuf));
   dso = &dsobuf;
   dso->filename = multifile;
+  if (tracing)
+    fprintf (stderr, "Optimize-multifile\n");
   multifile_mode = MULTIFILE_MODE_OP;
 
   obstack_alloc_failed_handler = dwz_oom;
@@ -11647,6 +11675,8 @@ read_multifile (int fd)
   DSO *dso, *volatile ret;
   unsigned int i;
 
+  if (tracing)
+    fprintf (stderr, "Read-multifile\n");
   multifile_mode = MULTIFILE_MODE_RD;
   dso = fdopen_dso (fd, multifile);
   if (dso == NULL)
@@ -11792,6 +11822,7 @@ static struct option dwz_options[] =
   { "multifile-name",	 required_argument, 0, 'M' },
   { "relative",		 no_argument,	    0, 'r' },
   { "version",		 no_argument,	    0, 'v' },
+  { "devel-trace",	 no_argument,	    &tracing, 1 },
   { NULL,		 no_argument,	    0, 0 }
 };
 
@@ -11844,6 +11875,10 @@ main (int argc, char *argv[])
 	default:
 	case '?':
 	  usage ();
+	  break;
+
+	case 0:
+	  /* Option handled by getopt_long.  */
 	  break;
 
 	case 'o':
