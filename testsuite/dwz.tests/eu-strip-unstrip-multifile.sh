@@ -16,8 +16,8 @@ eu-unstrip 2.stripped 2.debug -o 2.unstripped
 smaller-than.sh 1.unstripped 1
 smaller-than.sh 2.unstripped 2
 
-[ $(gnu-debugaltlink-name.sh 1.unstripped) = "3" ]
-[ $(gnu-debugaltlink-name.sh 2.unstripped) = "3" ]
+[ "$(gnu-debugaltlink-name.sh 1.unstripped)" = "3" ]
+[ "$(gnu-debugaltlink-name.sh 2.unstripped)" = "3" ]
 
 ls=$(ls)
 ls=$(echo $ls)

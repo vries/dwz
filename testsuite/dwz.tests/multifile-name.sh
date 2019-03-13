@@ -14,7 +14,7 @@ ls=$(ls)
 ls=$(echo $ls)
 [ "$ls" = "1 2 3" ]
 
-[ $(gnu-debugaltlink-name.sh 1) = "/xxx/yyy/3" ]
-[ $(gnu-debugaltlink-name.sh 2) = "/xxx/yyy/3" ]
+[ "$(gnu-debugaltlink-name.sh 1)" = "/xxx/yyy/3" ]
+[ "$(gnu-debugaltlink-name.sh 2)" = "/xxx/yyy/3" ]
 
 rm -f 1 2 3
