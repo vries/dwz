@@ -8,7 +8,9 @@ if dwz 1 2>dwz.err; status=$?; then
    true
 fi
 
-grep "DWARF version 0 unhandled" dwz.err || true
+if grep -q "DWARF version 0 unhandled" dwz.err; then
+    exit 1
+fi
 
 [ $status -eq 1 ]
 
