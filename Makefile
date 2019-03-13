@@ -18,7 +18,7 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(PWD)/testsuite/dwz.tests
-TEST_EXECS = hello dw2-restrict py-section-script
+TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
@@ -28,6 +28,10 @@ dw2-restrict:
 
 py-section-script:
 	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
+
+dwz-for-test:
+	$(CC) $(patsubst \.o$,.c,$(OBJECTS)) -O2 -g -w -lelf -o $@ -W \
+	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"'
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
