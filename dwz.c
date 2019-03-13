@@ -9946,7 +9946,7 @@ read_dwarf (DSO *dso, bool quieter)
     init_endian (dso->ehdr.e_ident[EI_DATA]);
   else
     {
-      error (0, 0, "%s: Wrong ELF data enconding", dso->filename);
+      error (0, 0, "%s: Wrong ELF data encoding", dso->filename);
       return 1;
     }
 
@@ -10790,7 +10790,7 @@ write_multifile (DSO *dso)
 			      ? ELFDATA2LSB : ELFDATA2MSB)))
     {
       error (0, 0, "Multi-file optimization not allowed for different"
-		   "pointer sizes or endianity");
+		   " pointer sizes or endianity");
       multifile = NULL;
       return 1;
     }
