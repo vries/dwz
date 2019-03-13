@@ -14,8 +14,4 @@ hl="$(find -samefile 1 | sort)"
 hl="$(echo $hl)"
 [ "$hl" = "./1 ./2" ]
 
-ls=$(ls)
-ls=$(echo $ls)
-[ "$ls" = "1 2" ]
-
 rm -f 1 2

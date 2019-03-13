@@ -10,10 +10,6 @@ dwz -m $(pwd -P)/3 -r 1 2
 smaller-than.sh 1 ../hello
 smaller-than.sh 2 ../hello
 
-ls=$(ls)
-ls=$(echo $ls)
-[ "$ls" = "1 2 3" ]
-
 [ "$(gnu-debugaltlink-name.sh 1)" = "3" ]
 [ "$(gnu-debugaltlink-name.sh 2)" = "3" ]
 

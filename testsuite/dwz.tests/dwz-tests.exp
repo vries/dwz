@@ -15,8 +15,14 @@ foreach test $tests {
 	puts "$msg"
 	fail "$test"
     } else {
-	pass "$test"
-	exec rm -Rf $dir
+	set file_list [glob -nocomplain "$dir/*"]
+	if {[llength $file_list] != 0} {
+	    puts "$dir is not empty"
+	    fail "$test"
+	} else {
+	    pass "$test"
+	    exec rm -Rf $dir
+	}
     }
     cd $pwd
 }

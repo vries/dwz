@@ -9,10 +9,7 @@ if dwz 1 2>dwz.err; status=$?; then
 fi
 
 grep "DWARF version 0 unhandled" dwz.err || true
-rm -f dwz.err
 
 [ $status -eq 1 ]
 
-[ $(ls) = "1" ]
-
-rm -f 1
+rm -f 1 dwz.err

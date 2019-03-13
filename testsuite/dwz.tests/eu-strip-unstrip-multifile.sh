@@ -19,8 +19,4 @@ smaller-than.sh 2.unstripped 2
 [ "$(gnu-debugaltlink-name.sh 1.unstripped)" = "3" ]
 [ "$(gnu-debugaltlink-name.sh 2.unstripped)" = "3" ]
 
-ls=$(ls)
-ls=$(echo $ls)
-[ "$ls" = "1 1.debug 1.stripped 1.unstripped 2 2.debug 2.stripped 2.unstripped 3" ]
-
 rm -f 1 1.debug 1.stripped 1.unstripped 2 2.debug 2.stripped 2.unstripped 3

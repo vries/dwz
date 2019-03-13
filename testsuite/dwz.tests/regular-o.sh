@@ -10,8 +10,4 @@ cmp 1 ../hello
 
 smaller-than.sh 2 1
 
-ls=$(ls)
-ls=$(echo $ls)
-[ "$ls" = "1 2" ]
-
 rm -f 1 2
