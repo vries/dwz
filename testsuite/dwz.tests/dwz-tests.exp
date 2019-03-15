@@ -5,8 +5,15 @@ set pwd [pwd]
 set env(PATH) $pwd/$srcdir/scripts:$::env(PATH)
 
 foreach test $tests {
-    set dir [exec basename $test]
-    set dir $pwd/tmp.$dir
+    global runtests
+
+    set basename [exec basename $test]
+
+    if ![runtest_file_p $runtests $basename] {
+	continue
+    }
+
+    set dir $pwd/tmp.$basename
     exec rm -Rf $dir
     exec mkdir $dir
 

@@ -26,5 +26,5 @@ check: dwz $(TEST_EXECS)
 	mkdir -p testsuite-bin
 	cd testsuite-bin; ln -sf $(PWD)/dwz .
 	export PATH=$(PWD)/testsuite-bin:$$PATH; export LC_ALL=C; \
-	runtest --tool=dwz -srcdir testsuite
+	runtest --tool=dwz -srcdir testsuite $(RUNTESTFLAGS)
 	rm -Rf testsuite-bin $(TEST_EXECS)
