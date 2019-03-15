@@ -6,11 +6,12 @@ if dwz 1 2>dwz.err; status=$?; then
     true
 fi
 
-[ $status -eq 1 ]
-
 if ! grep -q "\.debug_info section not present" dwz.err; then
+    cat dwz.err
     exit 1
 fi
+
+[ $status -eq 1 ]
 
 cmp 1 1.saved
 

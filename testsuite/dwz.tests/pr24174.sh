@@ -5,6 +5,7 @@ if dwz 1 2>dwz.err; status=$?; then
 fi
 
 if grep -q "DWARF version 0 unhandled" dwz.err; then
+    cat dwz.err
     exit 1
 fi
 
