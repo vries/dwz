@@ -1,7 +1,3 @@
-#!/bin/sh
-
-set -e
-
 cp ../hello 1
 
 dwz -l0 1

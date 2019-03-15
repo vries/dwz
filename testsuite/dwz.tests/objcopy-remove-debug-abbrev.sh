@@ -1,7 +1,3 @@
-#!/bin/sh
-
-set -e
-
 objcopy --remove-section=.debug_abbrev ../hello 1
 
 cp 1 1.saved

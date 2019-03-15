@@ -1,7 +1,3 @@
-#!/bin/sh
-
-set -e
-
 cp ../hello 1
 objcopy --compress-debug-sections 1
 if dwz 1 2>dwz.err; status=$?; then

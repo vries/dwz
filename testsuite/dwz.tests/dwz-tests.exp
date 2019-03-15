@@ -18,7 +18,7 @@ foreach test $tests {
     exec mkdir $dir
 
     cd $dir
-    if { [catch { exec ../$test } msg] } {
+    if { [catch { exec sh -e ../$test } msg] } {
 	puts "$msg"
 	fail "$test"
     } else {

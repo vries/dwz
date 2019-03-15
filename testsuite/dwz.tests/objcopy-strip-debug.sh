@@ -1,7 +1,3 @@
-#!/bin/sh
-
-set -e
-
 objcopy --strip-debug ../hello 1
 
 cp 1 1.saved

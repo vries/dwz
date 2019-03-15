@@ -1,7 +1,3 @@
-#!/bin/sh
-
-set -e
-
 cp ../hello 1
 
 eu-strip 1 -o 1.stripped -f 1.debug

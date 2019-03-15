@@ -1,7 +1,3 @@
-#!/bin/sh
-
-set -e
-
 cp ../hello 1
 cp ../hello 2
 
