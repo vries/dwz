@@ -13,6 +13,23 @@ foreach test $tests {
 	continue
     }
 
+    set required_execs []
+    if { $basename == "pr24171.sh" } {
+	lappend required_execs "dw2-restrict"
+    }
+
+    set unsupported 0
+    foreach required_exec $required_execs {
+	set size [file size $required_exec]
+	if { $size == 0 } {
+	    set unsupported 1
+	}
+    }
+    if { $unsupported == 1 } {
+	unsupported "$test"
+	continue
+    }
+
     set dir $pwd/tmp.$basename
     exec rm -Rf $dir
     exec mkdir $dir

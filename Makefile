@@ -18,10 +18,13 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(PWD)/testsuite/dwz.tests
-TEST_EXECS = hello
+TEST_EXECS = hello dw2-restrict
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
+
+dw2-restrict:
+	$(CC) $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
 
 check: dwz $(TEST_EXECS)
 	mkdir -p testsuite-bin
