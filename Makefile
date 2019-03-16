@@ -18,13 +18,16 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(PWD)/testsuite/dwz.tests
-TEST_EXECS = hello dw2-restrict
+TEST_EXECS = hello dw2-restrict py-section-script
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
 
 dw2-restrict:
 	$(CC) $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
+
+py-section-script:
+	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
