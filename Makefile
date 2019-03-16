@@ -17,10 +17,11 @@ clean:
 
 PWD:=$(shell pwd -P)
 
+TEST_SRC = $(PWD)/testsuite/dwz.tests
 TEST_EXECS = hello
 
 hello:
-	$(CC) hello.c -o $@ -g
+	$(CC) $(TEST_SRC)/hello.c -o $@ -g
 
 check: dwz $(TEST_EXECS)
 	mkdir -p testsuite-bin
