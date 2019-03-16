@@ -26,9 +26,14 @@ hello:
 dw2-restrict:
 	$(CC) $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
 
+# On some systems we need to set and export DEJAGNU to suppress
+# WARNING: Couldn't find the global config file.
+DEJAGNU ?= /dev/null
+
 check: dwz $(TEST_EXECS)
 	mkdir -p testsuite-bin
 	cd testsuite-bin; ln -sf $(PWD)/dwz .
+	export DEJAGNU=$(DEJAGNU); \
 	export PATH=$(PWD)/testsuite-bin:$$PATH; export LC_ALL=C; \
 	runtest --tool=dwz -srcdir testsuite $(RUNTESTFLAGS)
 	rm -Rf testsuite-bin $(TEST_EXECS)
