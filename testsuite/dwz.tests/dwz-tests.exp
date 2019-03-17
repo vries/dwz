@@ -42,6 +42,12 @@ foreach test $tests {
 	puts "$msg"
 	fail "$test"
     } else {
+	if { [file exists dwz.info ] } {
+	    set info [exec cat dwz.info]
+	    verbose -log "$test:" 1
+	    verbose -log "$info" 1
+	    exec rm -f dwz.info
+	}
 	set file_list [glob -nocomplain "$dir/*"]
 	if {[llength $file_list] != 0} {
 	    puts "$dir is not empty"
