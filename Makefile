@@ -30,7 +30,7 @@ py-section-script:
 	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
 
 dwz-for-test:
-	$(CC) $(patsubst \.o$,.c,$(OBJECTS)) -O2 -g -w -lelf -o $@ -W \
+	$(CC) $(patsubst %.o,%.c,$(OBJECTS)) -O2 -g -w -lelf -o $@ -W \
 	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"'
 
 # On some systems we need to set and export DEJAGNU to suppress
