@@ -1,7 +1,7 @@
 cp ../hello 1
 cp ../dwz-for-test 2
 
-limit=$(readelf -w 2 \
+limit=$(readelf -wi 2 \
 	    | grep '(DW_TAG' \
 	    | wc -l)
 limit=$((limit - 1))
