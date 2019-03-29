@@ -107,8 +107,8 @@
 # define likely(x) __builtin_expect (!!(x), 1)
 # define unlikely(x) __builtin_expect (!!(x), 0)
 #else
-# define likely(x) x
-# define unlikely(x) x
+# define likely(x) (x)
+# define unlikely(x) (x)
 #endif
 
 #define obstack_chunk_alloc     malloc
@@ -9328,12 +9328,14 @@ write_info (void)
 /* Adjust .debug_loc range determined by *SLOT, called through
    htab_traverse.  */
 static int
-adjust_loclist (void **slot, void *data __attribute__((unused)))
+adjust_loclist (void **slot, void *data)
 {
   struct debug_loc_adjust *adj = (struct debug_loc_adjust *) *slot;
   unsigned char *ptr, *endsec;
   GElf_Addr low, high;
   size_t len;
+
+  (void)data;
 
   ptr = debug_sections[DEBUG_LOC].new_data + adj->start_offset;
   endsec = ptr + debug_sections[DEBUG_LOC].size;
