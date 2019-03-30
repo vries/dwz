@@ -29,9 +29,14 @@ dw2-restrict:
 py-section-script:
 	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
 
-dwz-for-test:
-	$(CC) $(patsubst %.o,%.c,$(OBJECTS)) -O2 -g -lelf -o $@ -Wall -W \
-	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"' -U__GNUC__
+DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
+
+%-for-test.c: %.c
+	sed 's/__GNUC__/NOT_DEFINED/' $< > $@
+
+dwz-for-test: $(DWZ_TEST_SOURCES)
+	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W \
+	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"'
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
@@ -43,4 +48,4 @@ check: dwz $(TEST_EXECS)
 	export DEJAGNU=$(DEJAGNU); \
 	export PATH=$(PWD)/testsuite-bin:$$PATH; export LC_ALL=C; \
 	runtest --tool=dwz -srcdir testsuite $(RUNTESTFLAGS)
-	rm -Rf testsuite-bin $(TEST_EXECS)
+	rm -Rf testsuite-bin $(TEST_EXECS) $(DWZ_TEST_SOURCES)
