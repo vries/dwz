@@ -137,6 +137,7 @@ static struct obstack ob2;
 static struct obstack alt_ob, alt_ob2;
 
 static int tracing;
+static int ignore_size;
 
 typedef struct
 {
@@ -5407,7 +5408,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		 + (die_cu (arr[i])->cu_version == 2
 		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
       if (!second_phase)
-	force = orig_size > new_size;
+	force = ignore_size || orig_size > new_size;
       if (force)
 	{
 	  dw_die_ref die, *diep;
@@ -5991,8 +5992,8 @@ create_import_tree (void)
 			cost += pusrc[srccount]->cu->cu_version == 2
 				? 1 + ptr_size : 5;
 		      srccount++;
-		      if ((dstcount - 1) * cost
-			  > 13 + dstcount * new_edge_cost)
+		      if (ignore_size || ((dstcount - 1) * cost
+					  > 13 + dstcount * new_edge_cost))
 			{
 			  unsigned int j;
 
@@ -6170,7 +6171,7 @@ create_import_tree (void)
 				     && e4->icu->cu->cu_version == 2)
 				    ? 1 + ptr_size : 5;
 		    }
-		  if (size_dec > size_inc)
+		  if (!ignore_size || size_dec > size_inc)
 		    {
 		      struct import_cu **ipup;
 		      for (e4 = ipu2->incoming, ep = NULL; e4; e4 = e4->next)
@@ -11120,16 +11121,17 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	  cleanup ();
 	  ret = 1;
 	}
-      else if (debug_sections[DEBUG_INFO].new_size
-	       + debug_sections[DEBUG_ABBREV].new_size
-	       + debug_sections[DEBUG_STR].new_size
-	       + debug_sections[DEBUG_MACRO].new_size
-	       + debug_sections[DEBUG_TYPES].new_size
-	       >= debug_sections[DEBUG_INFO].size
-		  + debug_sections[DEBUG_ABBREV].size
-		  + debug_sections[DEBUG_STR].size
-		  + debug_sections[DEBUG_MACRO].size
-		  + debug_sections[DEBUG_TYPES].size)
+      else if (!ignore_size
+	       && ((debug_sections[DEBUG_INFO].new_size
+		    + debug_sections[DEBUG_ABBREV].new_size
+		    + debug_sections[DEBUG_STR].new_size
+		    + debug_sections[DEBUG_MACRO].new_size
+		    + debug_sections[DEBUG_TYPES].new_size)
+		   >= (debug_sections[DEBUG_INFO].size
+		       + debug_sections[DEBUG_ABBREV].size
+		       + debug_sections[DEBUG_STR].size
+		       + debug_sections[DEBUG_MACRO].size
+		       + debug_sections[DEBUG_TYPES].size)))
 	{
 	  if (!quiet || outfile != NULL)
 	    error (0, 0, "%s: DWARF compression not beneficial "
@@ -11823,6 +11825,7 @@ static struct option dwz_options[] =
   { "relative",		 no_argument,	    0, 'r' },
   { "version",		 no_argument,	    0, 'v' },
   { "devel-trace",	 no_argument,	    &tracing, 1 },
+  { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { NULL,		 no_argument,	    0, 0 }
 };
 
