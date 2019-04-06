@@ -6,7 +6,7 @@ cnt=$(readelf -wi 1 \
 
 [ $cnt -eq 0 ]
 
-dwz 1 2>/dev/null
+../dwz-for-test 1 2>/dev/null
 
 cnt=$(readelf -wi 1 \
 	    | grep '(DW_TAG_partial_unit' \
@@ -16,7 +16,7 @@ cnt=$(readelf -wi 1 \
 
 cp ../min 1
 
-dwz --devel-ignore-size 1
+../dwz-for-test --devel-ignore-size 1
 
 cnt=$(readelf -wi 1 \
 	    | grep '(DW_TAG_partial_unit' \

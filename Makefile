@@ -35,7 +35,7 @@ DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 	sed 's/__GNUC__/NOT_DEFINED/' $< > $@
 
 dwz-for-test: $(DWZ_TEST_SOURCES)
-	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W \
+	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W -DDEVEL \
 	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"'
 
 min:

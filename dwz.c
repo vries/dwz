@@ -132,9 +132,15 @@ static struct obstack ob2;
    and restored during final cleanup.  */
 static struct obstack alt_ob, alt_ob2;
 
+#if DEVEL
 static int tracing;
 static int ignore_size;
 static int ignore_locus;
+#else
+#define tracing 0
+#define ignore_size 0
+#define ignore_locus 0
+#endif
 
 typedef struct
 {
@@ -11821,9 +11827,11 @@ static struct option dwz_options[] =
   { "multifile-name",	 required_argument, 0, 'M' },
   { "relative",		 no_argument,	    0, 'r' },
   { "version",		 no_argument,	    0, 'v' },
+#if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
+#endif
   { NULL,		 no_argument,	    0, 0 }
 };
 
