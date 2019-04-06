@@ -99,10 +99,6 @@
 # define NT_GNU_BUILD_ID 3
 #endif
 
-#ifndef IGNORE_LOCUS
-# define IGNORE_LOCUS 0
-#endif
-
 #if defined __GNUC__ && __GNUC__ >= 3
 # define likely(x) __builtin_expect (!!(x), 1)
 # define unlikely(x) __builtin_expect (!!(x), 0)
@@ -138,6 +134,7 @@ static struct obstack alt_ob, alt_ob2;
 
 static int tracing;
 static int ignore_size;
+static int ignore_locus;
 
 typedef struct
 {
@@ -1903,7 +1900,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 		}
 	      if (value == 0)
 		handled = false;
-	      else if (!IGNORE_LOCUS && die->die_ck_state != CK_BAD)
+	      else if (!ignore_locus && die->die_ck_state != CK_BAD)
 		{
 		  struct dw_file *cu_file = &cu->cu_files[value - 1];
 		  size_t file_len = strlen (cu_file->file);
@@ -1950,7 +1947,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_decl_column:
 	case DW_AT_call_line:
 	case DW_AT_call_column:
-	  if (IGNORE_LOCUS)
+	  if (ignore_locus)
 	    handled = true;
 	  break;
 	default:
@@ -3104,7 +3101,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_udata: value2 = read_uleb128 (ptr2); break;
 	    default: abort ();
 	    }
-	  if (IGNORE_LOCUS)
+	  if (ignore_locus)
 	    {
 	      i++;
 	      j++;
@@ -3175,7 +3172,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	case DW_AT_decl_column:
 	case DW_AT_call_line:
 	case DW_AT_call_column:
-	  if (IGNORE_LOCUS)
+	  if (ignore_locus)
 	    old_ptr1 = NULL;
 	  break;
 	default:
@@ -3462,7 +3459,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  abort ();
 	}
 
-      if ((!IGNORE_LOCUS || old_ptr1)
+      if ((!ignore_locus || old_ptr1)
 	  && (ptr1 - old_ptr1 != ptr2 - old_ptr2
 	      || memcmp (old_ptr1, old_ptr2, ptr1 - old_ptr1)))
 	FAIL;
@@ -11826,6 +11823,7 @@ static struct option dwz_options[] =
   { "version",		 no_argument,	    0, 'v' },
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
+  { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { NULL,		 no_argument,	    0, 0 }
 };
 
