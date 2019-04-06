@@ -20,6 +20,16 @@ foreach test $tests {
     if { $basename == "pr24173.sh" } {
 	lappend required_execs "py-section-script"
     }
+    if { $basename == "pr24341.sh" } {
+	# The exec min is used for the regression test for pr24341, but it only
+	# functions as such if the DWARF only contains the CUs of the test-case
+	# itself.
+	set matches [exec readelf -wi min | grep DW_AT_name | grep -c / ]
+	if { $matches != 2 } {
+	    unsupported "$test"
+	    continue
+	}
+    }
 
     set unsupported 0
     foreach required_exec $required_execs {

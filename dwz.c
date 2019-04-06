@@ -9960,7 +9960,8 @@ read_dwarf (DSO *dso, bool quieter)
       return 1;
     }
 
-  if (debug_sections[DEBUG_INFO].data == NULL)
+  if (debug_sections[DEBUG_INFO].data == NULL
+      && !rd_multifile)
     {
       if (!quieter)
 	error (0, 0, "%s: .debug_info section not present",
