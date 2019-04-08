@@ -107,6 +107,12 @@
 # define unlikely(x) (x)
 #endif
 
+#if defined __GNUC__
+# define FORCE_INLINE __attribute__((always_inline))
+#else
+# define FORCE_INLINE
+#endif
+
 #define obstack_chunk_alloc     malloc
 #define obstack_chunk_free      free
 
@@ -1233,6 +1239,92 @@ off_htab_lookup (dw_cu_ref cu, unsigned int die_offset)
   return (dw_die_ref) htab_find_with_hash (off_htab, &die, die_offset);
 }
 
+/* For a die attribute with form FORM starting at PTR, with the die in CU,
+   return the pointer after the attribute, assuming FORM is not
+   dw_form_indirect.  */
+static inline unsigned char * FORCE_INLINE
+skip_attr_no_dw_form_indirect (dw_cu_ref cu, uint32_t form, unsigned char *ptr)
+{
+  size_t len = 0;
+
+  switch (form)
+    {
+    case DW_FORM_ref_addr:
+      ptr += cu->cu_version == 2 ? ptr_size : 4;
+      break;
+    case DW_FORM_addr:
+      ptr += ptr_size;
+      break;
+    case DW_FORM_flag_present:
+      break;
+    case DW_FORM_ref1:
+    case DW_FORM_flag:
+    case DW_FORM_data1:
+      ++ptr;
+      break;
+    case DW_FORM_ref2:
+    case DW_FORM_data2:
+      ptr += 2;
+      break;
+    case DW_FORM_ref4:
+    case DW_FORM_data4:
+    case DW_FORM_sec_offset:
+    case DW_FORM_strp:
+      ptr += 4;
+      break;
+    case DW_FORM_ref8:
+    case DW_FORM_data8:
+    case DW_FORM_ref_sig8:
+      ptr += 8;
+      break;
+    case DW_FORM_sdata:
+    case DW_FORM_ref_udata:
+    case DW_FORM_udata:
+      read_uleb128 (ptr);
+      break;
+    case DW_FORM_string:
+      ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
+      break;
+    case DW_FORM_indirect:
+      abort ();
+    case DW_FORM_block1:
+      len = *ptr++;
+      break;
+    case DW_FORM_block2:
+      len = read_16 (ptr);
+      form = DW_FORM_block1;
+      break;
+    case DW_FORM_block4:
+      len = read_32 (ptr);
+      form = DW_FORM_block1;
+      break;
+    case DW_FORM_block:
+    case DW_FORM_exprloc:
+      len = read_uleb128 (ptr);
+      form = DW_FORM_block1;
+      break;
+    default:
+      abort ();
+    }
+
+  if (form == DW_FORM_block1)
+    ptr += len;
+
+  return ptr;
+}
+
+/* For a die attribute ATTR starting at PTR, with the die in CU, return the
+   pointer after the attribute.  */
+static inline unsigned char * FORCE_INLINE
+skip_attr (dw_cu_ref cu, struct abbrev_attr *attr, unsigned char *ptr)
+{
+  uint32_t form = attr->form;
+
+  while (form == DW_FORM_indirect)
+    form = read_uleb128 (ptr);
+  return skip_attr_no_dw_form_indirect (cu, form, ptr);
+}
+
 /* Return a pointer at which DIE's attribute AT is encoded, and fill in
    its form into *FORMP.  Return NULL if the attribute is not present.  */
 static unsigned char *
@@ -1253,7 +1345,6 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
   for (i = 0; i < t->nattr; ++i)
     {
       uint32_t form = t->attr[i].form;
-      size_t len = 0;
 
       while (form == DW_FORM_indirect)
 	form = read_uleb128 (ptr);
@@ -1262,68 +1353,8 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
 	  *formp = form;
 	  return ptr;
 	}
-      switch (form)
-	{
-	case DW_FORM_ref_addr:
-	  ptr += cu->cu_version == 2 ? ptr_size : 4;
-	  break;
-	case DW_FORM_addr:
-	  ptr += ptr_size;
-	  break;
-	case DW_FORM_flag_present:
-	  break;
-	case DW_FORM_ref1:
-	case DW_FORM_flag:
-	case DW_FORM_data1:
-	  ++ptr;
-	  break;
-	case DW_FORM_ref2:
-	case DW_FORM_data2:
-	  ptr += 2;
-	  break;
-	case DW_FORM_ref4:
-	case DW_FORM_data4:
-	case DW_FORM_sec_offset:
-	case DW_FORM_strp:
-	  ptr += 4;
-	  break;
-	case DW_FORM_ref8:
-	case DW_FORM_data8:
-	case DW_FORM_ref_sig8:
-	  ptr += 8;
-	  break;
-	case DW_FORM_sdata:
-	case DW_FORM_ref_udata:
-	case DW_FORM_udata:
-	  read_uleb128 (ptr);
-	  break;
-	case DW_FORM_string:
-	  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
-	  break;
-	case DW_FORM_indirect:
-	  abort ();
-	case DW_FORM_block1:
-	  len = *ptr++;
-	  break;
-	case DW_FORM_block2:
-	  len = read_16 (ptr);
-	  form = DW_FORM_block1;
-	  break;
-	case DW_FORM_block4:
-	  len = read_32 (ptr);
-	  form = DW_FORM_block1;
-	  break;
-	case DW_FORM_block:
-	case DW_FORM_exprloc:
-	  len = read_uleb128 (ptr);
-	  form = DW_FORM_block1;
-	  break;
-	default:
-	  abort ();
-	}
 
-      if (form == DW_FORM_block1)
-	ptr += len;
+      ptr = skip_attr_no_dw_form_indirect (cu, form, ptr);
     }
   return NULL;
 }
@@ -2698,75 +2729,8 @@ skip_attrs (dw_cu_ref cu, struct abbrev_tag *t, unsigned char *ptr)
 {
   unsigned int i;
   for (i = 0; i < t->nattr; ++i)
-    {
-      uint32_t form = t->attr[i].form;
-      size_t len = 0;
+    ptr = skip_attr (cu, &t->attr[i], ptr);
 
-      while (form == DW_FORM_indirect)
-	form = read_uleb128 (ptr);
-      switch (form)
-	{
-	case DW_FORM_ref_addr:
-	  ptr += cu->cu_version == 2 ? ptr_size : 4;
-	  break;
-	case DW_FORM_addr:
-	  ptr += ptr_size;
-	  break;
-	case DW_FORM_flag_present:
-	  break;
-	case DW_FORM_ref1:
-	case DW_FORM_flag:
-	case DW_FORM_data1:
-	  ++ptr;
-	  break;
-	case DW_FORM_ref2:
-	case DW_FORM_data2:
-	  ptr += 2;
-	  break;
-	case DW_FORM_ref4:
-	case DW_FORM_data4:
-	case DW_FORM_sec_offset:
-	case DW_FORM_strp:
-	  ptr += 4;
-	  break;
-	case DW_FORM_ref8:
-	case DW_FORM_data8:
-	case DW_FORM_ref_sig8:
-	  ptr += 8;
-	  break;
-	case DW_FORM_sdata:
-	case DW_FORM_ref_udata:
-	case DW_FORM_udata:
-	  read_uleb128 (ptr);
-	  break;
-	case DW_FORM_string:
-	  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
-	  break;
-	case DW_FORM_indirect:
-	  abort ();
-	case DW_FORM_block1:
-	  len = *ptr++;
-	  break;
-	case DW_FORM_block2:
-	  len = read_16 (ptr);
-	  form = DW_FORM_block1;
-	  break;
-	case DW_FORM_block4:
-	  len = read_32 (ptr);
-	  form = DW_FORM_block1;
-	  break;
-	case DW_FORM_block:
-	case DW_FORM_exprloc:
-	  len = read_uleb128 (ptr);
-	  form = DW_FORM_block1;
-	  break;
-	default:
-	  abort ();
-	}
-
-      if (form == DW_FORM_block1)
-	ptr += len;
-    }
   return ptr;
 }
 
