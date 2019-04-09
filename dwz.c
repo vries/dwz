@@ -794,6 +794,15 @@ die_cu (dw_die_ref die)
   return (dw_cu_ref) die->die_parent;
 }
 
+/* Given a toplevel die DIE, return the first (that is, the reference die) in
+   the duplicate chain.  */
+#define first_dup(die)				\
+  (die->die_dup					\
+   ? die->die_dup				\
+   : (die->die_nextdup				\
+      ? die					\
+      : NULL))
+
 /* Safe variant that check die_toplevel.  Can't be used on LHS.  */
 #define die_safe_dup(die) \
   ((die)->die_toplevel ? (die)->die_dup : (dw_die_ref) NULL)
