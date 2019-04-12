@@ -2,7 +2,7 @@ set tests [find $srcdir/$subdir *.sh]
 
 set pwd [pwd]
 
-set env(PATH) $pwd/$srcdir/scripts:$::env(PATH)
+set env(PATH) $srcdir/scripts:$::env(PATH)
 set env(execs) $pwd
 
 foreach test $tests {
@@ -49,7 +49,7 @@ foreach test $tests {
     exec mkdir $dir
 
     cd $dir
-    if { [catch { exec sh -e ../$test } msg] } {
+    if { [catch { exec sh -e $test } msg] } {
 	puts "$msg"
 	fail "$test"
     } else {

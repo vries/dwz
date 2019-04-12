@@ -1,5 +1,10 @@
+ifneq ($(srcdir),)
+VPATH = $(srcdir)
+else
+srcdir=$(shell pwd)
+endif
 CFLAGS = -O2 -g
-DWZ_VERSION := $(shell cat VERSION)
+DWZ_VERSION := $(shell cat $(srcdir)/VERSION)
 override CFLAGS += -Wall -W -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"$(DWZ_VERSION)"'
 prefix = /usr
 exec_prefix = $(prefix)
@@ -17,7 +22,7 @@ clean:
 
 PWD:=$(shell pwd -P)
 
-TEST_SRC = $(PWD)/testsuite/dwz.tests
+TEST_SRC = $(srcdir)/testsuite/dwz.tests
 TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef
 
 hello:
@@ -36,7 +41,7 @@ DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 
 dwz-for-test: $(DWZ_TEST_SOURCES)
 	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W -DDEVEL \
-	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"'
+	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"' -I$(srcdir)
 
 min:
 	$(CC) $(TEST_SRC)/min.c $(TEST_SRC)/min-2.c -o $@ -g
@@ -54,5 +59,5 @@ check: dwz $(TEST_EXECS)
 	cd testsuite-bin; ln -sf $(PWD)/dwz .
 	export DEJAGNU=$(DEJAGNU); \
 	export PATH=$(PWD)/testsuite-bin:$$PATH; export LC_ALL=C; \
-	runtest --tool=dwz -srcdir testsuite $(RUNTESTFLAGS)
+	runtest --tool=dwz -srcdir $(srcdir)/testsuite $(RUNTESTFLAGS)
 	rm -Rf testsuite-bin $(TEST_EXECS) $(DWZ_TEST_SOURCES)

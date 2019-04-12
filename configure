@@ -1,0 +1,11 @@
+#!/bin/sh
+
+cat > Makefile <<EOF
+srcdir:=\$(shell pwd -P)/../src
+
+default:
+	\$(MAKE) -f \$(srcdir)/Makefile srcdir=\$(srcdir)
+
+%:
+	\$(MAKE) -f \$(srcdir)/Makefile srcdir=\$(srcdir) \$*
+EOF
