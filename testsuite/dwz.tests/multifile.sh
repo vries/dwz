@@ -1,10 +1,10 @@
-cp ../hello 1
-cp ../hello 2
+cp $execs/hello 1
+cp $execs/hello 2
 
 dwz -m 3 1 2
 
-smaller-than.sh 1 ../hello
-smaller-than.sh 2 ../hello
+smaller-than.sh 1 $execs/hello
+smaller-than.sh 2 $execs/hello
 
 [ "$(gnu-debugaltlink-name.sh 1)" = "3" ]
 [ "$(gnu-debugaltlink-name.sh 2)" = "3" ]

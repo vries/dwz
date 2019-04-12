@@ -1,4 +1,4 @@
-cp ../hello 1
+cp $execs/hello 1
 objcopy --compress-debug-sections 1
 if dwz 1 2>dwz.err; status=$?; then
    true

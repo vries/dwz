@@ -1,4 +1,4 @@
-cp ../hello 1
+cp $execs/hello 1
 
 gdb-add-index 1
 

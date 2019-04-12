@@ -1,4 +1,4 @@
-cp ../hello 1
+cp $execs/hello 1
 
 eu-strip 1 -o 1.stripped -f 1.debug
 

@@ -1,10 +1,10 @@
-cp ../hello 1
+cp $execs/hello 1
 cp 1 2
 
 dwz 1 2
 
-smaller-than.sh 1 ../hello
-smaller-than.sh 2 ../hello
+smaller-than.sh 1 $execs/hello
+smaller-than.sh 2 $execs/hello
 
 cp 1 1.saved
 cp 2 2.saved

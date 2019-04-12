@@ -1,4 +1,4 @@
-cp ../hello 1
+cp $execs/hello 1
 cp 1 2
 if dwz -L0 1 2 2>dwz.err; status=$?; then
     true
@@ -15,7 +15,7 @@ else
     [ $status -eq 1 ]
 fi
 
-cmp 1 ../hello
-cmp 2 ../hello
+cmp 1 $execs/hello
+cmp 2 $execs/hello
 
 rm -f 1 2 dwz.err

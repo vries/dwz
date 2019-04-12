@@ -1,4 +1,4 @@
-cp ../hello 1
+cp $execs/hello 1
 
 if dwz -? 1 2> dwz.err; status=$?; then
     true
@@ -8,6 +8,6 @@ fi
 
 grep -q "Usage:" dwz.err
 
-cmp 1 ../hello
+cmp 1 $execs/hello
 
 rm -f 1 dwz.err

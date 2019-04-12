@@ -1,8 +1,8 @@
-cp ../hello 1
+cp $execs/hello 1
 
 dwz 1
 
-smaller-than.sh 1 ../hello
+smaller-than.sh 1 $execs/hello
 
 cp 1 1.saved
 

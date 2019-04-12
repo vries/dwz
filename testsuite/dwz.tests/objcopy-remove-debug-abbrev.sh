@@ -1,4 +1,4 @@
-objcopy --remove-section=.debug_abbrev ../hello 1
+objcopy --remove-section=.debug_abbrev $execs/hello 1
 
 cp 1 1.saved
 

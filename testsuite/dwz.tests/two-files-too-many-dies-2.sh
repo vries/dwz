@@ -1,5 +1,5 @@
-cp ../hello 1
-cp ../dwz-for-test 2
+cp $execs/hello 1
+cp $execs/dwz-for-test 2
 
 limit=$(readelf -wi 2 \
 	    | grep '(DW_TAG' \
@@ -16,7 +16,7 @@ else
     [ $status -eq 1 ]
 fi
 
-smaller-than.sh 1 ../hello
-cmp 2 ../dwz-for-test
+smaller-than.sh 1 $execs/hello
+cmp 2 $execs/dwz-for-test
 
 rm -f 1 2 dwz.err

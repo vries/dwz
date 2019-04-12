@@ -1,4 +1,4 @@
-objcopy --strip-debug ../hello 1
+objcopy --strip-debug $execs/hello 1
 
 cp 1 1.saved
 

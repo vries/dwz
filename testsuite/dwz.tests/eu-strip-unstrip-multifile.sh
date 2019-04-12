@@ -1,5 +1,5 @@
-cp ../hello 1
-cp ../hello 2
+cp $execs/hello 1
+cp $execs/hello 2
 
 eu-strip 1 -o 1.stripped -f 1.debug
 eu-strip 2 -o 2.stripped -f 2.debug

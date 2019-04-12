@@ -1,4 +1,4 @@
-cp ../py-section-script 1
+cp $execs/py-section-script 1
 
 eu-strip -g -f 1.debug 1
 

@@ -1,5 +1,5 @@
-cp ../dw2-restrict 1
-cp ../dw2-restrict 2
+cp $execs/dw2-restrict 1
+cp $execs/dw2-restrict 2
 
 if dwz -m 3 1 2 2>dwz.err; status=$?; then
     true
