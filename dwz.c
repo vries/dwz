@@ -3161,7 +3161,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
       switch (form1)
 	{
 	case DW_FORM_ref_addr:
-	  if (likely (!op_multifile && !rd_multifile))
+	  if (likely (!op_multifile && !rd_multifile && !fi_multifile))
 	    {
 	      if (form1 != form2)
 		FAIL;
@@ -3176,7 +3176,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  switch (form2)
 	    {
 	    case DW_FORM_ref_addr:
-	      if (likely (!op_multifile && !rd_multifile))
+	      if (likely (!op_multifile && !rd_multifile && !fi_multifile))
 		FAIL;
 	      break;
 	    case DW_FORM_ref_udata:
