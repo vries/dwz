@@ -36,6 +36,12 @@ foreach test $tests {
 	    continue
 	}
     }
+    if { ![istarget x86_64-*-*] } {
+	if { $basename == "pr24468.sh" } {
+	    unsupported "$test"
+	    continue
+	}
+    }
 
     set unsupported 0
     foreach required_exec $required_execs {
