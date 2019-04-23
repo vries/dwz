@@ -10043,8 +10043,6 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 
   memset (remove_sections, '\0', sizeof (remove_sections));
   ehdr = dso->ehdr;
-  if (multi_ehdr.e_ident[0] == '\0')
-    multi_ehdr = ehdr;
 
   for (i = 0; debug_sections[i].name; i++)
     if (debug_sections[i].new_size != debug_sections[i].size)
@@ -10767,6 +10765,9 @@ write_multifile (DSO *dso)
   bool any_cus = false;
   unsigned int i;
   int ret = 0;
+
+  if (multi_ehdr.e_ident[0] == '\0')
+    multi_ehdr = dso->ehdr;
 
   if ((multi_ptr_size && ptr_size != multi_ptr_size)
       || (multi_endian

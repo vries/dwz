@@ -24,12 +24,8 @@ if [ $(grep -qv "DWARF compression not beneficial" dwz.err \
     exit 1
 fi
 
-if [ $status -eq 1 ]; then
-    echo "PR24354 workaround used" > dwz.info
-else
-    [ $status -eq 0 ]
-fi
+[ $status -eq 0 ]
 
-cmp 1 1.saved
+smaller-than.sh 1 1.saved
 
-rm -f 1 1.saved 2 2.saved dwz.err
+rm -f 1 1.saved 2 2.saved dwz.err 3
