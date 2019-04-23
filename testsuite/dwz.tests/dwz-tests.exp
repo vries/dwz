@@ -5,6 +5,11 @@ set pwd [pwd]
 set env(PATH) $srcdir/scripts:$::env(PATH)
 set env(execs) $pwd
 
+exec mkdir -p $pwd/testsuite/dwz.tests/execs
+exec $srcdir/scripts/xunzip-dir.sh \
+    $srcdir/dwz.tests/execs.xz \
+    $pwd/testsuite/dwz.tests/execs
+
 foreach test $tests {
     global runtests
 
