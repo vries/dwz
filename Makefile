@@ -23,13 +23,18 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
-TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef
+TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
+	dw2-skip-prologue
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
 
 dw2-restrict:
 	$(CC) $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
+
+dw2-skip-prologue:
+	$(CC) $(TEST_SRC)/dw2-skip-prologue.S $(TEST_SRC)/dw2-skip-prologue.c \
+	  -DINLINED -DPTRBITS=64 -o $@ || touch $@
 
 py-section-script:
 	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@

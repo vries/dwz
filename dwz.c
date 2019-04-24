@@ -1765,7 +1765,13 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
 	continue;
 
       len = read_16 (ptr);
-      assert (ptr + len <= endsec);
+      if (unlikely (!(ptr + len <= endsec)))
+	{
+	  error (0, 0,
+		 "%s: locexpr length 0x%Lx exceeds .debug_loc section",
+		 dso->filename, (long long) len);
+	  return 1;
+	}
 
       if (read_exprloc (dso, die, ptr, len, &need_adjust))
 	return 1;
