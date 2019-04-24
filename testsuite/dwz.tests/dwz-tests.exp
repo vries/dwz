@@ -36,6 +36,9 @@ foreach test $tests {
 	    continue
 	}
     }
+    if { $basename == "pr24172.sh" } {
+	lappend required_execs "dw2-skip-prologue"
+    }
     if { ![istarget x86_64-*-*] } {
 	if { $basename == "pr24468.sh" } {
 	    unsupported "$test"
