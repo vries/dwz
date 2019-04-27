@@ -1540,12 +1540,15 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	    ref->die_op_call2_referenced = 1;
 	  if (ref->die_ck_state == CK_KNOWN)
 	    {
+	      dw_die_ref d;
 	      ref->die_ck_state = CK_BAD;
-	      while (!ref->die_root
-		     && ref->die_parent->die_ck_state == CK_KNOWN)
+
+	      d = ref;
+	      while (!d->die_root
+		     && d->die_parent->die_ck_state == CK_KNOWN)
 		{
-		  ref = ref->die_parent;
-		  ref->die_ck_state = CK_BAD;
+		  d = d->die_parent;
+		  d->die_ck_state = CK_BAD;
 		}
 	    }
 	  else
