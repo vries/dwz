@@ -1689,6 +1689,39 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
   return 0;
 }
 
+/* Add dummy die in CU at OFFSET.  */
+static inline void FORCE_INLINE
+add_dummy_die (dw_cu_ref cu, unsigned int offset)
+{
+  dw_die_ref ref;
+  struct dw_die ref_buf;
+  void **slot;
+
+  memset (&ref_buf, '\0', offsetof (struct dw_die, die_child));
+  ref_buf.die_offset = offset;
+  ref_buf.die_collapsed_child = 1;
+  ref_buf.die_referenced = 1;
+  ref_buf.die_intercu_referenced = 1;
+  if (off_htab == NULL)
+    {
+      ref = pool_alloc (dw_die, offsetof (struct dw_die, die_child));
+      memcpy (ref, &ref_buf, offsetof (struct dw_die, die_child));
+      off_htab_add_die (cu, ref);
+      return;
+    }
+
+  slot
+    = htab_find_slot_with_hash (off_htab, &ref_buf, ref_buf.die_offset, INSERT);
+  if (slot == NULL)
+    dwz_oom ();
+  if (*slot != NULL)
+    return;
+
+  ref = pool_alloc (dw_die, offsetof (struct dw_die, die_child));
+  memcpy (ref, &ref_buf, offsetof (struct dw_die, die_child));
+  *slot = (void *) ref;
+}
+
 /* Structure recording a portion of .debug_loc section that will need
    adjusting.  */
 struct debug_loc_adjust
@@ -4791,42 +4824,9 @@ read_debug_info (DSO *dso, int kind)
 		case DW_FORM_ref_addr:
 		  if (unlikely (low_mem_phase1))
 		    {
-		      dw_die_ref ref;
-		      struct dw_die ref_buf;
-		      void **slot;
-
-		      memset (&ref_buf, '\0',
-			      offsetof (struct dw_die, die_child));
-		      ref_buf.die_offset
+		      unsigned int offset
 			= read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
-		      ref_buf.die_collapsed_child = 1;
-		      ref_buf.die_referenced = 1;
-		      ref_buf.die_intercu_referenced = 1;
-		      if (off_htab == NULL)
-			{
-			  ref = pool_alloc (dw_die, offsetof (struct dw_die,
-							      die_child));
-			  memcpy (ref, &ref_buf,
-				  offsetof (struct dw_die, die_child));
-			  off_htab_add_die (cu, ref);
-			}
-		      else
-			{
-			  slot = htab_find_slot_with_hash (off_htab, &ref_buf,
-							   ref_buf.die_offset,
-							   INSERT);
-			  if (slot == NULL)
-			    dwz_oom ();
-			  if (*slot == NULL)
-			    {
-			      ref = pool_alloc (dw_die,
-						offsetof (struct dw_die,
-							  die_child));
-			      memcpy (ref, &ref_buf,
-				      offsetof (struct dw_die, die_child));
-			      *slot = (void *) ref;
-			    }
-			}
+		      add_dummy_die (cu, offset);
 		    }
 		  ptr += cu->cu_version == 2 ? ptr_size : 4;
 		  break;
