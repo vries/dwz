@@ -1192,7 +1192,7 @@ static htab_t types_off_htab;
 
 /* Function to add DIE into the hash table (and create the hash table
    when not already created).  */
-static int
+static void
 off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
 {
   void **slot;
@@ -1211,7 +1211,7 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
 	dwz_oom ();
       assert (*slot == NULL);
       *slot = die;
-      return 0;
+      return;
     }
 
   if (off_htab == NULL)
@@ -1228,7 +1228,6 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
     dwz_oom ();
   assert (*slot == NULL);
   *slot = die;
-  return 0;
 }
 
 /* For DIE_OFFSET return dw_die_ref whose die_offset field is equal
@@ -4809,8 +4808,7 @@ read_debug_info (DSO *dso, int kind)
 							      die_child));
 			  memcpy (ref, &ref_buf,
 				  offsetof (struct dw_die, die_child));
-			  if (off_htab_add_die (cu, ref))
-			    goto fail;
+			  off_htab_add_die (cu, ref);
 			}
 		      else
 			{
@@ -4970,8 +4968,7 @@ read_debug_info (DSO *dso, int kind)
 		}
 	    }
 
-	  if (off_htab_add_die (cu, die))
-	    goto fail;
+	  off_htab_add_die (cu, die);
 	}
 
       if (unlikely (low_mem_phase1))
