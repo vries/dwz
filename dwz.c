@@ -1722,6 +1722,297 @@ add_dummy_die (dw_cu_ref cu, unsigned int offset)
   *slot = (void *) ref;
 }
 
+/* Add dummy DIEs for expr_loc at PTR.  */
+static int
+read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
+			     size_t len)
+{
+  unsigned char *end = ptr + len;
+  unsigned char op;
+  GElf_Addr addr;
+  dw_cu_ref cu;
+
+  while (ptr < end)
+    {
+      op = *ptr++;
+      switch (op)
+	{
+	case DW_OP_addr:
+	  ptr += ptr_size;
+	  break;
+	case DW_OP_deref:
+	case DW_OP_dup:
+	case DW_OP_drop:
+	case DW_OP_over:
+	case DW_OP_swap:
+	case DW_OP_rot:
+	case DW_OP_xderef:
+	case DW_OP_abs:
+	case DW_OP_and:
+	case DW_OP_div:
+	case DW_OP_minus:
+	case DW_OP_mod:
+	case DW_OP_mul:
+	case DW_OP_neg:
+	case DW_OP_not:
+	case DW_OP_or:
+	case DW_OP_plus:
+	case DW_OP_shl:
+	case DW_OP_shr:
+	case DW_OP_shra:
+	case DW_OP_xor:
+	case DW_OP_eq:
+	case DW_OP_ge:
+	case DW_OP_gt:
+	case DW_OP_le:
+	case DW_OP_lt:
+	case DW_OP_ne:
+	case DW_OP_lit0 ... DW_OP_lit31:
+	case DW_OP_reg0 ... DW_OP_reg31:
+	case DW_OP_nop:
+	case DW_OP_push_object_address:
+	case DW_OP_form_tls_address:
+	case DW_OP_call_frame_cfa:
+	case DW_OP_stack_value:
+	case DW_OP_GNU_push_tls_address:
+	case DW_OP_GNU_uninit:
+	  break;
+	case DW_OP_const1u:
+	case DW_OP_pick:
+	case DW_OP_deref_size:
+	case DW_OP_xderef_size:
+	case DW_OP_const1s:
+	  ++ptr;
+	  break;
+	case DW_OP_const2u:
+	case DW_OP_const2s:
+	case DW_OP_skip:
+	case DW_OP_bra:
+	  ptr += 2;
+	  break;
+	case DW_OP_call2:
+	case DW_OP_call4:
+	case DW_OP_GNU_parameter_ref:
+	  if (op == DW_OP_call2)
+	    read_16 (ptr);
+	  else
+	    read_32 (ptr);
+	  break;
+	case DW_OP_const4u:
+	case DW_OP_const4s:
+	  ptr += 4;
+	  break;
+	case DW_OP_call_ref:
+	case DW_OP_GNU_implicit_pointer:
+	case DW_OP_GNU_variable_value:
+	  cu = die_cu (die);
+	  addr = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
+	  if (cu->cu_version == 2)
+	    ptr += ptr_size;
+	  else
+	    ptr += 4;
+	  /* Adding a dummy DIE ref to mark an intercu reference is only
+	     necessary if die_cu (ref) != cu, but we don't track cu's during
+	     low-mem phase1.  */
+	  add_dummy_die (cu, addr);
+	  if (op == DW_OP_GNU_implicit_pointer)
+	    read_uleb128 (ptr);
+	  break;
+	case DW_OP_const8u:
+	case DW_OP_const8s:
+	  ptr += 8;
+	  break;
+	case DW_OP_constu:
+	case DW_OP_plus_uconst:
+	case DW_OP_regx:
+	case DW_OP_piece:
+	case DW_OP_consts:
+	case DW_OP_breg0 ... DW_OP_breg31:
+	case DW_OP_fbreg:
+	  read_uleb128 (ptr);
+	  break;
+	case DW_OP_bregx:
+	case DW_OP_bit_piece:
+	  read_uleb128 (ptr);
+	  read_uleb128 (ptr);
+	  break;
+	case DW_OP_implicit_value:
+	  {
+	    uint32_t leni = read_uleb128 (ptr);
+	    ptr += leni;
+	  }
+	  break;
+	case DW_OP_GNU_entry_value:
+	  {
+	    uint32_t leni = read_uleb128 (ptr);
+	    if ((uint64_t) (end - ptr) < leni)
+	      {
+		error (0, 0, "%s: DWARF DW_OP_GNU_entry_value with too large"
+		       " length", dso->filename);
+		return 1;
+	      }
+	    if (read_exprloc_low_mem_phase1 (dso, die, ptr, leni))
+	      return 1;
+	    ptr += leni;
+	  }
+	  break;
+	case DW_OP_GNU_convert:
+	case DW_OP_GNU_reinterpret:
+	  read_uleb128 (ptr);
+	  break;
+	case DW_OP_GNU_regval_type:
+	  read_uleb128 (ptr);
+	  read_uleb128 (ptr);
+	  break;
+	case DW_OP_GNU_const_type:
+	  read_uleb128 (ptr);
+	  ptr += *ptr + 1;
+	  break;
+	case DW_OP_GNU_deref_type:
+	  ++ptr;
+	  read_uleb128 (ptr);
+	  break;
+	default:
+	  error (0, 0, "%s: Unknown DWARF %s",
+		 dso->filename, get_DW_OP_str (op));
+	  return 1;
+	}
+    }
+
+  return 0;
+}
+
+/* Add dummy DIEs for loclist at OFFSET.  */
+static int
+read_loclist_low_mem_phase1 (DSO *dso, dw_die_ref die, GElf_Addr offset)
+{
+  unsigned char *ptr, *endsec;
+  GElf_Addr low, high;
+  size_t len;
+
+  ptr = debug_sections[DEBUG_LOC].data;
+  if (ptr == NULL)
+    {
+      error (0, 0, "%s: loclistptr attribute, yet no .debug_loc section",
+	     dso->filename);
+      return 1;
+    }
+  if (offset >= debug_sections[DEBUG_LOC].size)
+    {
+      error (0, 0,
+	     "%s: loclistptr offset %Ld outside of .debug_loc section",
+	     dso->filename, (long long) offset);
+      return 1;
+    }
+  endsec = ptr + debug_sections[DEBUG_LOC].size;
+  ptr += offset;
+  while (ptr < endsec)
+    {
+      low = read_size (ptr, ptr_size);
+      high = read_size (ptr + ptr_size, ptr_size);
+      ptr += 2 * ptr_size;
+      if (low == 0 && high == 0)
+	break;
+
+      if (low == ~ (GElf_Addr) 0 || (ptr_size == 4 && low == 0xffffffff))
+	continue;
+
+      len = read_16 (ptr);
+      if (unlikely (!(ptr + len <= endsec)))
+	{
+	  error (0, 0,
+		 "%s: locexpr length 0x%Lx exceeds .debug_loc section",
+		 dso->filename, (long long) len);
+	  return 1;
+	}
+
+      if (read_exprloc_low_mem_phase1 (dso, die, ptr, len))
+	return 1;
+
+      ptr += len;
+    }
+
+  return 0;
+}
+
+/* Add dummy dies for loc_exprs and loc_lists referenced from DIE.  */
+static int
+add_locexpr_dummy_dies (DSO *dso, dw_cu_ref cu, dw_die_ref die,
+			unsigned char *ptr, uint32_t form, unsigned int attr,
+			size_t len)
+{
+  if (form == DW_FORM_block1)
+    {
+      switch (attr)
+	{
+	case DW_AT_frame_base:
+	case DW_AT_location:
+	case DW_AT_data_member_location:
+	case DW_AT_vtable_elem_location:
+	case DW_AT_byte_size:
+	case DW_AT_bit_offset:
+	case DW_AT_bit_size:
+	case DW_AT_string_length:
+	case DW_AT_lower_bound:
+	case DW_AT_return_addr:
+	case DW_AT_bit_stride:
+	case DW_AT_upper_bound:
+	case DW_AT_count:
+	case DW_AT_segment:
+	case DW_AT_static_link:
+	case DW_AT_use_location:
+	case DW_AT_allocated:
+	case DW_AT_associated:
+	case DW_AT_data_location:
+	case DW_AT_byte_stride:
+	case DW_AT_GNU_call_site_value:
+	case DW_AT_GNU_call_site_data_value:
+	case DW_AT_GNU_call_site_target:
+	case DW_AT_GNU_call_site_target_clobbered:
+	  if (read_exprloc_low_mem_phase1 (dso, die, ptr, len))
+	    return 1;
+	default:
+	  break;
+	}
+
+      return 0;
+    }
+
+  if (form == DW_FORM_exprloc)
+    return read_exprloc_low_mem_phase1 (dso, die, ptr, len);
+
+  switch (attr)
+    {
+    case DW_AT_location:
+    case DW_AT_string_length:
+    case DW_AT_return_addr:
+    case DW_AT_data_member_location:
+    case DW_AT_frame_base:
+    case DW_AT_segment:
+    case DW_AT_static_link:
+    case DW_AT_use_location:
+    case DW_AT_vtable_elem_location:
+      if ((cu->cu_version < 4 && form == DW_FORM_data4)
+	  || form == DW_FORM_sec_offset)
+	{
+	  if (read_loclist_low_mem_phase1 (dso, die, do_read_32 (ptr)))
+	    return 1;
+	  break;
+	}
+      else if (cu->cu_version < 4 && form == DW_FORM_data8)
+	{
+	  if (read_loclist_low_mem_phase1 (dso, die, do_read_64 (ptr)))
+	    return 1;
+	  break;
+	}
+      break;
+    default:
+      break;
+    }
+
+  return 0;
+}
+
 /* Structure recording a portion of .debug_loc section that will need
    adjusting.  */
 struct debug_loc_adjust
@@ -4819,6 +5110,12 @@ read_debug_info (DSO *dso, int kind)
 		      goto fail;
 		    }
 		}
+
+	      if (unlikely (low_mem_phase1)
+		  && add_locexpr_dummy_dies (dso, cu, die, ptr, form,
+					     t->attr[i].attr, len))
+		  goto fail;
+
 	      switch (form)
 		{
 		case DW_FORM_ref_addr:
