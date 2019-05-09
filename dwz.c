@@ -11608,11 +11608,15 @@ optimize_multifile (void)
 
   debug_sections[DEBUG_INFO].size = multi_info_off;
   debug_sections[DEBUG_INFO].data
-    = mmap (NULL, multi_info_off, PROT_READ, MAP_PRIVATE, multi_info_fd, 0);
+    = (multi_info_off
+       ? mmap (NULL, multi_info_off, PROT_READ, MAP_PRIVATE, multi_info_fd, 0)
+       : NULL);
   debug_sections[DEBUG_ABBREV].size = multi_abbrev_off;
   debug_sections[DEBUG_ABBREV].data
-    = mmap (NULL, multi_abbrev_off, PROT_READ, MAP_PRIVATE,
-	    multi_abbrev_fd, 0);
+    = (multi_abbrev_off
+       ? mmap (NULL, multi_abbrev_off, PROT_READ, MAP_PRIVATE,
+	       multi_abbrev_fd, 0)
+       : NULL);
   debug_sections[DEBUG_LINE].size = multi_line_off;
   debug_sections[DEBUG_LINE].data
     = mmap (NULL, multi_line_off, PROT_READ, MAP_PRIVATE, multi_line_fd, 0);
@@ -12295,6 +12299,13 @@ main (int argc, char *argv[])
       if (multifile && successcount < 2)
 	{
 	  error (0, 0, "Too few files for multifile optimization");
+	  multifile = NULL;
+	}
+      if (multifile
+	  && multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
+	{
+	  if (!quiet)
+	    error (0, 0, "No suitable DWARF found for multifile optimization");
 	  multifile = NULL;
 	}
       if (multifile)
