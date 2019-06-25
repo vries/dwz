@@ -10405,8 +10405,10 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	    dso->shdr[dso->ehdr.e_shstrndx].sh_size += len;
 	    if (dso->shdr[dso->ehdr.e_shstrndx].sh_offset < min_shoff)
 	      min_shoff = dso->shdr[dso->ehdr.e_shstrndx].sh_offset;
-	    for (j = dso->ehdr.e_shstrndx + 1; j < dso->ehdr.e_shnum; ++j)
-	      dso->shdr[j].sh_offset += len;
+	    for (j = 1; j < dso->ehdr.e_shnum; ++j)
+	      if (dso->shdr[j].sh_offset
+		  > dso->shdr[dso->ehdr.e_shstrndx].sh_offset)
+		dso->shdr[j].sh_offset += len;
 	    if (ehdr.e_shoff > dso->shdr[dso->ehdr.e_shstrndx].sh_offset)
 	      ehdr.e_shoff += len;
 	    shstrtabadd += len;
