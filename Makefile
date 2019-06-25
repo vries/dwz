@@ -24,7 +24,7 @@ PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
 TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
-	dw2-skip-prologue start
+	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
@@ -57,6 +57,9 @@ two-typedef:
 
 start:
 	$(CC) $(TEST_SRC)/start.c -o $@ -g -nostdlib
+
+implptr-64bit-d2o4a8r8t0:
+	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c -o $@ -g
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.

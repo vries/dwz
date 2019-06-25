@@ -2357,10 +2357,33 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 		}
 	      if (unlikely (op_multifile) && ref->die_collapsed_child)
 		ref = ref->die_parent;
-	      assert (((!op_multifile && !rd_multifile && !fi_multifile)
-		       || cu != die_cu (ref))
-		      && (!op_multifile
-			  || cu->cu_chunk == die_cu (ref)->cu_chunk));
+	      if (cu == die_cu (ref))
+		{
+		  /* The reference was encoded using a section-relative
+		     encoding, while if it could have been encoded using
+		     CU-relative encoding.  Typically, the latter is used,
+		     because:
+		     - it's potentially smaller, and
+		     - it doesn't require a link-time relocation.  */
+
+		  /* Assert that the multifile only contains section-relative
+		     encoding when necessary.  */
+		  assert (!op_multifile && !rd_multifile);
+
+		  if (fi_multifile)
+		    {
+		      /* It's possible that the input DWARF contains this
+			 sub-optimal reference.  We currently don't optimize
+			 this during single-file optimization, so it will still
+			 be there during finalize_multifile.  Bail out to handle
+			 this conservatively.  */
+		      die->die_ck_state = CK_BAD;
+		      return 0;
+		    }
+		}
+	      /* Assert that during op_multifile, die belongs to the same object
+		 as ref.  */
+	      assert (!op_multifile || cu->cu_chunk == die_cu (ref)->cu_chunk);
 	      handled = true;
 	      break;
 	    }
