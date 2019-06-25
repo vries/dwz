@@ -10351,6 +10351,189 @@ error_out:
   return NULL;
 }
 
+/* Implicit arg for compare_section_numbers.  Could be passed in as explicit arg
+   when using qsort_r instead.  */
+static DSO *compare_section_numbers_implicit_arg;
+
+/* Helper functon for sort_section_numbers.  */
+static int
+compare_section_numbers (const void *p1, const void *p2)
+{
+  DSO *dso = compare_section_numbers_implicit_arg;
+  const int i1 = *(const int *)p1;
+  const int i2 = *(const int *)p2;
+  GElf_Off o1;
+  GElf_Off o2;
+
+  /* Keep element 0 at 0.  */
+  if (i1 == 0 || i2 == 0)
+    {
+      if (i1 == i2)
+	return 0;
+      if (i1 == 0)
+	return -1;
+      if (i2 == 0)
+	return 1;
+    }
+
+  /* Get file offsets.  */
+  o1 = (i1 == dso->ehdr.e_shnum
+	? dso->ehdr.e_shoff
+	: dso->shdr[i1].sh_offset);
+  o2 = (i2 == dso->ehdr.e_shnum
+	? dso->ehdr.e_shoff
+	: dso->shdr[i2].sh_offset);
+
+  /* Compare file offsets.  */
+  if (o1 < o2)
+    return -1;
+  if (o1 > o2)
+    return 1;
+
+  /* In case file offset is the same, keep the original relative order.  */
+  if (i1 < i2)
+    return -1;
+  if (i1 > i2)
+    return 1;
+
+  return 0;
+}
+
+/* Sort SORTED_SECTION_NUMBERS in file offset order.  */
+static void
+sort_section_numbers (DSO *dso, unsigned int *sorted_section_numbers)
+{
+  unsigned int i;
+  unsigned int nr_sections = dso->ehdr.e_shnum;
+
+  /* Treat section header table as another section, with index
+     dso->ehdr.e_shnum.  */
+  nr_sections += 1;
+
+  for (i = 0; i < nr_sections; ++i)
+    sorted_section_numbers[i] = i;
+
+  compare_section_numbers_implicit_arg = dso;
+  qsort (sorted_section_numbers, nr_sections,
+	 sizeof (sorted_section_numbers[0]), compare_section_numbers);
+  compare_section_numbers_implicit_arg = NULL;
+
+  assert (sorted_section_numbers[0] == 0);
+}
+
+/* Verify file offset and size of sections and section header table.  */
+static void
+verify_sections (DSO *dso, unsigned int *sorted_section_numbers,
+		 GElf_Off *distance, int addsec, GElf_Off addsize,
+		 GElf_Ehdr ehdr)
+{
+  int i, j;
+  int prev, update_prev;
+  GElf_Off offset, prev_offset, prev_size;
+  GElf_Off section_header_table_size
+    = dso->ehdr.e_shentsize * ehdr.e_shnum;
+
+  prev = -1;
+  for (i = 1, j = sorted_section_numbers[i];
+       i < (dso->ehdr.e_shnum + 1);
+       ++i, j = sorted_section_numbers[i], prev = update_prev)
+    {
+      if (j != dso->ehdr.e_shnum && dso->shdr[j].sh_type == SHT_NOBITS)
+	{
+	  update_prev = prev;
+	  continue;
+	}
+      update_prev = j;
+
+      if (prev == -1)
+	continue;
+
+      offset = (j == dso->ehdr.e_shnum
+		? ehdr.e_shoff
+		: dso->shdr[j].sh_offset);
+
+      prev_offset = (prev == dso->ehdr.e_shnum
+		     ? ehdr.e_shoff
+		     : dso->shdr[prev].sh_offset);
+
+      prev_size = (prev == dso->ehdr.e_shnum
+		   ? section_header_table_size
+		   : (dso->shdr[prev].sh_type == SHT_NOBITS
+		      ? 0
+		      : dso->shdr[prev].sh_size));
+
+      if (distance != NULL)
+	assert ((prev_offset + prev_size + distance[prev]
+		 + (prev == addsec ? addsize : 0))
+		== offset);
+      else
+	assert ((prev_offset + prev_size + (prev == addsec ? addsize : 0))
+		<= offset);
+    }
+}
+
+/* Calculate distance between sections and section header table.  */
+static int
+calculate_section_distance (DSO *dso, unsigned int *sorted_section_numbers,
+			    GElf_Off *distance)
+{
+  int i, j;
+  int prev, update_prev;
+  GElf_Off offset, prev_offset, prev_size;
+  GElf_Off section_header_table_size
+    = dso->ehdr.e_shentsize * dso->ehdr.e_shnum;
+
+  prev = -1;
+  for (i = 1, j = sorted_section_numbers[i];
+       i < (dso->ehdr.e_shnum + 1);
+       ++i, j = sorted_section_numbers[i], prev = update_prev)
+    {
+      if (j != dso->ehdr.e_shnum && dso->shdr[j].sh_type == SHT_NOBITS)
+	{
+	  update_prev = prev;
+	  continue;
+	}
+      update_prev = j;
+
+      if (prev == -1)
+	continue;
+
+      offset = (j == dso->ehdr.e_shnum
+		? dso->ehdr.e_shoff
+		: dso->shdr[j].sh_offset);
+
+      prev_offset = (prev == dso->ehdr.e_shnum
+		     ? dso->ehdr.e_shoff
+		     : dso->shdr[prev].sh_offset);
+
+      prev_size = (prev == dso->ehdr.e_shnum
+		   ? section_header_table_size
+		   : dso->shdr[prev].sh_size);
+
+      if (prev_offset + prev_size > offset)
+	{
+	  error (0, 0, "Section overlap detected");
+	  if (prev == dso->ehdr.e_shnum)
+	    error (0, 0, "Section header table: [0x%lx, 0x%ld)", prev_offset,
+		   prev_offset + prev_size);
+	  else
+	    error (0, 0, "Section %d: [0x%lx, 0x%ld)", j, prev_offset,
+		   prev_offset + prev_size);
+	  if (j == dso->ehdr.e_shnum)
+	    error (0, 0, "Section header table: 0x%lx", offset);
+	  else
+	    error (0, 0, "Section %d: 0x%lx", j, offset);
+	  return 1;
+	}
+
+      distance[prev] = offset - (prev_offset + prev_size);
+    }
+
+  verify_sections (dso, sorted_section_numbers, distance, -1, 0, dso->ehdr);
+
+  return 0;
+}
+
 /* Store new ELF into FILE.  debug_sections array contains
    new_data/new_size pairs where needed.  */
 static int
@@ -10366,9 +10549,16 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   GElf_Word shstrtabadd = 0;
   char *shstrtab = NULL;
   bool remove_sections[SECTION_COUNT];
+  GElf_Off distance[dso->ehdr.e_shnum];
+  /* Array of sections and section header table sorted by file offset.  */
+  unsigned int sorted_section_numbers[dso->ehdr.e_shnum + 1];
 
   memset (remove_sections, '\0', sizeof (remove_sections));
   ehdr = dso->ehdr;
+
+  sort_section_numbers (dso, sorted_section_numbers);
+  if (calculate_section_distance (dso, sorted_section_numbers, distance))
+    return 1;
 
   for (i = 0; debug_sections[i].name; i++)
     if (debug_sections[i].new_size != debug_sections[i].size)
@@ -10456,6 +10646,11 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  }
       }
 
+  /* Verify that we did not change section layout, by checking that the
+     distances between sections and section header table remained the same.  */
+  verify_sections (dso, sorted_section_numbers, distance, addsec, addsize,
+		   ehdr);
+
   if (min_shoff != ~(GElf_Off) 0)
     {
       for (j = 1; j < dso->ehdr.e_shnum; ++j)
@@ -10522,6 +10717,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	    }
 	}
     }
+
+  verify_sections (dso, sorted_section_numbers, NULL, addsec, addsize,
+		   ehdr);
 
   if (shstrtabadd != 0)
     {
