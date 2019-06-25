@@ -59,7 +59,8 @@ start:
 	$(CC) $(TEST_SRC)/start.c -o $@ -g -nostdlib
 
 implptr-64bit-d2o4a8r8t0:
-	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c -o $@ -g
+	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c -o $@ \
+	  -g || touch $@
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
