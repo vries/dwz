@@ -10667,9 +10667,12 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	     >= min_shoff aren't non-ALLOC.  */
 	  GElf_Off last_shoff = 0;
 	  int k = -1;
-	  bool shdr_placed = false;
-	  for (j = 1; j < dso->ehdr.e_shnum; ++j)
-	    if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
+	  int l;
+	  for (l = 1, j = sorted_section_numbers[l]; l <= dso->ehdr.e_shnum;
+	       ++l, j = sorted_section_numbers[l])
+	    if (j == dso->ehdr.e_shnum)
+	      continue;
+	    else if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
 	      continue;
 	    else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
 	      {
@@ -10677,35 +10680,27 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 			     "ones", dso->filename);
 		return 1;
 	      }
-	    else if (dso->shdr[j].sh_offset < last_shoff)
-	      {
-		error (0, 0, "Section offsets in %s not monotonically "
-			     "increasing", dso->filename);
-		return 1;
-	      }
 	    else
 	      {
+		assert (dso->shdr[j].sh_offset >= last_shoff);
+
 		if (k == -1)
-		  k = j;
+		  k = l;
 		last_shoff = dso->shdr[j].sh_offset + dso->shdr[j].sh_size;
 	      }
 	  last_shoff = min_shoff;
-	  for (j = k; j <= dso->ehdr.e_shnum; ++j)
+	  for (l = k, j = sorted_section_numbers[l]; l <= dso->ehdr.e_shnum;
+	       ++l, j = sorted_section_numbers[l])
 	    {
-	      if (!shdr_placed
-		  && ehdr.e_shoff >= min_shoff
-		  && (j == dso->ehdr.e_shnum
-		      || ehdr.e_shoff < dso->shdr[j].sh_offset))
+	      if (j == dso->ehdr.e_shnum)
 		{
 		  if (ehdr.e_ident[EI_CLASS] == ELFCLASS64)
 		    ehdr.e_shoff = (last_shoff + 7) & -8;
 		  else
 		    ehdr.e_shoff = (last_shoff + 3) & -4;
 		  last_shoff = ehdr.e_shoff + ehdr.e_shnum * ehdr.e_shentsize;
-		  shdr_placed = true;
+		  continue;
 		}
-	      if (j == dso->ehdr.e_shnum)
-		break;
 	      dso->shdr[j].sh_offset = last_shoff;
 	      if (dso->shdr[j].sh_addralign > 1)
 		dso->shdr[j].sh_offset

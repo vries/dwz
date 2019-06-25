@@ -42,6 +42,9 @@ foreach test $tests {
     if { $basename == "pr24170.sh" } {
 	lappend required_execs "implptr-64bit-d2o4a8r8t0"
     }
+    if { $basename == "gold-gdb-index.sh" } {
+	lappend required_execs "hello-gold-gdb-index"
+    }
     if { ![istarget x86_64-*-*] } {
 	if { $basename == "pr24468.sh" } {
 	    unsupported "$test"
