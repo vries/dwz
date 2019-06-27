@@ -10434,10 +10434,10 @@ verify_sections (DSO *dso, unsigned int *sorted_section_numbers,
     = dso->ehdr.e_shentsize * ehdr.e_shnum;
 
   prev = -1;
-  for (i = 1, j = sorted_section_numbers[i];
-       i < (dso->ehdr.e_shnum + 1);
-       ++i, j = sorted_section_numbers[i], prev = update_prev)
+  for (i = 1; i < (dso->ehdr.e_shnum + 1); ++i, prev = update_prev)
     {
+      j = sorted_section_numbers[i];
+
       if (j != dso->ehdr.e_shnum && dso->shdr[j].sh_type == SHT_NOBITS)
 	{
 	  update_prev = prev;
@@ -10484,10 +10484,10 @@ calculate_section_distance (DSO *dso, unsigned int *sorted_section_numbers,
     = dso->ehdr.e_shentsize * dso->ehdr.e_shnum;
 
   prev = -1;
-  for (i = 1, j = sorted_section_numbers[i];
-       i < (dso->ehdr.e_shnum + 1);
-       ++i, j = sorted_section_numbers[i], prev = update_prev)
+  for (i = 1; i < (dso->ehdr.e_shnum + 1); ++i, prev = update_prev)
     {
+      j = sorted_section_numbers[i];
+
       if (j != dso->ehdr.e_shnum && dso->shdr[j].sh_type == SHT_NOBITS)
 	{
 	  update_prev = prev;
@@ -10668,9 +10668,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  GElf_Off last_shoff = 0;
 	  int k = -1;
 	  int l;
-	  for (l = 1, j = sorted_section_numbers[l]; l <= dso->ehdr.e_shnum;
-	       ++l, j = sorted_section_numbers[l])
+	  for (l = 1; l <= dso->ehdr.e_shnum; ++l)
 	    {
+	      j = sorted_section_numbers[l];
 	      if (j == dso->ehdr.e_shnum)
 		continue;
 	      else if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
@@ -10691,9 +10691,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		}
 	    }
 	  last_shoff = min_shoff;
-	  for (l = k, j = sorted_section_numbers[l]; l <= dso->ehdr.e_shnum;
-	       ++l, j = sorted_section_numbers[l])
+	  for (l = k; l <= dso->ehdr.e_shnum; ++l)
 	    {
+	      j = sorted_section_numbers[l];
 	      if (j == dso->ehdr.e_shnum)
 		{
 		  if (ehdr.e_ident[EI_CLASS] == ELFCLASS64)
