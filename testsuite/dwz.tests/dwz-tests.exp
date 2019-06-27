@@ -70,8 +70,14 @@ foreach test $tests {
 
     cd $dir
     if { [catch { exec sh -e $test } msg] } {
-	puts "$msg"
-	fail "$test"
+	if { [lindex $::errorCode 0] == "CHILDSTATUS" && \
+		 [lindex $::errorCode 2] == 77 } {
+	    unsupported "$test"
+	    exec rm -Rf $dir
+	} else {
+	    puts "$msg"
+	    fail "$test"
+	}
     } else {
 	if { [file exists dwz.info ] } {
 	    set info [exec cat dwz.info]

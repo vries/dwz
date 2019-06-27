@@ -4,7 +4,9 @@ cp 1 2
 dwz -m 3 1 2
 
 cnt=$(readelf -S 3 | grep "\.debug_info" | wc -l)
-[ $cnt -eq 0 ]
+if [ $cnt -ne 0 ]; then
+    exit 77
+fi
 
 smaller-than.sh 1 $execs/min
 smaller-than.sh 2 $execs/min
