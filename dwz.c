@@ -10670,24 +10670,26 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	  int l;
 	  for (l = 1, j = sorted_section_numbers[l]; l <= dso->ehdr.e_shnum;
 	       ++l, j = sorted_section_numbers[l])
-	    if (j == dso->ehdr.e_shnum)
-	      continue;
-	    else if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
-	      continue;
-	    else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
-	      {
-		error (0, 0, "Allocatable section in %s after non-allocatable "
-			     "ones", dso->filename);
-		return 1;
-	      }
-	    else
-	      {
-		assert (dso->shdr[j].sh_offset >= last_shoff);
+	    {
+	      if (j == dso->ehdr.e_shnum)
+		continue;
+	      else if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
+		continue;
+	      else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
+		{
+		  error (0, 0, "Allocatable section in %s after "
+			 "non-allocatable ones", dso->filename);
+		  return 1;
+		}
+	      else
+		{
+		  assert (dso->shdr[j].sh_offset >= last_shoff);
 
-		if (k == -1)
-		  k = l;
-		last_shoff = dso->shdr[j].sh_offset + dso->shdr[j].sh_size;
-	      }
+		  if (k == -1)
+		    k = l;
+		  last_shoff = dso->shdr[j].sh_offset + dso->shdr[j].sh_size;
+		}
+	    }
 	  last_shoff = min_shoff;
 	  for (l = k, j = sorted_section_numbers[l]; l <= dso->ehdr.e_shnum;
 	       ++l, j = sorted_section_numbers[l])
