@@ -10549,7 +10549,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   GElf_Word shstrtabadd = 0;
   char *shstrtab = NULL;
   bool remove_sections[SECTION_COUNT];
-  GElf_Off distance[dso->ehdr.e_shnum];
+  GElf_Off distance[dso->ehdr.e_shnum + 1];
   /* Array of sections and section header table sorted by file offset.  */
   unsigned int sorted_section_numbers[dso->ehdr.e_shnum + 1];
 
