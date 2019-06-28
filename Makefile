@@ -30,7 +30,7 @@ hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
 
 dw2-restrict:
-	$(CC) $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
+	$(CC) -no-pie $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
 
 dw2-skip-prologue:
 	$(CC) $(TEST_SRC)/dw2-skip-prologue.S $(TEST_SRC)/dw2-skip-prologue.c \
