@@ -24,7 +24,8 @@ PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
 TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
-	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index
+	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
+	start-gold
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
@@ -57,6 +58,9 @@ two-typedef:
 
 start:
 	$(CC) $(TEST_SRC)/start.c -o $@ -g -nostdlib
+
+start-gold:
+	$(CC) $(TEST_SRC)/start.c -fuse-ld=gold -o $@ -g -nostdlib || touch $@
 
 implptr-64bit-d2o4a8r8t0:
 	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c -o $@ \

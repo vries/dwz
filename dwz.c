@@ -10673,7 +10673,10 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	      j = sorted_section_numbers[l];
 	      if (j == dso->ehdr.e_shnum)
 		continue;
-	      else if (dso->shdr[j].sh_offset < min_shoff && !last_shoff)
+	      else if (!last_shoff
+		       && (dso->shdr[j].sh_offset < min_shoff
+			   || (dso->shdr[j].sh_offset == min_shoff
+			       && dso->shdr[j].sh_size == 0)))
 		continue;
 	      else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
 		{
