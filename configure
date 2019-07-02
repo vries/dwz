@@ -1,6 +1,12 @@
 #!/bin/sh
 srcdir=$(cd $(dirname $0); pwd -P)
 
+if [ "$srcdir" = "$(pwd -P)" ]; then
+    # We're not in a separate build dir, but in the source dir, we already
+    # have a Makefile.
+    exit 0
+fi
+
 cat > Makefile <<EOF
 srcdir:=$srcdir
 
