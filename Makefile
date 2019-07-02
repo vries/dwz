@@ -16,7 +16,7 @@ dwz: $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lelf
 install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
-	install -D -m 644 dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
+	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
 clean:
 	rm -f $(OBJECTS) *~ core* dwz
 
