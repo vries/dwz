@@ -10514,15 +10514,18 @@ calculate_section_distance (DSO *dso, unsigned int *sorted_section_numbers,
 	{
 	  error (0, 0, "Section overlap detected");
 	  if (prev == dso->ehdr.e_shnum)
-	    error (0, 0, "Section header table: [0x%lx, 0x%ld)", prev_offset,
-		   prev_offset + prev_size);
+	    error (0, 0, "Section header table: [0x%llx, 0x%lld)",
+		   (unsigned long long)prev_offset,
+		   (unsigned long long)(prev_offset + prev_size));
 	  else
-	    error (0, 0, "Section %d: [0x%lx, 0x%ld)", j, prev_offset,
-		   prev_offset + prev_size);
+	    error (0, 0, "Section %d: [0x%llx, 0x%lld)", j,
+		   (unsigned long long)prev_offset,
+		   (unsigned long long)(prev_offset + prev_size));
 	  if (j == dso->ehdr.e_shnum)
-	    error (0, 0, "Section header table: 0x%lx", offset);
+	    error (0, 0, "Section header table: 0x%llx",
+		   (unsigned long long)offset);
 	  else
-	    error (0, 0, "Section %d: 0x%lx", j, offset);
+	    error (0, 0, "Section %d: 0x%llx", j, (unsigned long long)offset);
 	  return 1;
 	}
 
