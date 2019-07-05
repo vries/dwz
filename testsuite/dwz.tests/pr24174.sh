@@ -1,5 +1,10 @@
-cp $execs/hello 1
+exec=$execs/hello
+cp $exec 1
 objcopy --compress-debug-sections 1
+if cmp -s $exec 1; then
+    exit 77
+fi
+
 if dwz 1 2>dwz.err; status=$?; then
    true
 fi
