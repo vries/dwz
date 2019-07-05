@@ -1,7 +1,12 @@
 exec=$execs/hello
 cp $exec 1
 objcopy --compress-debug-sections 1
-if cmp -s $exec 1; then
+if readelf -S 1 \
+	| grep -A1 '\.debug_' \
+	| grep -v '\.debug_' \
+	| grep -q 'C'; then
+    true
+else
     exit 77
 fi
 
