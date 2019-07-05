@@ -33,7 +33,7 @@ hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
 
 hello-gnu-pubnames:
-	$(CC) $(TEST_SRC)/hello.c -o $@ -g -ggnu-pubnames
+	$(CC) $(TEST_SRC)/hello.c -o $@ -g -ggnu-pubnames || touch $@
 
 dw2-restrict:
 	$(CC) -no-pie $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@

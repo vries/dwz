@@ -52,6 +52,9 @@ foreach test $tests {
     if { $basename == "pr24747.sh" } {
 	lappend required_execs "start-gold"
     }
+    if { $basename == "pr24771.sh" } {
+	lappend required_execs "hello-gnu-pubnames"
+    }
     if { ![istarget x86_64-*-*] } {
 	if { $basename == "pr24468.sh" } {
 	    unsupported "$test"
