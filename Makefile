@@ -18,7 +18,9 @@ install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
 	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
 clean:
-	rm -f $(OBJECTS) *~ core* dwz
+	rm -f $(OBJECTS) *~ core* dwz $(TEST_EXECS) $(DWZ_TEST_SOURCES) \
+	  dwz.log dwz.sum
+	rm -Rf testsuite-bin tmp.*
 
 PWD:=$(shell pwd -P)
 
