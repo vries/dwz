@@ -25,10 +25,13 @@ PWD:=$(shell pwd -P)
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
 TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
 	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
-	start-gold
+	start-gold hello-gnu-pubnames
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
+
+hello-gnu-pubnames:
+	$(CC) $(TEST_SRC)/hello.c -o $@ -g -ggnu-pubnames
 
 dw2-restrict:
 	$(CC) -no-pie $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@

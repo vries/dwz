@@ -436,6 +436,8 @@ enum debug_section_kind
   DEBUG_ARANGES,
   DEBUG_PUBNAMES,
   DEBUG_PUBTYPES,
+  DEBUG_GNU_PUBNAMES,
+  DEBUG_GNU_PUBTYPES,
   DEBUG_MACINFO,
   DEBUG_LOC,
   DEBUG_FRAME,
@@ -467,6 +469,8 @@ static struct
     { ".debug_aranges", NULL, NULL, 0, 0, 0 },
     { ".debug_pubnames", NULL, NULL, 0, 0, 0 },
     { ".debug_pubtypes", NULL, NULL, 0, 0, 0 },
+    { ".debug_gnu_pubnames", NULL, NULL, 0, 0, 0 },
+    { ".debug_gnu_pubtypes", NULL, NULL, 0, 0, 0 },
     { ".debug_macinfo", NULL, NULL, 0, 0, 0 },
     { ".debug_loc", NULL, NULL, 0, 0, 0 },
     { ".debug_frame", NULL, NULL, 0, 0, 0 },
@@ -11755,6 +11759,10 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	  debug_sections[DEBUG_PUBNAMES].new_size = 0;
 	  debug_sections[DEBUG_PUBTYPES].new_data = NULL;
 	  debug_sections[DEBUG_PUBTYPES].new_size = 0;
+	  debug_sections[DEBUG_GNU_PUBNAMES].new_data = NULL;
+	  debug_sections[DEBUG_GNU_PUBNAMES].new_size = 0;
+	  debug_sections[DEBUG_GNU_PUBTYPES].new_data = NULL;
+	  debug_sections[DEBUG_GNU_PUBTYPES].new_size = 0;
 
 	  if (multifile && !fi_multifile && !low_mem)
 	    write_multifile (dso);
