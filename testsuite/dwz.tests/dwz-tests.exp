@@ -65,6 +65,12 @@ foreach test $tests {
 	    continue
 	}
     }
+    if { $basename == "gdb-add-index.sh" } {
+        if { [catch { exec which gdb-add-index } ] } {
+            unsupported "$test"
+            continue
+        }
+    }
 
     set unsupported 0
     foreach required_exec $required_execs {
