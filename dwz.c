@@ -40,6 +40,13 @@
 #include "hashtab.h"
 #include "sha1.h"
 
+#ifndef SHF_COMPRESSED
+ /* Glibc elf.h contains SHF_COMPRESSED starting v2.22.  Libelf libelf.h has
+    a fallback definition starting v0.166.  Define a fallback definition here
+    for the case of both pre-v2.22 glibc and pre-v0.166 libelf.  */
+# define SHF_COMPRESSED (1 << 11)  /* Section with compressed data.  */
+#endif
+
 /* Theory of operation:
    The DWZ tool can either optimize debug sections of a single
    executable or shared library at a time, or, when -m option
