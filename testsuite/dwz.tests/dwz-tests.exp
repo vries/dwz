@@ -71,6 +71,16 @@ foreach test $tests {
             continue
         }
     }
+    if { [istarget mips*-*-*] } {
+	# elfutils don't have a MIPS backend (PR elfutils/24795), so eu-strip
+	# doesn't work as expected.
+	if { $basename == "eu-strip-unstrip.sh" || \
+		 $basename == "eu-strip-unstrip-multifile.sh" || \
+		 $basename == "pr24173.sh" } {
+	    unsupported "$test"
+	    continue
+	}
+    }
 
     set unsupported 0
     foreach required_exec $required_execs {
