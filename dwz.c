@@ -10566,6 +10566,10 @@ write_dso (DSO *dso, const char *file, struct stat *st)
   GElf_Off distance[dso->ehdr.e_shnum + 1];
   /* Array of sections and section header table sorted by file offset.  */
   unsigned int sorted_section_numbers[dso->ehdr.e_shnum + 1];
+  GElf_Off old_sh_offset[dso->ehdr.e_shnum];
+
+  for (i = 1; i < dso->ehdr.e_shnum; ++i)
+    old_sh_offset[i] = dso->shdr[i].sh_offset;
 
   memset (remove_sections, '\0', sizeof (remove_sections));
   ehdr = dso->ehdr;
@@ -10693,6 +10697,8 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 			       && (dso->shdr[j].sh_size == 0
 				   || dso->shdr[j].sh_type == SHT_NOBITS))))
 		continue;
+	      else if (dso->shdr[j].sh_type == SHT_NOBITS)
+		continue;
 	      else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
 		{
 		  error (0, 0, "Allocatable section in %s after "
@@ -10721,6 +10727,9 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		  last_shoff = ehdr.e_shoff + ehdr.e_shnum * ehdr.e_shentsize;
 		  continue;
 		}
+	      /* Ignore SHT_NOBITS sections.  */
+	      if (dso->shdr[j].sh_type == SHT_NOBITS)
+		continue;
 	      dso->shdr[j].sh_offset = last_shoff;
 	      if (dso->shdr[j].sh_addralign > 1)
 		dso->shdr[j].sh_offset
@@ -10732,6 +10741,10 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 	    }
 	}
     }
+
+  for (i = 1; i < dso->ehdr.e_shnum; ++i)
+    if (dso->shdr[i].sh_type == SHT_NOBITS)
+      dso->shdr[i].sh_offset = old_sh_offset[i];
 
   verify_sections (dso, sorted_section_numbers, NULL, addsec, addsize,
 		   ehdr);
