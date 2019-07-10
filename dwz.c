@@ -10691,7 +10691,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
 		       && (dso->shdr[j].sh_offset < min_shoff
 			   || (dso->shdr[j].sh_offset == min_shoff
 			       && (dso->shdr[j].sh_size == 0
-				   || dso->shdr[j].sh_type & SHT_NOBITS))))
+				   || dso->shdr[j].sh_type == SHT_NOBITS))))
 		continue;
 	      else if ((dso->shdr[j].sh_flags & SHF_ALLOC) != 0)
 		{
