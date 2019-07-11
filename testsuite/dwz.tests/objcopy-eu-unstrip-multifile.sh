@@ -17,6 +17,15 @@ fi
 
 [ $status -eq 0 ]
 
+version=$(eu-unstrip --version | head -n 1 | cut -d ' ' -f3)
+major=$(echo $version | sed 's%\..*%%')
+minor=$(echo $version | sed 's%.*\.%%')
+if [ $major -gt 0 ] || [ $minor -ge 168 ]; then
+    true
+else
+    exit 77
+fi
+
 eu-unstrip 1.stripped 1.debug -o 1.unstripped
 
 smaller-than.sh 1.unstripped 1
