@@ -10276,7 +10276,7 @@ read_dwarf (DSO *dso, bool quieter)
       if (!quieter)
 	error (0, 0, "%s: .debug_info section not present",
 	       dso->filename);
-      return 1;
+      return 3;
     }
 
   if (debug_sections[GNU_DEBUGALTLINK].data != NULL)
@@ -11815,6 +11815,11 @@ dwz (const char *file, const char *outfile, struct file_result *res,
   free (dso);
   if (ret == 0 && !low_mem)
     res->res = 0;
+  if (ret == 3)
+    {
+      ret = (outfile != NULL) ? 1 : 0;
+      res->res = -1;
+    }
   return ret;
 }
 
