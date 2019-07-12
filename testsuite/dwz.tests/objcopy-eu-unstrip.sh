@@ -3,6 +3,11 @@ cp ../hello 1
 objcopy --only-keep-debug 1 1.debug
 objcopy --strip-debug 1 1.stripped
 
+if ! eu-unstrip 1.stripped 1.debug -o 1.unstripped; then
+    exit 77
+fi
+rm 1.unstripped
+
 if dwz 1.debug 2> dwz.err; status=$?; then
     true
 fi
