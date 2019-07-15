@@ -29,6 +29,7 @@ fi
 
 eu-unstrip 1.stripped 1.debug -o 1.unstripped
 
-smaller-than.sh 1.unstripped 1
+# An unstripped exec can end up larger than the original (PR elfutils/24809).
+#smaller-than.sh 1.unstripped 1
 
 rm -f 1 1.debug 1.stripped 1.unstripped dwz.err
