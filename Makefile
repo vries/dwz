@@ -27,7 +27,7 @@ PWD:=$(shell pwd -P)
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
 TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
 	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
-	start-gold hello-gnu-pubnames
+	start-gold hello-gnu-pubnames varval
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
@@ -74,6 +74,11 @@ implptr-64bit-d2o4a8r8t0:
 hello-gold-gdb-index:
 	$(CC) $(TEST_SRC)/hello.c -g -fuse-ld=gold -Wl,--gdb-index -o $@ \
 	    || touch $@
+
+varval:
+	$(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@ \
+	    || touch $@
+
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.

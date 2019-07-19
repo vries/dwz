@@ -1596,6 +1596,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 		     dso->filename, get_DW_OP_str (op));
 	      return 1;
 	    }
+	  ref->die_no_multifile = 1;
 	  if (unlikely (low_mem))
 	    {
 	      ref->die_referenced = 1;
