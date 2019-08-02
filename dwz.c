@@ -1,5 +1,6 @@
-/* Copyright (C) 2001-2015 Red Hat, Inc.
+/* Copyright (C) 2001-2018 Red Hat, Inc.
    Copyright (C) 2003 Free Software Foundation, Inc.
+   Copyright (C) 2019 SUSE LLC.
    Written by Jakub Jelinek <jakub@redhat.com>, 2012.
 
    This program is free software; you can redistribute it and/or modify
