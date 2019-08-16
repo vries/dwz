@@ -5,7 +5,8 @@ srcdir=$(shell pwd)
 endif
 CFLAGS = -O2 -g
 DWZ_VERSION := $(shell cat $(srcdir)/VERSION)
-override CFLAGS += -Wall -W -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"$(DWZ_VERSION)"'
+override CFLAGS += -Wall -W -D_FILE_OFFSET_BITS=64 \
+	-DDWZ_VERSION='"$(DWZ_VERSION)"' $(shell cat $(srcdir)/COPYRIGHT_YEARS)
 prefix = /usr
 exec_prefix = $(prefix)
 bindir = $(exec_prefix)/bin
@@ -52,7 +53,8 @@ DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 
 dwz-for-test: $(DWZ_TEST_SOURCES)
 	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W -DDEVEL \
-	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"' -I$(srcdir)
+	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"' -I$(srcdir) \
+	  $(shell cat $(srcdir)/COPYRIGHT_YEARS)
 
 min:
 	$(CC) $(TEST_SRC)/min.c $(TEST_SRC)/min-2.c -o $@ -g

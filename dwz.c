@@ -12395,8 +12395,9 @@ version (void)
 {
   fprintf (stderr,
 	   "dwz version " DWZ_VERSION "\n"
-	   "Copyright (C) 2001-2012 Red Hat, Inc.\n"
-	   "Copyright (C) 2003 Free Software Foundation, Inc.\n"
+	   "Copyright (C) " RH_YEARS " Red Hat, Inc.\n"
+	   "Copyright (C) " FSF_YEARS " Free Software Foundation, Inc.\n"
+	   "Copyright (C) " SUSE_YEARS " SUSE LLC.\n"
 	   "This program is free software; you may redistribute it under the terms of\n"
 	   "the GNU General Public License version 3 or (at your option) any later version.\n"
 	   "This program has absolutely no warranty.\n");
