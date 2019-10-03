@@ -11,7 +11,10 @@ rootdir=dwz
 tarfile=dwz-$version.tar
 server=sourceware.org
 ftpdir=/sourceware/ftp/pub/dwz/releases
-checksums="md5sum sha512sum"
+# The server itself seems to add a sha512.sum file, so lets not duplicate that
+# effort.
+#checksums="md5sum sha512sum"
+checksums="md5sum"
 
 repo="$pwd"
 
