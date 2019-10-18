@@ -3998,7 +3998,7 @@ dump_dies (int depth, dw_die_ref die)
    plus then all the strings which are just suffixes of other
    strings.  E.g. if .debug_str section contains "foobar" string
    and .debug_info section refers to the whole "foobar" string
-   as well as "bar" by refering to "foobar" + 3.
+   as well as "bar" by referring to "foobar" + 3.
    The second set is used during op_multifile and fi_multifile,
    noting each string and in addition to that how many times it
    has been seen (0, 1 or more than 1).  If 0 then it isn't present
@@ -4802,7 +4802,7 @@ collapse_children (dw_cu_ref cu, dw_die_ref die)
 
 /* First phase of the DWARF compression.  Parse .debug_info section
    (for kind == DEBUG_INFO) or .debug_types section (for kind == DEBUG_TYPES)
-   for each CU in it construct internal represetnation for the CU
+   for each CU in it construct internal representation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
 static int
 read_debug_info (DSO *dso, int kind)
@@ -10368,7 +10368,7 @@ error_out:
    when using qsort_r instead.  */
 static DSO *compare_section_numbers_implicit_arg;
 
-/* Helper functon for sort_section_numbers.  */
+/* Helper function for sort_section_numbers.  */
 static int
 compare_section_numbers (const void *p1, const void *p2)
 {
@@ -11827,7 +11827,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 
 /* In order to free all malloced memory at the end of optimize_multifile,
    communicate .debug_str tail optimized offset list from optimize_multifile
-   to read_multifile using an mmaped chunk of memory pointed by this
+   to read_multifile using an mmapped chunk of memory pointed by this
    variable.  */
 static unsigned int *strp_tail_off_list;
 
