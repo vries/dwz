@@ -12393,13 +12393,13 @@ make_temp_file (const char *name)
     return -1;
   offset = 0;
 
-  strncpy (&buf[offset], tmpdir, buf_len - offset);
+  strcpy (&buf[offset], tmpdir);
   offset += strlen (tmpdir);
 
-  strncpy (&buf[offset], name, buf_len - offset);
+  strcpy (&buf[offset], name);
   offset += name_len;
 
-  strncpy (&buf[offset], template_suffix, buf_len - offset);
+  strcpy (&buf[offset], template_suffix);
   offset += strlen (template_suffix);
 
   assert (offset == buf_len - 1);
