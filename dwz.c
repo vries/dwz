@@ -12358,6 +12358,66 @@ alt_clear_dups (dw_die_ref die)
     }
 }
 
+static int save_temps = 0;
+
+/* Create a temporary file using NAME.  Return the corresponding file
+   descriptor if successful, otherwise return -1.  */
+static int
+make_temp_file (const char *name)
+{
+  const char *tmpdir = "/tmp/";
+  const char *template_suffix = ".XXXXXX";
+  int fd;
+  size_t buf_len, offset, name_len;
+  char *buf;
+
+  if (save_temps)
+    {
+      FILE *f = fopen (name, "w+");
+      if (f == NULL)
+	fd = -1;
+      else
+	fd = fileno (f);
+      return fd;
+    }
+
+  name_len = strlen (name);
+  buf_len = (strlen (tmpdir)
+	     + name_len
+	     + strlen (template_suffix)
+	     + 1);
+  if (buf_len < name_len)
+    return -1;
+  buf = (char *)malloc (buf_len);
+  if (buf == NULL)
+    return -1;
+  offset = 0;
+
+  strncpy (&buf[offset], tmpdir, buf_len - offset);
+  offset += strlen (tmpdir);
+
+  strncpy (&buf[offset], name, buf_len - offset);
+  offset += name_len;
+
+  strncpy (&buf[offset], template_suffix, buf_len - offset);
+  offset += strlen (template_suffix);
+
+  assert (offset == buf_len - 1);
+  assert (buf[offset] == '\0');
+
+  fd = mkstemp (buf);
+  if (fd == -1)
+    goto done;
+
+  /* Unlink the filename, such that the file is disposed of once the file
+     descriptor is closed.  */
+  unlink (buf);
+
+ done:
+  free (buf);
+  return fd;
+}
+
 /* Options for getopt_long.  */
 static struct option dwz_options[] =
 {
@@ -12375,6 +12435,7 @@ static struct option dwz_options[] =
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
+  { "devel-save-temps",  no_argument,	    &save_temps, 1 },
 #endif
   { NULL,		 no_argument,	    0, 0 }
 };
@@ -12511,27 +12572,11 @@ main (int argc, char *argv[])
 	error (1, 0, "-o option not allowed for multiple files");
       if (multifile)
 	{
-	  char buf[sizeof "/tmp/dwz.debug_abbrev.XXXXXX"];
-	  strcpy (buf, "/tmp/dwz.debug_info.XXXXXX");
-	  multi_info_fd = mkstemp (buf);
-	  if (multi_info_fd != -1)
-	    unlink (buf);
-	  strcpy (buf, "/tmp/dwz.debug_abbrev.XXXXXX");
-	  multi_abbrev_fd = mkstemp (buf);
-	  if (multi_abbrev_fd != -1)
-	    unlink (buf);
-	  strcpy (buf, "/tmp/dwz.debug_line.XXXXXX");
-	  multi_line_fd = mkstemp (buf);
-	  if (multi_line_fd != -1)
-	    unlink (buf);
-	  strcpy (buf, "/tmp/dwz.debug_str.XXXXXX");
-	  multi_str_fd = mkstemp (buf);
-	  if (multi_str_fd != -1)
-	    unlink (buf);
-	  strcpy (buf, "/tmp/dwz.debug_macro.XXXXXX");
-	  multi_macro_fd = mkstemp (buf);
-	  if (multi_macro_fd != -1)
-	    unlink (buf);
+	  multi_info_fd = make_temp_file ("dwz.debug_info");
+	  multi_abbrev_fd = make_temp_file ("dwz.debug_abbrev");
+	  multi_line_fd = make_temp_file ("dwz.debug_line");
+	  multi_str_fd = make_temp_file ("dwz.debug_str");
+	  multi_macro_fd = make_temp_file ("dwz.debug_macro");
 	  if (multi_info_fd == -1
 	      || multi_abbrev_fd == -1
 	      || multi_line_fd == -1
