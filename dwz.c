@@ -155,6 +155,7 @@ static int ignore_locus;
 #define ignore_size 0
 #define ignore_locus 0
 #endif
+static int save_temps = 0;
 
 typedef struct
 {
@@ -10935,6 +10936,20 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       /* | (ret & 1) to silence up __wur warning for fchown.  */
       return 1 | (ret & 1);
     }
+  if (save_temps && multifile)
+    {
+      const char *prefix = "dwz.";
+      size_t buf_len = strlen (prefix) + strlen (dso->filename) + 1;
+      char *buf = (char *)alloca (buf_len);
+      size_t offset = 0;
+      strcpy (&buf[offset], prefix);
+      offset += strlen (prefix);
+      strcpy (&buf[offset], dso->filename);
+      offset += strlen (dso->filename);
+      assert (offset == buf_len - 1);
+      assert (buf[offset] == '\0');
+      link (dso->filename, buf);
+    }
   return 0;
 }
 
@@ -12357,8 +12372,6 @@ alt_clear_dups (dw_die_ref die)
 	alt_clear_dups (child);
     }
 }
-
-static int save_temps = 0;
 
 /* Create a temporary file using NAME.  Return the corresponding file
    descriptor if successful, otherwise return -1.  */

@@ -9,6 +9,8 @@ files="
   dwz.debug_line
   dwz.debug_macro
   dwz.debug_str
+  dwz.1
+  dwz.2
 "
 
 for f in $files; do
