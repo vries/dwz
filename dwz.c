@@ -2156,16 +2156,20 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
 }
 
 /* This function computes u.p1.die_hash and die_ck_state of DIE.
-   u.p1.die_hash is an iterative hash of the die_tag, for all its attributes
-   except DW_AT_sibling the attribute code, for non-reference class
-   attributes or DW_FORM_ref_addr attributes the value of the attribute
-   (magic for DW_AT_*_file), for reference class attributes that point
-   into the subtree of TOP_DIE ref->u.p1.die_enter - top_die->u.p1.die_enter
-   (note, other references are intentionally ignored here) and hashes
-   of all its children.  die_ck_state is set to CK_BAD if the die is
-   unsuitable for moving into a partial unit (contains code references
-   or other reasons).  TOP_DIE is initially NULL when DW_TAG_*_unit or
-   die_named_namespace dies are walked.  */
+   The field u.p1.die_hash is an iterative hash of:
+   - the die_tag,
+   - for all attributes except DW_AT_sibling: the attribute code,
+   - for non-reference class attributes: the value of the attribute (magic
+     for DW_AT_*_file),
+   - for DW_FORM_ref_addr attributes: the value of the attribute,
+   - for reference class attributes that point into the subtree of TOP_DIE
+     (note, other references are intentionally ignored here):
+     ref->u.p1.die_enter - top_die->u.p1.die_enter,
+   - for all children: their hashes.
+   The field die_ck_state is set to CK_BAD if the die is unsuitable for
+   moving into a partial unit (contains code references or other reasons).
+   TOP_DIE is initially NULL when DW_TAG_*_unit or die_named_namespace dies
+   are walked.  */
 static int
 checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 {
