@@ -136,7 +136,7 @@ main ()
 	echo processing file: $f
 
 	grep -v '"' $f \
-	    | awk -f contrib/copyright-lines.awk \
+	    | awk -f contrib/release/copyright-lines.awk \
 		  > $tmp
 
 	while read line; do
