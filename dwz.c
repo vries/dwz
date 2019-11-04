@@ -150,10 +150,12 @@ static struct obstack alt_ob, alt_ob2;
 static int tracing;
 static int ignore_size;
 static int ignore_locus;
+static int dump_dies_p;
 #else
 #define tracing 0
 #define ignore_size 0
 #define ignore_locus 0
+#define dump_dies_p 0
 #endif
 static int save_temps = 0;
 
@@ -3982,17 +3984,17 @@ find_dups_fi (dw_die_ref parent)
   return 0;
 }
 
-#ifdef DEBUG_DUMP_DIES
+#if DEVEL
 /* Debugging helper function to dump hash values to stdout.  */
 static void
 dump_dies (int depth, dw_die_ref die)
 {
   dw_die_ref child;
   const char *name = get_AT_string (die, DW_AT_name);
-  printf ("%*s %x %c %x %x %s\n", depth, "", die->die_offset,
-	  die->die_ck_state == CK_KNOWN ? 'O' : 'X',
-	  (unsigned) die->u.p1.die_hash,
-	  (unsigned) die->u.p1.die_ref_hash, name ? name : "");
+  fprintf (stderr, "%*s %x %c %x %x %s\n", depth, "", die->die_offset,
+	   die->die_ck_state == CK_KNOWN ? 'O' : 'X',
+	   (unsigned) die->u.p1.die_hash,
+	   (unsigned) die->u.p1.die_ref_hash, name ? name : "");
   for (child = die->die_child; child; child = child->die_sib)
     dump_dies (depth + 1, child);
 }
@@ -4941,9 +4943,10 @@ read_debug_info (DSO *dso, int kind)
 	      for (cu = cuf; cu; cu = cu->cu_next)
 		checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
-#ifdef DEBUG_DUMP_DIES
-	      for (cu = cuf; cu; cu = cu->cu_next)
-		dump_dies (0, cu->cu_die);
+#if DEVEL
+	      if (dump_dies_p)
+		for (cu = cuf; cu; cu = cu->cu_next)
+		  dump_dies (0, cu->cu_die);
 #endif
 
 	      for (cu = cuf; cu; cu = cu->cu_next)
@@ -5361,8 +5364,9 @@ read_debug_info (DSO *dso, int kind)
 	    goto fail;
 	  checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
-#ifdef DEBUG_DUMP_DIES
-	  dump_dies (0, cu->cu_die);
+#if DEVEL
+	  if (dump_dies_p)
+	    dump_dies (0, cu->cu_die);
 #endif
 
 	  if (find_dups (cu->cu_die))
@@ -5432,9 +5436,10 @@ read_debug_info (DSO *dso, int kind)
       for (cu = first_cu; cu; cu = cu->cu_next)
 	checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
-#ifdef DEBUG_DUMP_DIES
-      for (cu = first_cu; cu; cu = cu->cu_next)
-	dump_dies (0, cu->cu_die);
+#if DEVEL
+      if (dump_dies_p)
+	for (cu = first_cu; cu; cu = cu->cu_next)
+	  dump_dies (0, cu->cu_die);
 #endif
 
       if (rd_multifile)
@@ -12599,6 +12604,7 @@ static struct option dwz_options[] =
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
+  { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
 #endif
   { NULL,		 no_argument,	    0, 0 }
 };
