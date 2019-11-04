@@ -11026,6 +11026,149 @@ cleanup (void)
   max_line_id = 0;
 }
 
+/* Propagate the die_no_multifile property along the duplicate chain of which
+   DIE is a member.  If the property was changed on any die, set *CHANGED to
+   true.  */
+static void
+propagate_multifile_duplicate_chain (dw_die_ref die, bool *changed)
+{
+  dw_die_ref dup = first_dup (die);
+  if (!dup)
+    return;
+
+  while (dup && dup->die_offset == -1U)
+    dup = dup->die_nextdup;
+  if (dup != die)
+    return;
+
+  bool any_no_multifile = false;
+  bool any_multifile = false;
+  bool prop_needed = false;
+  dw_die_ref d;
+  for (d = dup; d && !prop_needed; d = d->die_nextdup)
+    {
+      if (d->die_no_multifile)
+	any_no_multifile = true;
+      else
+	any_multifile = true;
+      prop_needed = any_no_multifile && any_multifile;
+    }
+  if (!prop_needed)
+    return;
+
+  *changed = true;
+
+  for (d = dup; d; d = d->die_nextdup)
+    d->die_no_multifile = 1;
+}
+
+/* Propagate the die_no_multifile property backwards along the outgoing
+   references of DIE, which is a member of CU and of the subtree of lower
+   toplevel die TOP_DIE.  If the property was changed on any die, set *CHANGED
+   to true.  */
+static void
+propagate_multifile_refs_backward (dw_cu_ref cu, dw_die_ref top_die,
+				   dw_die_ref die, bool *changed)
+{
+  struct abbrev_tag *t = die->die_abbrev;
+  unsigned int i;
+  unsigned char *ptr;
+  dw_die_ref child;
+
+  if (die->die_offset == -1U)
+    return;
+
+  ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
+  read_uleb128 (ptr);
+  for (i = 0; i < t->nattr; ++i)
+    {
+      uint32_t form = t->attr[i].form;
+      uint64_t value;
+      dw_die_ref ref, reft;
+
+      while (form == DW_FORM_indirect)
+	form = read_uleb128 (ptr);
+
+      switch (form)
+	{
+	case DW_FORM_ref_addr:
+	  value = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
+	  ptr += cu->cu_version == 2 ? ptr_size : 4;
+	  ref = off_htab_lookup (cu, value);
+	  goto finish_ref;
+	  break;
+	case DW_FORM_ref_udata:
+	case DW_FORM_ref1:
+	case DW_FORM_ref2:
+	case DW_FORM_ref4:
+	case DW_FORM_ref8:
+	  switch (form)
+	    {
+	    case DW_FORM_ref_udata: value = read_uleb128 (ptr); break;
+	    case DW_FORM_ref1: value = read_8 (ptr); break;
+	    case DW_FORM_ref2: value = read_16 (ptr); break;
+	    case DW_FORM_ref4: value = read_32 (ptr); break;
+	    case DW_FORM_ref8: value = read_64 (ptr); break;
+	    default: abort ();
+	    }
+	  if (t->attr[i].attr == DW_AT_sibling)
+	    break;
+	  ref = off_htab_lookup (cu, cu->cu_offset + value);
+	finish_ref:
+	  reft = ref;
+	  while (!reft->die_root
+		 && reft->die_parent->die_tag != DW_TAG_compile_unit
+		 && reft->die_parent->die_tag != DW_TAG_partial_unit
+		 && !reft->die_parent->die_named_namespace)
+	    reft = reft->die_parent;
+	  if (reft->die_root)
+	    ;
+	  else if (reft->die_ck_state == CK_KNOWN
+		   && !top_die->die_no_multifile && reft->die_no_multifile)
+	    {
+	      top_die->die_no_multifile = 1;
+	      *changed = true;
+	    }
+	  break;
+	default:
+	  ptr = skip_attr_no_dw_form_indirect (cu, form, ptr);
+	}
+    }
+
+  for (child = die->die_child; child; child = child->die_sib)
+    propagate_multifile_refs_backward (cu, top_die, child, changed);
+}
+
+/* Do propagation of the die_no_multifile property that was not covered in
+   checksum_die and checksum_ref_die.  */
+static void
+propagate_multifile (void)
+{
+  bool changed;
+  dw_cu_ref cu;
+  dw_die_ref die;
+
+  changed = false;
+
+  FOREACH_CU_NORMAL_LOW_TOPLEVEL_DIE (cu, die)
+    propagate_multifile_duplicate_chain (die, &changed);
+
+  if (!changed)
+    return;
+
+  do
+    {
+      changed = false;
+
+      FOREACH_CU_NORMAL_LOW_TOPLEVEL_DIE (cu, die)
+	propagate_multifile_refs_backward (cu, die, die, &changed);
+
+      FOREACH_CU_NORMAL_LOW_TOPLEVEL_DIE (cu, die)
+	propagate_multifile_duplicate_chain (die, &changed);
+    }
+  while (changed);
+}
+
 /* Returns true if DIE contains any toplevel children that can be
    potentially shared between different executables or shared libraries.  */
 static bool
@@ -11366,6 +11509,7 @@ write_multifile (DSO *dso)
       debug_sections[i].new_data = NULL;
       debug_sections[i].new_size = debug_sections[i].size;
     }
+  propagate_multifile ();
   for (cu = first_cu; cu && cu->cu_kind != CU_TYPES; cu = cu->cu_next)
     {
       cu->u1.cu_new_abbrev_owner = NULL;
