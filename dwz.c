@@ -795,6 +795,8 @@ struct dw_die
   dw_die_ref die_nextdup;
 };
 
+#include "iterators.h"
+
 /* Return CU structure pointer for a DIE.  In order to save memory,
    individual DIEs don't have a dw_cu_ref field, and the pointer can
    be only found by overriding the die_parent pointer in a
