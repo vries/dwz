@@ -3984,7 +3984,6 @@ find_dups_fi (dw_die_ref parent)
   return 0;
 }
 
-#if DEVEL
 /* Debugging helper function to dump hash values to stdout.  */
 static void
 dump_dies (int depth, dw_die_ref die)
@@ -3998,7 +3997,6 @@ dump_dies (int depth, dw_die_ref die)
   for (child = die->die_child; child; child = child->die_sib)
     dump_dies (depth + 1, child);
 }
-#endif
 
 /* Hash table for .debug_str.  Depending on multifile optimization
    phase this hash table has 3 different hash/equality functions.
@@ -4943,11 +4941,9 @@ read_debug_info (DSO *dso, int kind)
 	      for (cu = cuf; cu; cu = cu->cu_next)
 		checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
-#if DEVEL
 	      if (dump_dies_p)
 		for (cu = cuf; cu; cu = cu->cu_next)
 		  dump_dies (0, cu->cu_die);
-#endif
 
 	      for (cu = cuf; cu; cu = cu->cu_next)
 		if (find_dups (cu->cu_die))
@@ -5364,10 +5360,8 @@ read_debug_info (DSO *dso, int kind)
 	    goto fail;
 	  checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
-#if DEVEL
 	  if (dump_dies_p)
 	    dump_dies (0, cu->cu_die);
-#endif
 
 	  if (find_dups (cu->cu_die))
 	    goto fail;
@@ -5436,11 +5430,9 @@ read_debug_info (DSO *dso, int kind)
       for (cu = first_cu; cu; cu = cu->cu_next)
 	checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 
-#if DEVEL
       if (dump_dies_p)
 	for (cu = first_cu; cu; cu = cu->cu_next)
 	  dump_dies (0, cu->cu_die);
-#endif
 
       if (rd_multifile)
 	{
