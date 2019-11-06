@@ -26,9 +26,10 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
+TEST_EXECS_DWARF_ASM = no-multifile-prop
 TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
 	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
-	start-gold hello-gnu-pubnames varval
+	start-gold hello-gnu-pubnames varval $(TEST_EXECS_DWARF_ASM)
 
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
@@ -81,6 +82,19 @@ varval:
 	$(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@ \
 	    || touch $@
 
+POINTER_SIZE:=$(shell $(CC) $(TEST_SRC)/pointer-size.c -o pointer-size; \
+	./pointer-size; \
+	rm -f ./pointer-size)
+
+TEMP_ASM_FILES=$(addsuffix -dw.S, $(TEST_EXECS_DWARF_ASM))
+.INTERMEDIATE: $(TEMP_ASM_FILES)
+
+$(TEMP_ASM_FILES): %-dw.S: $(TEST_SRC)/../lib/%.exp
+	export POINTER_SIZE=$(POINTER_SIZE); \
+	  runtest --tool=dwz -srcdir $(srcdir)/testsuite/ lib/$*.exp
+
+$(TEST_EXECS_DWARF_ASM): %: %-dw.S
+	$(CC) $(TEST_SRC)/main.c $< -o $@
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.

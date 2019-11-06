@@ -1,0 +1,132 @@
+# Copyright 2019 Free Software Foundation, Inc.
+
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+load_lib dwarf-lib.exp
+load_lib dwarf.exp
+
+set asm_file no-multifile-prop-dw.S
+
+Dwarf::assemble $asm_file {
+
+    # CU 1
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {DW_AT_name     1.c}
+	    {DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels integer_label var_label
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_data1}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    var_label: DW_TAG_variable {
+		{DW_AT_name foo1}
+		{DW_AT_type :$integer_label}
+		{external 1 flag}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name foo2}
+		{DW_AT_type :$integer_label}
+		{DW_AT_location {
+		    DW_OP_GNU_implicit_pointer $var_label 0
+		} SPECIAL_expr}
+		{external 1 flag}
+	    }
+	}
+    }
+
+    # CU 2
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {DW_AT_name     2.c}
+	    {DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels integer_label var_label
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_data1}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    var_label: DW_TAG_variable {
+		{DW_AT_name foo1}
+		{DW_AT_type :$integer_label}
+		{external 1 flag}
+	    }
+
+	    DW_TAG_imported_declaration {
+		{DW_AT_import :$var_label}
+	    }
+	}
+    }
+
+    # CU 3
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {DW_AT_name     3.c}
+	    {DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels integer_label
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_data1}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    DW_TAG_variable {
+		{DW_AT_name foo1}
+		{DW_AT_type :$integer_label}
+		{external 1 flag}
+	    }
+
+	}
+    }
+
+    # CU 4
+    cu {} {
+	DW_TAG_compile_unit {
+	    {DW_AT_language @DW_LANG_C_plus_plus}
+	    {DW_AT_name     4.c}
+	    {DW_AT_comp_dir /tmp}
+	} {
+	    declare_labels integer_label var_label
+
+	    integer_label: DW_TAG_base_type {
+		{DW_AT_byte_size 4 DW_FORM_data1}
+		{DW_AT_encoding  @DW_ATE_signed}
+		{DW_AT_name      integer}
+	    }
+
+	    var_label: DW_TAG_variable {
+		{DW_AT_name foo1}
+		{DW_AT_type :$integer_label}
+		{external 1 flag}
+	    }
+
+	    DW_TAG_imported_declaration {
+		{DW_AT_import :$var_label}
+	    }
+	}
+    }
+}
