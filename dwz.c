@@ -157,6 +157,7 @@ static int dump_dies_p;
 #define ignore_locus 0
 #define dump_dies_p 0
 #endif
+static int unoptimized_multifile;
 static int save_temps = 0;
 
 typedef struct
@@ -12100,8 +12101,7 @@ optimize_multifile (void)
   multifile_mode = MULTIFILE_MODE_OP;
 
   obstack_alloc_failed_handler = dwz_oom;
-#ifdef DEBUG_OP_MULTIFILE
-  if (1)
+  if (unoptimized_multifile)
     {
       for (i = 0; i < SAVED_SECTIONS; i++)
 	{
@@ -12109,9 +12109,7 @@ optimize_multifile (void)
 	  debug_sections[i].new_size = debug_sections[i].size;
 	}
     }
-  else
-#endif
-  if (setjmp (oom_buf))
+  else if (setjmp (oom_buf))
     {
       error (0, ENOMEM, "%s: Could not allocate memory", dso->filename);
       goto fail;
@@ -12366,9 +12364,8 @@ optimize_multifile (void)
     {
       debug_sections[i].data = NULL;
       debug_sections[i].size = 0;
-#ifndef DEBUG_OP_MULTIFILE
-      free (debug_sections[i].new_data);
-#endif
+      if (!unoptimized_multifile)
+	free (debug_sections[i].new_data);
       debug_sections[i].new_data = NULL;
       debug_sections[i].new_size = 0;
       debug_sections[i].sec = 0;
@@ -12597,6 +12594,8 @@ static struct option dwz_options[] =
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
+  { "devel-unoptimized-multifile",
+			 no_argument,	    &unoptimized_multifile, 1 },
 #endif
   { NULL,		 no_argument,	    0, 0 }
 };
