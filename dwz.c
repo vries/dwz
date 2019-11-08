@@ -11474,6 +11474,29 @@ write_multifile_line (void)
   return ret;
 }
 
+#if DEVEL
+/* In struct dw_die we have a union u with fields p1 and p2.  The p1 field is
+   used during phase 1, after which the space is reused for the p2 field
+   during phase 2.  Clear the p2 field to get rid of values stored to p1
+   during phase 1.  */
+static int
+clear_p2_field (void)
+{
+  dw_cu_ref cu;
+  dw_die_ref die;
+
+  FOREACH_DIE (cu, die)
+    {
+      assert (die->die_collapsed_child == 0);
+      die->u.p2.die_new_abbrev = NULL;
+      die->u.p2.die_new_offset = 0;
+      die->u.p2.die_intracu_udata_size = 0;
+    }
+
+  return 0;
+}
+#endif
+
 /* Collect potentially shareable DIEs, strings and .debug_macro
    opcode sequences into temporary .debug_* files.  */
 static int
@@ -11499,6 +11522,10 @@ write_multifile (DSO *dso)
     }
   multi_ptr_size = ptr_size;
   multi_endian = do_read_32 == buf_read_ule32 ? ELFDATA2LSB : ELFDATA2MSB;
+
+#if DEVEL
+  clear_p2_field ();
+#endif
 
   for (i = 0; i < SAVED_SECTIONS; i++)
     {
@@ -11812,6 +11839,9 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 		   && (remove_empty_pus ()
 		       || read_macro (dso)))
 	       || read_debug_info (dso, DEBUG_TYPES)
+#if DEVEL
+	       || clear_p2_field ()
+#endif
 	       || compute_abbrevs (dso)
 	       || (unlikely (fi_multifile) && (finalize_strp (false), 0)))
 	{
@@ -12126,6 +12156,10 @@ optimize_multifile (void)
       if (read_debug_info (dso, DEBUG_INFO)
 	  || partition_dups ())
 	goto fail;
+
+#if DEVEL
+      clear_p2_field ();
+#endif
 
       for (cup = &first_cu; *cup && (*cup)->cu_kind == CU_PU;
 	   cup = &(*cup)->cu_next)
