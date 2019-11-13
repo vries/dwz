@@ -12756,8 +12756,10 @@ main (int argc, char *argv[])
 	  error (0, 0, "Too few files for multifile optimization");
 	  multifile = NULL;
 	}
-      ret = dwz (optind == argc ? "a.out" : argv[optind], outfile,
-		 &res, NULL, NULL);
+      ret = (low_mem_die_limit == 0
+	     ? 2
+	     : dwz (optind == argc ? "a.out" : argv[optind], outfile,
+		    &res, NULL, NULL));
       if (ret == 2)
 	{
 	  multifile_mode = MULTIFILE_MODE_LOW_MEM;
@@ -12795,8 +12797,10 @@ main (int argc, char *argv[])
 	}
       for (i = optind; i < argc; i++)
 	{
-	  int thisret = dwz (argv[i], NULL, &resa[i - optind],
-			     hardlinks ? resa : NULL, &argv[optind]);
+	  int thisret = (low_mem_die_limit == 0
+			 ? 2
+			 : dwz (argv[i], NULL, &resa[i - optind],
+				hardlinks ? resa : NULL, &argv[optind]));
 	  if (thisret == 2)
 	    {
 	      multifile_mode = MULTIFILE_MODE_LOW_MEM;
