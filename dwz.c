@@ -12638,10 +12638,12 @@ static struct option dwz_options[] =
 static void
 usage (void)
 {
+#define COMMON_OPTS "[-v] [-q] [-l <COUNT|none>] [-L <COUNT|none>]"
   error (1, 0,
 	 "Usage:\n"
-	 "  dwz [-v] [-q] [-h] [-l COUNT] [-L COUNT] [-m COMMONFILE] [-M NAME] [-r] [FILES]\n"
-	 "  dwz [-v] [-q] [-l COUNT] [-L COUNT] -o OUTFILE FILE\n");
+	 "  dwz " COMMON_OPTS " [-h] [-m COMMONFILE] [-M NAME] [-r] [FILES]\n"
+	 "  dwz " COMMON_OPTS " -o OUTFILE FILE\n");
+#undef COMMON_OPTS
 }
 
 /* Print version and exit.  */
@@ -12715,6 +12717,11 @@ main (int argc, char *argv[])
 	  break;
 
 	case 'l':
+	  if (strcmp (optarg, "none") == 0)
+	    {
+	      low_mem_die_limit = -1U;
+	      break;
+	    }
 	  l = strtoul (optarg, &end, 0);
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
 	    error (1, 0, "invalid argument -l %s", optarg);
@@ -12722,6 +12729,11 @@ main (int argc, char *argv[])
 	  break;
 
 	case 'L':
+	  if (strcmp (optarg, "none") == 0)
+	    {
+	      max_die_limit = -1U;
+	      break;
+	    }
 	  l = strtoul (optarg, &end, 0);
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
 	    error (1, 0, "invalid argument -L %s", optarg);

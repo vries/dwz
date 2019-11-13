@@ -71,7 +71,7 @@ or shared library (if there are no arguments at all,
 \fIa.out\fR
 is assumed).
 .TP
-.B \-l COUNT \-\-low\-mem\-die\-limit COUNT
+.B \-l <COUNT|none> \-\-low\-mem\-die\-limit <COUNT|none>
 Handle executables or shared libraries containing more than
 \fICOUNT\fR debugging information entries in their \fI.debug_info\fR
 section using a slower and more memory usage friendly mode and don't
@@ -80,12 +80,13 @@ The default is 10 million DIEs.  There is a risk that for very large
 amounts of debugging information in a single shared library or executable
 there might not be enough memory (especially when \fBdwz\fR
 tool is 32-bit binary, it might run out of available virtual address
-space even sooner).
+space even sooner).  Specifying none as argument disables the limit.
 .TP
-.B \-L COUNT \-\-max\-die\-limit COUNT
+.B \-L <COUNT|none> \-\-max\-die\-limit <COUNT|none>
 Don't attempt to optimize executables or shared libraries
 containing more than
-\fICOUNT\fR DIEs at all.  The default is 50 million DIEs.
+\fICOUNT\fR DIEs at all.  The default is 50 million DIEs.  Specifying none as
+argument disables the limit.
 .TP
 .B \-? \-\-help
 Print short help and exit.
