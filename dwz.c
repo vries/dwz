@@ -6620,7 +6620,7 @@ create_import_tree (void)
 		  assert (*ep == NULL || (*ep)->icu != ipusub);
 		  e4 = edge_freelist;
 		  edge_freelist = edge_freelist->next;
-		  e4->icu = ipusup;
+		  e4->icu = ipusub;
 		  e4->next = *ep;
 		  *ep = e4;
 		  ipusup->incoming_count -= ipusub->incoming_count - 1;
