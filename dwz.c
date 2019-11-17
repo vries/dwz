@@ -159,6 +159,8 @@ static int dump_dies_p;
 #endif
 static int unoptimized_multifile;
 static int save_temps = 0;
+static int verify_edges_p = 0;
+static int dump_edges_p = 0;
 
 typedef struct
 {
@@ -6022,7 +6024,33 @@ remove_import_edges (struct import_edge **ep, struct import_cu **cus,
   return efirst;
 }
 
-#ifdef DEBUG_VERIFY_EDGES
+static void
+dump_edges_1 (struct import_cu *ipu)
+{
+  fprintf (stderr, "idx: %u\n", ipu->idx);
+  fprintf (stderr, "cu: 0x%x\n", ipu->cu->cu_offset);
+  struct import_edge *e1;
+  for (e1 = ipu->incoming; e1; e1 = e1->next)
+    fprintf (stderr, "incoming: %u\n", e1->icu->idx);
+  for (e1 = ipu->outgoing; e1; e1 = e1->next)
+    fprintf (stderr, "outgoing: %u\n", e1->icu->idx);
+}
+
+static void
+dump_edges (const char *msg, struct import_cu **ipus, unsigned int npus,
+	    unsigned int ncus)
+{
+  struct import_cu *ipu;
+  unsigned int i;
+  fprintf (stderr, "PRINT_EDGES: %s\n", msg);
+  fprintf (stderr, "PUs\n");
+  for (ipu = ipus[0]; ipu; ipu = ipu->next)
+    dump_edges_1 (ipu);
+  fprintf (stderr, "CUs\n");
+  for (i = 0; i < ncus; i++)
+    dump_edges_1 (ipus[i + npus]);
+}
+
 /* Helper function for debugging create_import_tree.  Verify
    various invariants for CU/PU IPU.  */
 static void
@@ -6069,7 +6097,6 @@ verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
     verify_edges_1 (ipus[i + npus], &ic, &oc);
   assert (ic == oc);
 }
-#endif
 
 /* Function to optimize the size of DW_TAG_imported_unit DIEs by
    creating an inclusion tree, instead of each CU importing all
@@ -6249,6 +6276,10 @@ create_import_tree (void)
   for (; puidx < npus + ncus; puidx++)
     ipus[puidx]->idx = puidx;
   last_pu = ipus[npus - 1];
+  if (unlikely (dump_edges_p))
+    dump_edges ("phase 1", ipus, npus, ncus);
+  if (unlikely (verify_edges_p))
+    verify_edges (ipus, npus, ncus);
   /* Now, for the above constructed bipartite graph, find K x,2 components
      where x >= 5 (for DWARF3 and above or ptr_size 4, for DWARF2 and
      ptr_size 8 it can be even x == 4) and add a new PU node, where all
@@ -6407,6 +6438,10 @@ create_import_tree (void)
 	    }
 	}
     }
+  if (unlikely (dump_edges_p))
+    dump_edges ("phase 2", ipus, npus, ncus);
+  if (unlikely (verify_edges_p))
+    verify_edges (ipus, npus, ncus);
   /* Try to merge PUs which have the same set of referrers if
      beneficial, or if one PU has a subset of referrers of the
      other, attempt to replace all the incoming edges from the
@@ -6633,6 +6668,10 @@ create_import_tree (void)
       for (icu = ipu->next; icu; icu = icu->next)
 	icu->seen = false;
     }
+  if (unlikely (dump_edges_p))
+    dump_edges ("phase 3", ipus, npus, ncus);
+  if (unlikely (verify_edges_p))
+    verify_edges (ipus, npus, ncus);
   /* Create DW_TAG_partial_unit (and containing dw_cu structures).  */
   if (fi_multifile)
     {
@@ -12630,6 +12669,8 @@ static struct option dwz_options[] =
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
   { "devel-unoptimized-multifile",
 			 no_argument,	    &unoptimized_multifile, 1 },
+  { "devel-verify-edges",no_argument,	    &verify_edges_p, 1 },
+  { "devel-dump-edges",  no_argument,	    &dump_edges_p, 1 },
 #endif
   { NULL,		 no_argument,	    0, 0 }
 };
