@@ -161,6 +161,7 @@ static int unoptimized_multifile;
 static int save_temps = 0;
 static int verify_edges_p = 0;
 static int dump_edges_p = 0;
+static int partition_dups_opt;
 
 typedef struct
 {
@@ -5674,7 +5675,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	 the same set of referrers, try to see if we can put also those
 	 into the partial unit.  They can be put there only if they
 	 don't refer to DIEs that won't be put into partial units.  */
-      if (second_phase && force && force < j - k)
+      if (unlikely (partition_dups_opt)
+	  && second_phase && force && force < j - i)
 	{
 	  /* First optimistically assume all such DIEs can be put there,
 	     thus mark all such DIEs as going to be included, so that
@@ -12671,6 +12673,8 @@ static struct option dwz_options[] =
 			 no_argument,	    &unoptimized_multifile, 1 },
   { "devel-verify-edges",no_argument,	    &verify_edges_p, 1 },
   { "devel-dump-edges",  no_argument,	    &dump_edges_p, 1 },
+  { "devel-partition-dups-opt",
+			 no_argument,	    &partition_dups_opt, 1 },
 #endif
   { NULL,		 no_argument,	    0, 0 }
 };
