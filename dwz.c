@@ -1244,7 +1244,7 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
 	alt_off_htab = off_htab;
     }
 
-  slot = htab_find_slot_with_hash (off_htab, die, die->die_offset, INSERT);
+  slot = htab_find_slot_with_hash (off_htab, die, off_hash (die), INSERT);
   if (slot == NULL)
     dwz_oom ();
   assert (*slot == NULL);
@@ -1260,12 +1260,14 @@ off_htab_lookup (dw_cu_ref cu, unsigned int die_offset)
   struct dw_die die;
   die.die_offset = die_offset;
   if (cu == NULL)
-    return (dw_die_ref) htab_find_with_hash (off_htab, &die, die_offset);
+    return (dw_die_ref) htab_find_with_hash (off_htab, &die, off_hash (&die));
   if (unlikely (cu->cu_kind == CU_ALT))
-    return (dw_die_ref) htab_find_with_hash (alt_off_htab, &die, die_offset);
+    return (dw_die_ref) htab_find_with_hash (alt_off_htab, &die,
+					     off_hash (&die));
   if (unlikely (cu->cu_kind == CU_TYPES))
-    return (dw_die_ref) htab_find_with_hash (types_off_htab, &die, die_offset);
-  return (dw_die_ref) htab_find_with_hash (off_htab, &die, die_offset);
+    return (dw_die_ref) htab_find_with_hash (types_off_htab, &die,
+					     off_hash (&die));
+  return (dw_die_ref) htab_find_with_hash (off_htab, &die, off_hash (&die));
 }
 
 /* For a die attribute with form FORM starting at PTR, with the die in CU,
@@ -1733,7 +1735,8 @@ add_dummy_die (dw_cu_ref cu, unsigned int offset)
     }
 
   slot
-    = htab_find_slot_with_hash (off_htab, &ref_buf, ref_buf.die_offset, INSERT);
+    = htab_find_slot_with_hash (off_htab, &ref_buf, off_hash (&ref_buf),
+				INSERT);
   if (slot == NULL)
     dwz_oom ();
   if (*slot != NULL)
@@ -3176,7 +3179,7 @@ expand_child (dw_die_ref top_die, bool checksum)
       diebuf.die_offset = die_offset;
       slot = htab_find_slot_with_hash (cu->cu_kind == CU_TYPES
 				       ? types_off_htab : off_htab,
-				       &diebuf, die_offset, NO_INSERT);
+				       &diebuf, off_hash (&diebuf), NO_INSERT);
       if (slot == NULL)
 	die = NULL;
       else
@@ -4633,7 +4636,7 @@ remove_dies (dw_cu_ref cu, dw_die_ref die, bool remove)
   if (die->die_referenced == 0)
     {
       htab_t h = cu->cu_kind == CU_TYPES ? types_off_htab : off_htab;
-      void **slot = htab_find_slot_with_hash (h, die, die->die_offset,
+      void **slot = htab_find_slot_with_hash (h, die, off_hash (die),
 					      NO_INSERT);
       if (slot != NULL)
 	htab_clear_slot (h, slot);
@@ -4769,7 +4772,7 @@ collapse_child (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	  ref->die_tag = tick_diff;
 	  slot = htab_find_slot_with_hash (cu->cu_kind == CU_TYPES
 					   ? types_off_htab : off_htab,
-					   ref, ref->die_offset, NO_INSERT);
+					   ref, off_hash (ref), NO_INSERT);
 	  assert (slot != NULL);
 	  *slot = (void *) ref;
 	  memset (die, '\0', offsetof (struct dw_die, die_dup));
@@ -5292,7 +5295,7 @@ read_debug_info (DSO *dso, int kind)
 	      if (off_htab != NULL && kind == DEBUG_INFO)
 		{
 		  void **slot
-		    = htab_find_slot_with_hash (off_htab, die, die->die_offset,
+		    = htab_find_slot_with_hash (off_htab, die, off_hash (die),
 						INSERT);
 		  if (slot == NULL)
 		    dwz_oom ();
