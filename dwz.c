@@ -1197,6 +1197,36 @@ estimate_nr_dies (void)
   return nr_dies;
 }
 
+static size_t UNUSED
+emulate_htab (size_t initial, size_t final_nr_elements)
+{
+  size_t size = initial;
+
+  /* Emulate creation.  */
+  size = higher_prime_number (size);
+
+  /* Emulate growing till htab contains find_nr_elements.  */
+  while (1)
+    {
+      /* Emulate expansion trigger.  */
+      size_t nr_elements = size * 3 / 4;
+      while (!(size * 3 <= nr_elements * 4))
+	nr_elements++;
+
+      if (nr_elements > final_nr_elements)
+	{
+	  nr_elements = final_nr_elements;
+	  break;
+	}
+
+      /* Emulate expansion.  */
+      size = size * 2;
+      size = higher_prime_number (size);
+    }
+
+  return size;
+}
+
 /* Hash function for off_htab hash table.  */
 static hashval_t
 off_hash (const void *p)

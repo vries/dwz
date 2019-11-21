@@ -132,6 +132,9 @@ extern size_t	htab_size	(htab_t);
 extern size_t	htab_elements	(htab_t);
 extern double	htab_collisions	(htab_t);
 
+/* Utility function.  */
+unsigned long higher_prime_number (unsigned long);
+
 /* A hash function for pointers.  */
 extern htab_hash htab_hash_pointer;
 

@@ -51,7 +51,6 @@ Boston, MA 02110-1301, USA.  */
 
 #define DELETED_ENTRY  ((void *) 1)
 
-static unsigned long higher_prime_number (unsigned long);
 static hashval_t hash_pointer (const void *);
 static int eq_pointer (const void *, const void *);
 static int htab_expand (htab_t);
@@ -66,7 +65,7 @@ htab_eq htab_eq_pointer = eq_pointer;
 /* The following function returns a nearest prime number which is
    greater than N, and near a power of two. */
 
-static unsigned long
+unsigned long
 higher_prime_number (n)
      unsigned long n;
 {
