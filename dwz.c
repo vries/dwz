@@ -1279,7 +1279,21 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
 
   if (off_htab == NULL)
     {
-      off_htab = htab_try_create (100000, off_hash, off_eq, NULL);
+      unsigned int estimated_nr_dies = estimate_nr_dies ();
+      size_t default_initial_size = 100000;
+      size_t initial_size;
+      if (low_mem
+	  || op_multifile
+	  || estimated_nr_dies >= low_mem_die_limit
+	  || estimated_nr_dies >= max_die_limit)
+	initial_size = default_initial_size;
+      else
+	{
+	  size_t estimated_final_hashtab_size
+	    = emulate_htab (default_initial_size, estimated_nr_dies);
+	  initial_size = estimated_final_hashtab_size;
+	}
+      off_htab = htab_try_create (initial_size, off_hash, off_eq, NULL);
       if (off_htab == NULL)
 	dwz_oom ();
       if (rd_multifile)
