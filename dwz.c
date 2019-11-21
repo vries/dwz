@@ -117,8 +117,10 @@
 
 #if defined __GNUC__
 # define FORCE_INLINE __attribute__((always_inline))
+# define UNUSED __attribute__((unused))
 #else
 # define FORCE_INLINE
+# define UNUSED
 #endif
 
 #define obstack_chunk_alloc     malloc
@@ -1183,6 +1185,16 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
     }
 
   return 0;
+}
+
+/* Estimate the amount of DIEs in the .debug_info section, based on the size
+   of that section.  */
+static unsigned int UNUSED
+estimate_nr_dies (void)
+{
+  unsigned int average_die_size = 11;
+  unsigned int nr_dies = debug_sections[DEBUG_INFO].size / average_die_size;
+  return nr_dies;
 }
 
 /* Hash function for off_htab hash table.  */
