@@ -10658,7 +10658,7 @@ calculate_section_distance (DSO *dso, unsigned int *sorted_section_numbers,
 /* Store new ELF into FILE.  debug_sections array contains
    new_data/new_size pairs where needed.  */
 static int
-write_dso (DSO *dso, const char *file, struct stat *st)
+write_dso (DSO *dso, const char *file, struct stat *st, bool save_to_temp)
 {
   Elf *elf = NULL;
   GElf_Ehdr ehdr;
@@ -11040,7 +11040,7 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       /* | (ret & 1) to silence up __wur warning for fchown.  */
       return 1 | (ret & 1);
     }
-  if (save_temps && multifile)
+  if (save_to_temp)
     {
       const char *prefix = "dwz.";
       size_t buf_len = strlen (prefix) + strlen (dso->filename) + 1;
@@ -11052,7 +11052,12 @@ write_dso (DSO *dso, const char *file, struct stat *st)
       offset += strlen (dso->filename);
       assert (offset == buf_len - 1);
       assert (buf[offset] == '\0');
-      link (dso->filename, buf);
+      unlink (buf);
+      if (link (dso->filename, buf) != 0)
+	{
+	  error (0, errno, "Failed to link file: %s\n", dso->filename);
+	  return 1;
+	}
     }
   return 0;
 }
@@ -12083,9 +12088,10 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	  if (multifile && !fi_multifile && !low_mem)
 	    write_multifile (dso);
 
+	  bool save_to_temp = save_temps && multifile && multifile_mode == 0;
 	  cleanup ();
 
-	  if (write_dso (dso, outfile, &st))
+	  if (write_dso (dso, outfile, &st, save_to_temp))
 	    ret = 1;
 	}
     }
