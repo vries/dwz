@@ -1233,7 +1233,7 @@ off_hash (const void *p)
 {
   dw_die_ref die = (dw_die_ref) p;
 
-  return die->die_offset;
+  return die->die_offset / 6;
 }
 
 /* Equality function for off_htab hash table.  */
