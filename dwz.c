@@ -1330,14 +1330,15 @@ off_htab_lookup (dw_cu_ref cu, unsigned int die_offset)
    return the pointer after the attribute, assuming FORM is not
    dw_form_indirect.  */
 static inline unsigned char * FORCE_INLINE
-skip_attr_no_dw_form_indirect (dw_cu_ref cu, uint32_t form, unsigned char *ptr)
+skip_attr_no_dw_form_indirect (unsigned int cu_version, uint32_t form,
+			       unsigned char *ptr)
 {
   size_t len = 0;
 
   switch (form)
     {
     case DW_FORM_ref_addr:
-      ptr += cu->cu_version == 2 ? ptr_size : 4;
+      ptr += cu_version == 2 ? ptr_size : 4;
       break;
     case DW_FORM_addr:
       ptr += ptr_size;
@@ -1403,13 +1404,14 @@ skip_attr_no_dw_form_indirect (dw_cu_ref cu, uint32_t form, unsigned char *ptr)
 /* For a die attribute ATTR starting at PTR, with the die in CU, return the
    pointer after the attribute.  */
 static inline unsigned char * FORCE_INLINE
-skip_attr (dw_cu_ref cu, struct abbrev_attr *attr, unsigned char *ptr)
+skip_attr (unsigned int cu_version, struct abbrev_attr *attr,
+	   unsigned char *ptr)
 {
   uint32_t form = attr->form;
 
   while (form == DW_FORM_indirect)
     form = read_uleb128 (ptr);
-  return skip_attr_no_dw_form_indirect (cu, form, ptr);
+  return skip_attr_no_dw_form_indirect (cu_version, form, ptr);
 }
 
 /* Return a pointer at which DIE's attribute AT is encoded, and fill in
@@ -1441,7 +1443,7 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
 	  return ptr;
 	}
 
-      ptr = skip_attr_no_dw_form_indirect (cu, form, ptr);
+      ptr = skip_attr_no_dw_form_indirect (cu->cu_version, form, ptr);
     }
   return NULL;
 }
@@ -3171,16 +3173,24 @@ static dw_die_ref die_nontoplevel_freelist;
    fields.  */
 static dw_die_ref die_collapsed_child_freelist;
 
+/* Return pointer after the attributes of a DIE from a cu with CU_VERSION
+   which uses abbrevs T and starts at PTR.  */
+static unsigned char *
+skip_attrs_1 (unsigned int cu_version, struct abbrev_tag *t, unsigned char *ptr)
+{
+  unsigned int i;
+  for (i = 0; i < t->nattr; ++i)
+    ptr = skip_attr (cu_version, &t->attr[i], ptr);
+
+  return ptr;
+}
+
 /* Return pointer after the attributes of a DIE from CU which uses abbrevs
    T and starts at PTR.  */
 static unsigned char *
 skip_attrs (dw_cu_ref cu, struct abbrev_tag *t, unsigned char *ptr)
 {
-  unsigned int i;
-  for (i = 0; i < t->nattr; ++i)
-    ptr = skip_attr (cu, &t->attr[i], ptr);
-
-  return ptr;
+  return skip_attrs_1 (cu->cu_version, t, ptr);
 }
 
 /* Expand children of TOP_DIE that have been collapsed by
@@ -11234,7 +11244,7 @@ propagate_multifile_refs_backward (dw_cu_ref cu, dw_die_ref top_die,
 	    }
 	  break;
 	default:
-	  ptr = skip_attr_no_dw_form_indirect (cu, form, ptr);
+	  ptr = skip_attr_no_dw_form_indirect (cu->cu_version, form, ptr);
 	}
     }
 
