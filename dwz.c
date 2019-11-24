@@ -4880,6 +4880,139 @@ collapse_children (dw_cu_ref cu, dw_die_ref die)
       }
 }
 
+/* Count the number of DIEs in the .debug_info section, and see if we run into
+   some limit.  */
+static int
+try_debug_info (DSO *dso)
+{
+  unsigned char *ptr, *endcu, *endsec;
+  unsigned int value;
+  htab_t abbrev = NULL;
+  unsigned int last_abbrev_offset = 0;
+  struct abbrev_tag tag, *t;
+  unsigned int ndies;
+  unsigned ret = 1;
+  int kind = DEBUG_INFO;
+
+  ndies = 0;
+  ptr = debug_sections[kind].data;
+  endsec = ptr + debug_sections[kind].size;
+  while (ptr < endsec)
+    {
+      unsigned int culen;
+      int cu_version;
+
+      if (ptr + (kind == DEBUG_TYPES ? 23 : 11) > endsec)
+	{
+	  error (0, 0, "%s: %s CU header too small", dso->filename,
+		 debug_sections[kind].name);
+	  goto fail;
+	}
+
+      endcu = ptr + 4;
+      culen = read_32 (ptr);
+      if (culen >= 0xfffffff0)
+	{
+	  error (0, 0, "%s: 64-bit DWARF not supported", dso->filename);
+	  goto fail;
+	}
+      endcu += culen;
+
+      if (endcu > endsec)
+	{
+	  error (0, 0, "%s: %s too small", dso->filename,
+		 debug_sections[kind].name);
+	  goto fail;
+	}
+
+      cu_version = read_16 (ptr);
+      if (cu_version < 2 || cu_version > 4)
+	{
+	  error (0, 0, "%s: DWARF version %d unhandled", dso->filename,
+		 cu_version);
+	  goto fail;
+	}
+
+      value = read_32 (ptr);
+      if (value >= debug_sections[DEBUG_ABBREV].size)
+	{
+	  if (debug_sections[DEBUG_ABBREV].data == NULL)
+	    error (0, 0, "%s: .debug_abbrev not present", dso->filename);
+	  else
+	    error (0, 0, "%s: DWARF CU abbrev offset too large",
+		   dso->filename);
+	  goto fail;
+	}
+
+      if (ptr_size == 0)
+	{
+	  ptr_size = read_8 (ptr);
+	  if (ptr_size != 4 && ptr_size != 8)
+	    {
+	      error (0, 0, "%s: Invalid DWARF pointer size %d",
+		     dso->filename, ptr_size);
+	      goto fail;
+	    }
+	}
+      else if (read_8 (ptr) != ptr_size)
+	{
+	  error (0, 0, "%s: DWARF pointer size differs between CUs",
+		 dso->filename);
+	  goto fail;
+	}
+
+      if (abbrev == NULL || value != last_abbrev_offset)
+	{
+	  if (abbrev)
+	    htab_delete (abbrev);
+	  abbrev
+	    = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value);
+	  if (abbrev == NULL)
+	    goto fail;
+	}
+      last_abbrev_offset = value;
+
+      while (ptr < endcu)
+	{
+	  tag.entry = read_uleb128 (ptr);
+	  if (tag.entry == 0)
+	    continue;
+	  if (ndies == max_die_limit)
+	    {
+	      error (0, 0, "%s: Too many DIEs, not optimizing",
+		     dso->filename);
+	      goto fail;
+	    }
+	  /* If we reach the DIE limit, signal the dwz caller that it
+	     should retry with low_mem.  */
+	  if (likely (!low_mem) && ndies == low_mem_die_limit)
+	    {
+	      if (tracing)
+		fprintf (stderr, "Hit low-mem die-limit\n");
+	      ret = 2;
+	      goto fail;
+	    }
+	  ndies++;
+	  t = htab_find_with_hash (abbrev, &tag, tag.entry);
+	  if (t == NULL)
+	    {
+	      error (0, 0, "%s: Could not find DWARF abbreviation %d",
+		     dso->filename, tag.entry);
+	      goto fail;
+	    }
+	  ptr = skip_attrs_1 (cu_version, t, ptr);
+	}
+    }
+
+  ret = 0;
+
+ fail:
+  if (abbrev)
+    htab_delete (abbrev);
+
+  return ret;
+}
+
 /* First phase of the DWARF compression.  Parse .debug_info section
    (for kind == DEBUG_INFO) or .debug_types section (for kind == DEBUG_TYPES)
    for each CU in it construct internal representation for the CU
@@ -4907,6 +5040,16 @@ read_debug_info (DSO *dso, int kind)
   bool low_mem_phase1 = low_mem && kind == DEBUG_INFO;
   struct dw_cu cu_buf;
   struct dw_die die_buf;
+
+  unsigned int estimated_nr_dies = estimate_nr_dies ();
+  if (kind == DEBUG_INFO
+      && ((multifile_mode == 0 && estimated_nr_dies > max_die_limit)
+	  || (!low_mem && estimated_nr_dies > low_mem_die_limit)))
+    {
+      int try_ret = try_debug_info (dso);
+      if (try_ret != 0)
+	return try_ret;
+    }
 
   if (likely (!fi_multifile && kind != DEBUG_TYPES))
     {
