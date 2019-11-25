@@ -5043,8 +5043,9 @@ read_debug_info (DSO *dso, int kind)
 
   unsigned int estimated_nr_dies = estimate_nr_dies ();
   if (kind == DEBUG_INFO
-      && ((multifile_mode == 0 && estimated_nr_dies > max_die_limit)
-	  || (!low_mem && estimated_nr_dies > low_mem_die_limit)))
+      && multifile_mode == 0
+      && (estimated_nr_dies > max_die_limit
+	  || estimated_nr_dies > low_mem_die_limit))
     {
       int try_ret = try_debug_info (dso);
       if (try_ret != 0)
