@@ -5671,6 +5671,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
       return 0;
     }
 
+  if (die_count)
+    *die_count = ndies;
   htab_delete (dup_htab);
   dup_htab = NULL;
   return 0;
@@ -9862,6 +9864,8 @@ write_info (unsigned int *die_count)
 
   if (info == NULL)
     dwz_oom ();
+  if (die_count)
+    *die_count = 0;
   debug_sections[DEBUG_INFO].new_data = info;
   cu = first_cu;
   if (unlikely (fi_multifile))
