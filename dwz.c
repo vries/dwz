@@ -12297,7 +12297,7 @@ static unsigned int *strp_tail_off_list;
 /* Process temporary .debug_* files, see what can be beneficially shared
    and write a new ET_REL file, containing the shared .debug_* sections.  */
 static int
-optimize_multifile (void)
+optimize_multifile (unsigned int *die_count)
 {
   DSO dsobuf, *dso;
   int fd = -1;
@@ -12478,7 +12478,7 @@ optimize_multifile (void)
 	  strp_tail_off_list = finalize_strp (true);
 
 	  write_abbrev ();
-	  write_info (NULL);
+	  write_info (die_count);
 	  write_gdb_index ();
 	  if (write_multifile_line ())
 	    goto fail;
@@ -12682,7 +12682,7 @@ optimize_multifile (void)
    by optimize_multifile into data structures for fi_multifile
    phase.  */
 static DSO *
-read_multifile (int fd)
+read_multifile (int fd, unsigned int die_count)
 {
   DSO *dso, *volatile ret;
   unsigned int i;
@@ -12715,7 +12715,7 @@ read_multifile (int fd)
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      if (read_dwarf (dso, false, NULL))
+      if (read_dwarf (dso, false, &die_count))
 	goto fail;
 
       if (debug_sections[DEBUG_STR].size)
@@ -13108,11 +13108,12 @@ main (int argc, char *argv[])
 	}
       if (multifile)
 	{
-	  int multi_fd = optimize_multifile ();
+	  unsigned int multifile_die_count = 0;
+	  int multi_fd = optimize_multifile (&multifile_die_count);
 	  DSO *dso;
 	  if (multi_fd == -1)
 	    return 1;
-	  dso = read_multifile (multi_fd);
+	  dso = read_multifile (multi_fd, multifile_die_count);
 	  if (dso == NULL)
 	    ret = 1;
 	  else
