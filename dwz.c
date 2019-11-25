@@ -167,6 +167,7 @@ static int partition_dups_opt;
 enum die_count_methods
 {
   none,
+  count,
   estimate
 };
 static enum die_count_methods die_count_method = estimate;
@@ -4940,7 +4941,7 @@ collapse_children (dw_cu_ref cu, dw_die_ref die)
 /* Count the number of DIEs in the .debug_info section, and see if we run into
    some limit.  */
 static int
-try_debug_info (DSO *dso)
+try_debug_info (DSO *dso, unsigned int *die_count)
 {
   unsigned char *ptr, *endcu, *endsec;
   unsigned int value;
@@ -5050,7 +5051,7 @@ try_debug_info (DSO *dso)
 	    {
 	      if (tracing)
 		fprintf (stderr, "Hit low-mem die-limit\n");
-	      if (estimate_nr_dies () > max_die_limit)
+	      if (estimate_nr_dies () > max_die_limit || die_count)
 		/* Keep going, we still might hit the max die-limit.  */
 		low_mem_die_limit_hit = true;
 	      else
@@ -5074,7 +5075,15 @@ try_debug_info (DSO *dso)
   if (low_mem_die_limit_hit)
     ret = 2;
   else
-    ret = 0;
+    {
+      ret = 0;
+      if (die_count)
+	{
+	  *die_count = ndies;
+	  if (tracing)
+	    fprintf (stderr, "DIE count: %u\n", ndies);
+	}
+    }
 
  fail:
   if (abbrev)
@@ -5111,16 +5120,28 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   struct dw_cu cu_buf;
   struct dw_die die_buf;
 
-  unsigned int estimated_nr_dies = estimate_nr_dies ();
   if (kind == DEBUG_INFO
-      && multifile_mode == 0
-      && die_count_method == estimate
-      && (estimated_nr_dies > max_die_limit
-	  || estimated_nr_dies > low_mem_die_limit))
+      && multifile_mode == 0)
     {
-      int try_ret = try_debug_info (dso);
-      if (try_ret != 0)
-	return try_ret;
+      if (die_count_method == none)
+	;
+      else if (die_count_method == estimate)
+	{
+	  unsigned int estimated_nr_dies = estimate_nr_dies ();
+	  if (estimated_nr_dies > max_die_limit
+	      || estimated_nr_dies > low_mem_die_limit)
+	    {
+	      int try_ret = try_debug_info (dso, NULL);
+	      if (try_ret != 0)
+		return try_ret;
+	    }
+	}
+      else if (die_count_method == count)
+	{
+	  int try_ret = try_debug_info (dso, die_count);
+	  if (try_ret != 0)
+	    return try_ret;
+	}
     }
 
   if (likely (!fi_multifile && kind != DEBUG_TYPES))
@@ -12173,7 +12194,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      unsigned int *die_count = multifile ? &res->die_count : NULL;
+      unsigned int *die_count = multifile || die_count_method == count ? &res->die_count : NULL;
       ret = read_dwarf (dso, quiet && outfile == NULL, die_count);
       if (ret)
 	cleanup ();
@@ -13049,6 +13070,11 @@ main (int argc, char *argv[])
 	      if (strcmp (optarg, "none") == 0)
 		{
 		  die_count_method = none;
+		  break;
+		}
+	      if (strcmp (optarg, "count") == 0)
+		{
+		  die_count_method = count;
 		  break;
 		}
 	      if (strcmp (optarg, "estimate") == 0)
