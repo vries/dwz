@@ -1256,7 +1256,7 @@ static htab_t types_off_htab;
 /* Function to add DIE into the hash table (and create the hash table
    when not already created).  */
 static void
-off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
+off_htab_add_die (dw_cu_ref cu, dw_die_ref die, unsigned int *die_count)
 {
   void **slot;
 
@@ -1290,9 +1290,14 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
 	initial_size = default_initial_size;
       else
 	{
-	  size_t estimated_final_hashtab_size
-	    = emulate_htab (default_initial_size, estimated_nr_dies);
-	  initial_size = estimated_final_hashtab_size;
+	  size_t nr_dies;
+	  if (die_count && *die_count != 0)
+	    nr_dies = *die_count;
+	  else
+	    nr_dies = estimated_nr_dies;
+	  size_t final_hashtab_size
+	    = emulate_htab (default_initial_size, nr_dies);
+	  initial_size = final_hashtab_size;
 	}
       off_htab = htab_try_create (initial_size, off_hash, off_eq, NULL);
       if (off_htab == NULL)
@@ -1789,7 +1794,7 @@ add_dummy_die (dw_cu_ref cu, unsigned int offset)
     {
       ref = pool_alloc (dw_die, offsetof (struct dw_die, die_child));
       memcpy (ref, &ref_buf, offsetof (struct dw_die, die_child));
-      off_htab_add_die (cu, ref);
+      off_htab_add_die (cu, ref, NULL);
       return;
     }
 
@@ -5019,7 +5024,7 @@ try_debug_info (DSO *dso)
    for each CU in it construct internal representation for the CU
    and its DIE tree, compute checksums of DIEs and look for duplicates.  */
 static int
-read_debug_info (DSO *dso, int kind)
+read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 {
   unsigned char *ptr, *endcu, *endsec;
   unsigned int value;
@@ -5525,7 +5530,7 @@ read_debug_info (DSO *dso, int kind)
 		}
 	    }
 
-	  off_htab_add_die (cu, die);
+	  off_htab_add_die (cu, die, die_count);
 	}
 
       if (unlikely (low_mem_phase1))
@@ -9267,7 +9272,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
    memory starting at PTR, return pointer after the DIE.  */
 static unsigned char *
 write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
-	   dw_cu_ref refcu, dw_die_ref ref)
+	   dw_cu_ref refcu, dw_die_ref ref, unsigned int *die_count)
 {
   uint64_t low_pc = 0;
   dw_die_ref child, sib = NULL, origin = NULL;
@@ -9275,6 +9280,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 
   if (wr_multifile ? die->die_no_multifile : die->die_remove)
     return ptr;
+  if (die_count)
+    (*die_count)++;
   if (die->die_offset == -1U)
     {
       if (ref != NULL)
@@ -9767,11 +9774,11 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
       dw_die_ref ref_child;
       for (child = die->die_child, ref_child = ref->die_child;
 	   child; child = child->die_sib, ref_child = ref_child->die_sib)
-	ptr = write_die (ptr, cu, child, refcu, ref_child);
+	ptr = write_die (ptr, cu, child, refcu, ref_child, die_count);
     }
   else
     for (child = die->die_child; child; child = child->die_sib)
-      ptr = write_die (ptr, cu, child, NULL, NULL);
+      ptr = write_die (ptr, cu, child, NULL, NULL, die_count);
   if (die->die_child)
     write_8 (ptr, 0);
   return ptr;
@@ -9847,7 +9854,7 @@ recompute_abbrevs (dw_cu_ref cu, unsigned int cu_size)
 /* Construct new .debug_info section in malloced memory,
    store it to debug_sections[DEBUG_INFO].new_data.  */
 static void
-write_info (void)
+write_info (unsigned int *die_count)
 {
   dw_cu_ref cu, cu_next;
   unsigned char *info = malloc (debug_sections[DEBUG_INFO].new_size);
@@ -9889,7 +9896,7 @@ write_info (void)
       write_16 (ptr, cu->cu_version);
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
       write_8 (ptr, ptr_size);
-      ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL);
+      ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL, die_count);
       assert (info + (next_off - (wr_multifile ? multi_info_off : 0)) == ptr);
       if (unlikely (low_mem) && cu->cu_kind != CU_PU)
 	collapse_children (cu, cu->cu_die);
@@ -9995,7 +10002,7 @@ write_types (void)
       ref = off_htab_lookup (cu, cu->cu_offset + read_32 (inptr));
       assert (ref && ref->die_dup == NULL);
       write_32 (ptr, ref->u.p2.die_new_offset);
-      ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL);
+      ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL, NULL);
       assert (types + next_off == ptr);
       if (unlikely (low_mem))
 	collapse_children (cu, cu->cu_die);
@@ -10460,7 +10467,7 @@ init_endian (int endianity)
 
 /* Read DWARF sections from DSO.  */
 static int
-read_dwarf (DSO *dso, bool quieter)
+read_dwarf (DSO *dso, bool quieter, unsigned int *die_count)
 {
   Elf_Data *data;
   Elf_Scn *scn;
@@ -10548,7 +10555,7 @@ read_dwarf (DSO *dso, bool quieter)
       return 1;
     }
 
-  return read_debug_info (dso, DEBUG_INFO);
+  return read_debug_info (dso, DEBUG_INFO, die_count);
 }
 
 /* Open an ELF file NAME.  */
@@ -11841,7 +11848,7 @@ write_multifile (DSO *dso)
 	{
 	  const char *mfile;
 	  write_abbrev ();
-	  write_info ();
+	  write_info (NULL);
 	  /* Any error in this is fatal for multifile handling of further
 	     files.  */
 	  mfile = multifile;
@@ -11970,6 +11977,7 @@ struct file_result
   dev_t dev;
   ino_t ino;
   nlink_t nlink;
+  unsigned int die_count;
 };
 
 /* Handle compression of a single file FILE.  If OUTFILE is
@@ -12090,7 +12098,8 @@ dwz (const char *file, const char *outfile, struct file_result *res,
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      ret = read_dwarf (dso, quiet && outfile == NULL);
+      unsigned int *die_count = multifile ? &res->die_count : NULL;
+      ret = read_dwarf (dso, quiet && outfile == NULL, die_count);
       if (ret)
 	cleanup ();
       else if (partition_dups ()
@@ -12098,7 +12107,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	       || (unlikely (fi_multifile)
 		   && (remove_empty_pus ()
 		       || read_macro (dso)))
-	       || read_debug_info (dso, DEBUG_TYPES)
+	       || read_debug_info (dso, DEBUG_TYPES, NULL)
 #if DEVEL
 	       || clear_p2_field ()
 #endif
@@ -12225,7 +12234,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	      write_macro ();
 	    }
 	  write_abbrev ();
-	  write_info ();
+	  write_info (die_count);
 	  write_loc ();
 	  write_types ();
 	  write_gdb_index ();
@@ -12414,7 +12423,7 @@ optimize_multifile (void)
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      if (read_debug_info (dso, DEBUG_INFO)
+      if (read_debug_info (dso, DEBUG_INFO, NULL)
 	  || partition_dups ())
 	goto fail;
 
@@ -12469,7 +12478,7 @@ optimize_multifile (void)
 	  strp_tail_off_list = finalize_strp (true);
 
 	  write_abbrev ();
-	  write_info ();
+	  write_info (NULL);
 	  write_gdb_index ();
 	  if (write_multifile_line ())
 	    goto fail;
@@ -12706,7 +12715,7 @@ read_multifile (int fd)
       obstack_init (&ob);
       obstack_init (&ob2);
 
-      if (read_dwarf (dso, false))
+      if (read_dwarf (dso, false, NULL))
 	goto fail;
 
       if (debug_sections[DEBUG_STR].size)
@@ -13021,6 +13030,7 @@ main (int argc, char *argv[])
 	  error (0, 0, "Too few files for multifile optimization");
 	  multifile = NULL;
 	}
+      res.die_count = 0;
       ret = (low_mem_die_limit == 0
 	     ? 2
 	     : dwz (optind == argc ? "a.out" : argv[optind], outfile,
@@ -13034,11 +13044,14 @@ main (int argc, char *argv[])
     }
   else
     {
+      int nr_files = argc - optind;
       struct file_result *resa
-	= (struct file_result *) malloc ((argc - optind) * sizeof (*resa));
+	= (struct file_result *) malloc ((nr_files) * sizeof (*resa));
       bool hardlinks = false;
       int successcount = 0;
 
+      for (i = 0; i < nr_files; ++i)
+	resa[i].die_count = 0;
       if (resa == NULL)
 	error (1, ENOMEM, "failed to allocate result array");
       if (outfile != NULL)
