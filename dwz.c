@@ -1284,8 +1284,9 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die)
       size_t initial_size;
       if (low_mem
 	  || op_multifile
-	  || estimated_nr_dies >= low_mem_die_limit
-	  || estimated_nr_dies >= max_die_limit)
+	  || (multifile_mode == 0
+	      && (estimated_nr_dies >= low_mem_die_limit
+		  || estimated_nr_dies >= max_die_limit)))
 	initial_size = default_initial_size;
       else
 	{
