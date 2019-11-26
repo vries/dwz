@@ -1227,6 +1227,38 @@ emulate_htab (size_t initial, size_t final_nr_elements)
   return size;
 }
 
+/* Print hash table statistics for hash table HTAB with message string MSG.  */
+static void
+htab_report (htab_t htab, const char *msg)
+{
+  double collisions = htab_collisions (htab);
+  unsigned int searches = htab->searches;
+  size_t elements = htab->n_elements;
+  size_t deleted = htab->n_deleted;
+  size_t adjusted_elements = elements - deleted;
+  size_t size = htab->size;
+  double occupancy = (double)elements / (double)size;
+  double adjusted_occupancy = (double)adjusted_elements / (double)size;
+  /* Indent unconditional fprintfs similar to conditional fprintfs to
+     left-align literal strings.  */
+  if (1)
+    fprintf (stderr, "htab: %s\n", msg);
+  if (1)
+    fprintf (stderr, "      size: %lu\n", size);
+  if (elements > 0 && deleted == 0)
+    fprintf (stderr, "      elements: %lu, occupancy: %f\n", elements,
+	     occupancy);
+  if (deleted > 0)
+    fprintf (stderr, "      elements (incl. deleted): %lu, occupancy: %f\n",
+	     elements, occupancy);
+  if (deleted > 0)
+    fprintf (stderr, "      elements (excl. deleted): %lu, occupancy: %f\n",
+	     adjusted_elements, adjusted_occupancy);
+  if (elements > 0)
+    fprintf (stderr, "      searches: %u, collisions: %f\n", searches,
+	     collisions);
+}
+
 /* Hash function for off_htab hash table.  */
 static hashval_t
 off_hash (const void *p)
@@ -1300,6 +1332,8 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die, unsigned int *die_count)
 	  initial_size = final_hashtab_size;
 	}
       off_htab = htab_try_create (initial_size, off_hash, off_eq, NULL);
+      if (tracing)
+	htab_report (off_htab, "off_htab allocation");
       if (off_htab == NULL)
 	dwz_oom ();
       if (rd_multifile)
@@ -5674,6 +5708,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
       return 0;
     }
 
+  if (tracing)
+    htab_report (off_htab, "off_htab post-parsing");
   if (die_count)
     *die_count = ndies;
   htab_delete (dup_htab);
@@ -11245,7 +11281,11 @@ cleanup (void)
       cu->cu_new_abbrev = NULL;
     }
   if (off_htab != NULL)
-    htab_delete (off_htab);
+    {
+      if (tracing)
+	htab_report (off_htab, "off_htab final");
+      htab_delete (off_htab);
+    }
   off_htab = NULL;
   if (types_off_htab != NULL)
     htab_delete (types_off_htab);
