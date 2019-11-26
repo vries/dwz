@@ -164,6 +164,12 @@ static int save_temps = 0;
 static int verify_edges_p = 0;
 static int dump_edges_p = 0;
 static int partition_dups_opt;
+enum die_count_methods
+{
+  none,
+  estimate
+};
+static enum die_count_methods die_count_method = estimate;
 
 typedef struct
 {
@@ -1317,6 +1323,7 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die, unsigned int *die_count)
       if (low_mem
 	  || op_multifile
 	  || (multifile_mode == 0
+	      && die_count_method == estimate
 	      && (estimated_nr_dies >= low_mem_die_limit
 		  || estimated_nr_dies >= max_die_limit)))
 	initial_size = default_initial_size;
@@ -1325,11 +1332,21 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die, unsigned int *die_count)
 	  size_t nr_dies;
 	  if (die_count && *die_count != 0)
 	    nr_dies = *die_count;
-	  else
+	  else if (die_count_method == none)
+	    nr_dies = 0;
+	  else if (die_count_method == estimate)
 	    nr_dies = estimated_nr_dies;
-	  size_t final_hashtab_size
-	    = emulate_htab (default_initial_size, nr_dies);
-	  initial_size = final_hashtab_size;
+	  else
+	    assert (false);
+
+	  if (nr_dies != 0)
+	    {
+	      size_t final_hashtab_size
+		= emulate_htab (default_initial_size, nr_dies);
+	      initial_size = final_hashtab_size;
+	    }
+	  else
+	    initial_size = default_initial_size;
 	}
       off_htab = htab_try_create (initial_size, off_hash, off_eq, NULL);
       if (tracing)
@@ -5097,6 +5114,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   unsigned int estimated_nr_dies = estimate_nr_dies ();
   if (kind == DEBUG_INFO
       && multifile_mode == 0
+      && die_count_method == estimate
       && (estimated_nr_dies > max_die_limit
 	  || estimated_nr_dies > low_mem_die_limit))
     {
@@ -12936,6 +12954,8 @@ make_temp_file (const char *name)
   return fd;
 }
 
+int die_count_method_parsed;
+
 /* Options for getopt_long.  */
 static struct option dwz_options[] =
 {
@@ -12961,6 +12981,8 @@ static struct option dwz_options[] =
   { "devel-dump-edges",  no_argument,	    &dump_edges_p, 1 },
   { "devel-partition-dups-opt",
 			 no_argument,	    &partition_dups_opt, 1 },
+  { "devel-die-count-method",
+			 required_argument, &die_count_method_parsed, 1 },
 #endif
   { NULL,		 no_argument,	    0, 0 }
 };
@@ -13021,6 +13043,22 @@ main (int argc, char *argv[])
 
 	case 0:
 	  /* Option handled by getopt_long.  */
+	  if (die_count_method_parsed)
+	    {
+	      die_count_method_parsed = 0;
+	      if (strcmp (optarg, "none") == 0)
+		{
+		  die_count_method = none;
+		  break;
+		}
+	      if (strcmp (optarg, "estimate") == 0)
+		{
+		  die_count_method = estimate;
+		  break;
+		}
+	      error (1, 0, "invalid argument --devel-die-count-method %s",
+		     optarg);
+	    }
 	  break;
 
 	case 'o':
