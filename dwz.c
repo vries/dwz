@@ -4933,6 +4933,7 @@ try_debug_info (DSO *dso)
   unsigned int ndies;
   unsigned ret = 1;
   int kind = DEBUG_INFO;
+  bool low_mem_die_limit_hit = false;
 
   if (tracing)
     fprintf (stderr, "Counting DIEs\n");
@@ -5032,8 +5033,14 @@ try_debug_info (DSO *dso)
 	    {
 	      if (tracing)
 		fprintf (stderr, "Hit low-mem die-limit\n");
-	      ret = 2;
-	      goto fail;
+	      if (estimate_nr_dies () > max_die_limit)
+		/* Keep going, we still might hit the max die-limit.  */
+		low_mem_die_limit_hit = true;
+	      else
+		{
+		  ret = 2;
+		  goto fail;
+		}
 	    }
 	  ndies++;
 	  t = htab_find_with_hash (abbrev, &tag, tag.entry);
@@ -5047,7 +5054,10 @@ try_debug_info (DSO *dso)
 	}
     }
 
-  ret = 0;
+  if (low_mem_die_limit_hit)
+    ret = 2;
+  else
+    ret = 0;
 
  fail:
   if (abbrev)
