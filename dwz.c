@@ -4900,6 +4900,9 @@ try_debug_info (DSO *dso)
   unsigned ret = 1;
   int kind = DEBUG_INFO;
 
+  if (tracing)
+    fprintf (stderr, "Counting DIEs\n");
+
   ndies = 0;
   ptr = debug_sections[kind].data;
   endsec = ptr + debug_sections[kind].size;
