@@ -1253,15 +1253,15 @@ htab_report (htab_t htab, const char *msg)
   if (1)
     fprintf (stderr, "htab: %s\n", msg);
   if (1)
-    fprintf (stderr, "      size: %lu\n", size);
+    fprintf (stderr, "      size: %zu\n", size);
   if (elements > 0 && deleted == 0)
-    fprintf (stderr, "      elements: %lu, occupancy: %f\n", elements,
+    fprintf (stderr, "      elements: %zu, occupancy: %f\n", elements,
 	     occupancy);
   if (deleted > 0)
-    fprintf (stderr, "      elements (incl. deleted): %lu, occupancy: %f\n",
+    fprintf (stderr, "      elements (incl. deleted): %zu, occupancy: %f\n",
 	     elements, occupancy);
   if (deleted > 0)
-    fprintf (stderr, "      elements (excl. deleted): %lu, occupancy: %f\n",
+    fprintf (stderr, "      elements (excl. deleted): %zu, occupancy: %f\n",
 	     adjusted_elements, adjusted_occupancy);
   if (elements > 0)
     fprintf (stderr, "      searches: %u, collisions: %f\n", searches,
