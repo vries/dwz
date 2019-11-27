@@ -1,6 +1,5 @@
-/* An expandable hash tables datatype.
-   Copyright (C) 1999, 2000, 2002, 2003, 2004, 2005, 2009, 2010
-   Free Software Foundation, Inc.
+/* An expandable hash tables datatype.  
+   Copyright (C) 1999-2019 Free Software Foundation, Inc.
    Contributed by Vladimir Makarov (vmakarov@cygnus.com).
 
 This program is free software; you can redistribute it and/or modify
@@ -14,9 +13,8 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with this program; see the file COPYING.  If not, write to
-the Free Software Foundation, 51 Franklin Street - Fifth Floor,
-Boston, MA 02110-1301, USA.  */
+along with this program; if not, write to the Free Software
+Foundation, Inc., 51 Franklin Street - Fifth Floor, Boston, MA 02110-1301, USA.  */
 
 /* This package implements basic hash table functionality.  It is possible
    to search for an entry, create an entry and destroy an entry.
@@ -38,6 +36,8 @@ Boston, MA 02110-1301, USA.  */
 extern "C" {
 #endif /* __cplusplus */
 
+#include "ansidecl.h"
+
 /* The type for a hash code.  */
 typedef unsigned int hashval_t;
 
@@ -56,20 +56,43 @@ typedef int (*htab_eq) (const void *, const void *);
 /* Cleanup function called whenever a live element is removed from
    the hash table.  */
 typedef void (*htab_del) (void *);
-
+  
 /* Function called by htab_traverse for each live element.  The first
    arg is the slot of the element (which can be passed to htab_clear_slot
    if desired), the second arg is the auxiliary pointer handed to
    htab_traverse.  Return 1 to continue scan, 0 to stop.  */
 typedef int (*htab_trav) (void **, void *);
 
+/* Memory-allocation function, with the same functionality as calloc().
+   Iff it returns NULL, the hash table implementation will pass an error
+   code back to the user, so if your code doesn't handle errors,
+   best if you use xcalloc instead.  */
+typedef void *(*htab_alloc) (size_t, size_t);
+
+/* We also need a free() routine.  */
+typedef void (*htab_free) (void *);
+
+/* Memory allocation and deallocation; variants which take an extra
+   argument.  */
+typedef void *(*htab_alloc_with_arg) (void *, size_t, size_t);
+typedef void (*htab_free_with_arg) (void *, void *);
+
+/* This macro defines reserved value for empty table entry.  */
+
+#define HTAB_EMPTY_ENTRY    ((PTR) 0)
+
+/* This macro defines reserved value for table entry which contained
+   a deleted element. */
+
+#define HTAB_DELETED_ENTRY  ((PTR) 1)
+
 /* Hash tables are of the following type.  The structure
    (implementation) of this type is not needed for using the hash
    tables.  All work with hash table should be executed only through
-   functions mentioned below. */
+   functions mentioned below.  The size of this structure is subject to
+   change.  */
 
-struct htab
-{
+struct htab {
   /* Pointer to hash function.  */
   htab_hash hash_f;
 
@@ -82,13 +105,13 @@ struct htab
   /* Table itself.  */
   void **entries;
 
-  /* Current size (in entries) of the hash table */
+  /* Current size (in entries) of the hash table.  */
   size_t size;
 
-  /* Current number of elements including also deleted elements */
+  /* Current number of elements including also deleted elements.  */
   size_t n_elements;
 
-  /* Current number of deleted elements in the table */
+  /* Current number of deleted elements in the table.  */
   size_t n_deleted;
 
   /* The following member is used for debugging. Its value is number
@@ -99,9 +122,18 @@ struct htab
      of collisions fixed for time of work with the hash table. */
   unsigned int collisions;
 
-  /* This is non-zero if we are allowed to return NULL for function calls
-     that allocate memory.  */
-  int return_allocation_failure;
+  /* Pointers to allocate/free functions.  */
+  htab_alloc alloc_f;
+  htab_free free_f;
+
+  /* Alternate allocate/free functions, which take an extra argument.  */
+  void *alloc_arg;
+  htab_alloc_with_arg alloc_with_arg_f;
+  htab_free_with_arg free_with_arg_f;
+
+  /* Current size (in entries) of the hash table, as an index into the
+     table of primes.  */
+  unsigned int size_prime_index;
 };
 
 typedef struct htab *htab_t;
@@ -111,29 +143,48 @@ enum insert_option {NO_INSERT, INSERT};
 
 /* The prototypes of the package functions. */
 
-/* This function is like htab_create, but may return NULL if memory
-   allocation fails, and also signals that htab_find_slot_with_hash and
-   htab_find_slot are allowed to return NULL when inserting.  */
-extern htab_t	htab_try_create	(size_t, htab_hash, htab_eq, htab_del);
-extern void	htab_delete	(htab_t);
-extern void	htab_empty	(htab_t);
+extern htab_t	htab_create_alloc  (size_t, htab_hash,
+                                    htab_eq, htab_del,
+                                    htab_alloc, htab_free);
 
-extern void    *htab_find	(htab_t, const void *);
-extern void    **htab_find_slot	(htab_t, const void *, enum insert_option);
-extern void    *htab_find_with_hash (htab_t, const void *, hashval_t);
-extern void    **htab_find_slot_with_hash (htab_t, const void *, hashval_t,
-					  enum insert_option);
+extern htab_t	htab_create_alloc_ex (size_t, htab_hash,
+                                      htab_eq, htab_del,
+                                      void *, htab_alloc_with_arg,
+                                      htab_free_with_arg);
+
+extern htab_t  htab_create_typed_alloc (size_t, htab_hash, htab_eq, htab_del,
+					htab_alloc, htab_alloc, htab_free);
+
+/* Backward-compatibility functions.  */
+extern htab_t htab_create (size_t, htab_hash, htab_eq, htab_del);
+extern htab_t htab_try_create (size_t, htab_hash, htab_eq, htab_del);
+
+extern void	htab_set_functions_ex (htab_t, htab_hash,
+                                       htab_eq, htab_del,
+                                       void *, htab_alloc_with_arg,
+                                       htab_free_with_arg);
+
+extern void	htab_delete (htab_t);
+extern void	htab_empty (htab_t);
+
+extern void *	htab_find (htab_t, const void *);
+extern void **	htab_find_slot (htab_t, const void *, enum insert_option);
+extern void *	htab_find_with_hash (htab_t, const void *, hashval_t);
+extern void **	htab_find_slot_with_hash (htab_t, const void *,
+					  hashval_t, enum insert_option);
 extern void	htab_clear_slot	(htab_t, void **);
 extern void	htab_remove_elt	(htab_t, void *);
+extern void	htab_remove_elt_with_hash (htab_t, void *, hashval_t);
 
-extern void	htab_traverse	(htab_t, htab_trav, void *);
+extern void	htab_traverse (htab_t, htab_trav, void *);
+extern void	htab_traverse_noresize (htab_t, htab_trav, void *);
 
-extern size_t	htab_size	(htab_t);
-extern size_t	htab_elements	(htab_t);
+extern size_t	htab_size (htab_t);
+extern size_t	htab_elements (htab_t);
 extern double	htab_collisions	(htab_t);
 
 /* Utility function.  */
-unsigned long higher_prime_number (unsigned long);
+size_t higher_prime_number (size_t);
 
 /* A hash function for pointers.  */
 extern htab_hash htab_hash_pointer;
@@ -141,17 +192,8 @@ extern htab_hash htab_hash_pointer;
 /* An equality function for pointers.  */
 extern htab_eq htab_eq_pointer;
 
-#ifndef NDEBUG
-
-#include <stdio.h>
-
-typedef void (*htab_dumpfn) (FILE *, const void *);
-typedef void *(*htab_restorefn) (FILE *);
-
-extern void	htab_dump (htab_t, const char *, htab_dumpfn);
-extern void	htab_restore (htab_t, const char *, htab_restorefn);
-
-#endif
+/* A hash function for null-terminated strings.  */
+extern hashval_t htab_hash_string (const void *);
 
 /* An iterative hash function for arbitrary data.  */
 extern hashval_t iterative_hash (const void *, size_t, hashval_t);
