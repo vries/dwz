@@ -689,6 +689,9 @@ struct dw_cu
   unsigned int cu_chunk;
   /* Form chosen for intra-cu references.  */
   enum dwarf_form cu_intracu_form;
+  /* Intracusize argument to init_new_die_offsets.  Set in compute_abbrevs,
+     used in recompute_abbrevs.  */
+  unsigned int initial_intracusize;
 };
 
 /* Internal representation of a debugging information entry (DIE).
@@ -8737,6 +8740,7 @@ compute_abbrevs (DSO *dso)
 	  intracusize = i;
 	}
       while (1);
+      cu->initial_intracusize = intracusize;
       off = init_new_die_offsets (cu->cu_die, headersz, intracusize);
       do
 	{
@@ -9889,14 +9893,7 @@ recompute_abbrevs (dw_cu_ref cu, unsigned int cu_size)
     }
   else
     {
-      /* Need to be conservatively high estimate, as update_new_die_offsets
-	 relies on the offsets always decreasing.  cu_size at this point is
-	 the size we will end up with in the end, but if cu_size is
-	 sufficiently close (from bottom) to some uleb128 boundary (say
-	 16384), init_new_die_offsets might return off above that boundary
-	 and then update_new_die_offsets might fail its assertions on
-	 reference to DIEs that crossed the uleb128 boundary.  */
-      intracusize = size_of_uleb128 (2 * cu_size);
+      intracusize = cu->initial_intracusize;
 
       off = init_new_die_offsets (cu->cu_die, headersz, intracusize);
       do
