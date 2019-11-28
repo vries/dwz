@@ -1335,11 +1335,21 @@ off_htab_add_die (dw_cu_ref cu, dw_die_ref die, unsigned int *die_count)
 	{
 	  size_t nr_dies;
 	  if (die_count && *die_count != 0)
-	    nr_dies = *die_count;
+	    {
+	      nr_dies = *die_count;
+	      if (tracing)
+		fprintf (stderr, "Using die count %zu for off_htab"
+			 " allocation\n", nr_dies);
+	    }
 	  else if (die_count_method == none)
 	    nr_dies = 0;
 	  else if (die_count_method == estimate)
-	    nr_dies = estimated_nr_dies;
+	    {
+	      nr_dies = estimated_nr_dies;
+	      if (tracing)
+		fprintf (stderr, "Using die count estimate %zu for off_htab"
+			 " allocation\n", nr_dies);
+	    }
 	  else
 	    assert (false);
 
@@ -5118,13 +5128,20 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   unsigned int estimated_nr_dies = estimate_nr_dies ();
   if (kind == DEBUG_INFO
       && multifile_mode == 0
-      && die_count_method == estimate
-      && (estimated_nr_dies > max_die_limit
-	  || estimated_nr_dies > low_mem_die_limit))
+      && die_count_method == estimate)
     {
-      int try_ret = try_debug_info (dso);
-      if (try_ret != 0)
-	return try_ret;
+      bool do_count = (estimated_nr_dies > max_die_limit
+		       || estimated_nr_dies > low_mem_die_limit);
+      if (tracing)
+	fprintf (stderr, "Using die count estimate %u to decide whether to"
+		 " count DIEs: %s\n", estimated_nr_dies,
+		 do_count ? "yes" : "no");
+      if (do_count)
+	{
+	  int try_ret = try_debug_info (dso);
+	  if (try_ret != 0)
+	    return try_ret;
+	}
     }
 
   if (likely (!fi_multifile && kind != DEBUG_TYPES))
@@ -5383,8 +5400,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  ret = 2;
 		  goto fail;
 		}
-	      ndies++;
 	    }
+	  ndies++;
 	  if (unlikely (low_mem_phase1))
 	    die = &die_buf;
 	  else if (parent == NULL
@@ -5740,6 +5757,14 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
       return 0;
     }
 
+  if (tracing)
+    {
+      if (op_multifile)
+	fprintf (stderr, "Die count: %u\n", ndies);
+      else
+	fprintf (stderr, "Die count: %u, %.2f%% of estimate\n", ndies,
+		 (double)ndies / ((double)estimated_nr_dies / 100));
+    }
   if (tracing)
     htab_report (off_htab, "off_htab post-parsing");
   if (die_count)
