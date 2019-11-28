@@ -12996,8 +12996,22 @@ usage (void)
   error (1, 0,
 	 "Usage:\n"
 	 "  dwz " COMMON_OPTS " [-h] [-m COMMONFILE] [-M NAME] [-r] [FILES]\n"
-	 "  dwz " COMMON_OPTS " -o OUTFILE FILE\n");
+	 "  dwz " COMMON_OPTS " -o OUTFILE FILE\n"
 #undef COMMON_OPTS
+#if DEVEL
+	 "Development options:\n"
+	 "  --devel-trace\n"
+	 "  --devel-ignore-size\n"
+	 "  --devel-ignore-locus\n"
+	 "  --devel-save-temps\n"
+	 "  --devel-dump-dies\n"
+	 "  --devel-unoptimized-multifile\n"
+	 "  --devel-verify-edges\n"
+	 "  --devel-dump-edges\n"
+	 "  --devel-partition-dups-opt\n"
+	 "  --devel-die-count-method"
+#endif
+	 );
 }
 
 /* Print version and exit.  */
