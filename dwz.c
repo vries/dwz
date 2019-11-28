@@ -9458,6 +9458,10 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 					  ? ptr_size : 4);
 		inptr += refcu->cu_version == 2 ? ptr_size : 4;
 		refd = off_htab_lookup (NULL, value);
+		if (refd == NULL || refd->die_tag == 0)
+		  error (1, 0,
+			 "Couldn't find DIE at DW_FORM_ref_addr offset 0x%lx",
+			 value);
 		assert (refd != NULL);
 		refdt = refd;
 		while (refdt->die_toplevel == 0)
