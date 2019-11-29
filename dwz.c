@@ -13155,6 +13155,13 @@ main (int argc, char *argv[])
 	}
     }
 
+  /* Specifying a low-mem die-limit that is larger than or equal to the
+     max die-limit has the effect of disabling low-mem mode.  Make this
+     explicit by setting it to the 'none' value.  */
+  if (low_mem_die_limit != -1U
+      && low_mem_die_limit >= max_die_limit)
+    low_mem_die_limit = -1U;
+
   if (multifile_relative && multifile_name)
     error (1, 0, "-M and -r options can't be specified together");
 
