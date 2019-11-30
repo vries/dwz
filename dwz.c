@@ -4128,15 +4128,48 @@ find_dups_fi (dw_die_ref parent)
   return 0;
 }
 
+/* Dump type of DIE to stderr.  */
+static void
+dump_type (dw_die_ref die)
+{
+  bool present;
+  enum dwarf_form form;
+  unsigned int value = get_AT_int (die, DW_AT_type, &present, &form);
+  if (!present)
+    return;
+
+  dw_cu_ref cu = die_cu (die);
+  if (cu == NULL)
+    return;
+
+  dw_die_ref ref;
+  if (form != DW_FORM_ref_addr)
+    value = cu->cu_offset + value;
+  fprintf (stderr, " (type: %x", value);
+  ref = off_htab_lookup (cu, value);
+  if (ref != NULL)
+    {
+      const char *type_name = get_AT_string (ref, DW_AT_name);
+      if (type_name)
+	fprintf (stderr, " %s", type_name);
+    }
+  fprintf (stderr, " %s", get_DW_TAG_name (ref->die_tag) + 7);
+  dump_type (ref);
+  fprintf (stderr, ")");
+}
+
 /* Dump DIE to stderr with INDENT.  */
 static void
 dump_die_with_indent (int indent, dw_die_ref die)
 {
   const char *name = get_AT_string (die, DW_AT_name);
-  fprintf (stderr, "%*s %x %c %x %x %s\n", indent, "", die->die_offset,
+  fprintf (stderr, "%*s %x %c %x %x %s %s", indent, "", die->die_offset,
 	   die->die_ck_state == CK_KNOWN ? 'O' : 'X',
 	   (unsigned) die->u.p1.die_hash,
-	   (unsigned) die->u.p1.die_ref_hash, name ? name : "");
+	   (unsigned) die->u.p1.die_ref_hash, name ? name : "",
+	   get_DW_TAG_name (die->die_tag) + 7);
+  dump_type (die);
+  fprintf (stderr, "\n");
 }
 
 /* Dump DIE tree at tree depth DEPTH.  */
