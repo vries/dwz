@@ -4128,16 +4128,23 @@ find_dups_fi (dw_die_ref parent)
   return 0;
 }
 
-/* Debugging helper function to dump hash values to stdout.  */
+/* Dump DIE to stderr with INDENT.  */
+static void
+dump_die_with_indent (int indent, dw_die_ref die)
+{
+  const char *name = get_AT_string (die, DW_AT_name);
+  fprintf (stderr, "%*s %x %c %x %x %s\n", indent, "", die->die_offset,
+	   die->die_ck_state == CK_KNOWN ? 'O' : 'X',
+	   (unsigned) die->u.p1.die_hash,
+	   (unsigned) die->u.p1.die_ref_hash, name ? name : "");
+}
+
+/* Dump DIE tree at tree depth DEPTH.  */
 static void
 dump_dies (int depth, dw_die_ref die)
 {
   dw_die_ref child;
-  const char *name = get_AT_string (die, DW_AT_name);
-  fprintf (stderr, "%*s %x %c %x %x %s\n", depth, "", die->die_offset,
-	   die->die_ck_state == CK_KNOWN ? 'O' : 'X',
-	   (unsigned) die->u.p1.die_hash,
-	   (unsigned) die->u.p1.die_ref_hash, name ? name : "");
+  dump_die_with_indent (depth, die);
   for (child = die->die_child; child; child = child->die_sib)
     dump_dies (depth + 1, child);
 }
