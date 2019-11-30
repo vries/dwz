@@ -156,11 +156,13 @@ static int tracing;
 static int ignore_size;
 static int ignore_locus;
 static int dump_dies_p;
+static int dump_dups;
 #else
 #define tracing 0
 #define ignore_size 0
 #define ignore_locus 0
 #define dump_dies_p 0
+#define dump_dups 0
 #endif
 static int unoptimized_multifile;
 static int save_temps = 0;
@@ -5929,6 +5931,15 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
 	    }
 	  child->die_nextdup = prev;
 	  obstack_ptr_grow (vec, child);
+	  if (dump_dups)
+	    {
+	      fprintf (stderr, "duplicate chain:\n");
+	      {
+		dw_die_ref d;
+		for (d = child; d; d = d->die_nextdup)
+		  dump_die (d);
+	      }
+	    }
 	}
       else if (child->die_named_namespace)
 	partition_find_dups (vec, child);
@@ -13060,6 +13071,7 @@ static struct option dwz_options[] =
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
+  { "devel-dump-dups",  no_argument,	    &dump_dups, 1 },
   { "devel-unoptimized-multifile",
 			 no_argument,	    &unoptimized_multifile, 1 },
   { "devel-verify-edges",no_argument,	    &verify_edges_p, 1 },
