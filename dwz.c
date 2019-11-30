@@ -119,9 +119,11 @@
 #if defined __GNUC__
 # define FORCE_INLINE __attribute__((always_inline))
 # define UNUSED __attribute__((unused))
+# define USED __attribute__((used))
 #else
 # define FORCE_INLINE
 # define UNUSED
+# define USED
 #endif
 
 #define obstack_chunk_alloc     malloc
@@ -4170,6 +4172,13 @@ dump_die_with_indent (int indent, dw_die_ref die)
 	   get_DW_TAG_name (die->die_tag) + 7);
   dump_type (die);
   fprintf (stderr, "\n");
+}
+
+/* Dump DIE to stderr.  */
+void USED
+dump_die (dw_die_ref die)
+{
+  dump_die_with_indent (0, die);
 }
 
 /* Dump DIE tree at tree depth DEPTH.  */
