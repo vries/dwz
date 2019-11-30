@@ -4136,6 +4136,8 @@ dump_type (dw_die_ref die)
 {
   bool present;
   enum dwarf_form form;
+  if (die->die_collapsed_child)
+    return;
   unsigned int value = get_AT_int (die, DW_AT_type, &present, &form);
   if (!present)
     return;
@@ -4149,14 +4151,14 @@ dump_type (dw_die_ref die)
     value = cu->cu_offset + value;
   fprintf (stderr, " (type: %x", value);
   ref = off_htab_lookup (cu, value);
-  if (ref != NULL)
+  if (ref != NULL && !ref->die_collapsed_child)
     {
       const char *type_name = get_AT_string (ref, DW_AT_name);
       if (type_name)
 	fprintf (stderr, " %s", type_name);
+      fprintf (stderr, " %s", get_DW_TAG_name (ref->die_tag) + 7);
+      dump_type (ref);
     }
-  fprintf (stderr, " %s", get_DW_TAG_name (ref->die_tag) + 7);
-  dump_type (ref);
   fprintf (stderr, ")");
 }
 
@@ -4164,13 +4166,21 @@ dump_type (dw_die_ref die)
 static void
 dump_die_with_indent (int indent, dw_die_ref die)
 {
-  const char *name = get_AT_string (die, DW_AT_name);
-  fprintf (stderr, "%*s %x %c %x %x %s %s", indent, "", die->die_offset,
-	   die->die_ck_state == CK_KNOWN ? 'O' : 'X',
-	   (unsigned) die->u.p1.die_hash,
-	   (unsigned) die->u.p1.die_ref_hash, name ? name : "",
-	   get_DW_TAG_name (die->die_tag) + 7);
-  dump_type (die);
+  if (die->die_collapsed_child)
+    {
+      fprintf (stderr, "%*s %x %c", indent, "", die->die_offset,
+	   die->die_ck_state == CK_KNOWN ? 'O' : 'X');
+    }
+  else
+    {
+      const char *name = get_AT_string (die, DW_AT_name);
+      fprintf (stderr, "%*s %x %c %x %x %s %s", indent, "", die->die_offset,
+	       die->die_ck_state == CK_KNOWN ? 'O' : 'X',
+	       (unsigned) die->u.p1.die_hash,
+	       (unsigned) die->u.p1.die_ref_hash, name ? name : "",
+	       get_DW_TAG_name (die->die_tag) + 7);
+      dump_type (die);
+    }
   fprintf (stderr, "\n");
 }
 
