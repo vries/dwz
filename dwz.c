@@ -4168,7 +4168,9 @@ dump_type (dw_die_ref die)
 static void
 dump_die_with_indent (int indent, dw_die_ref die)
 {
-  if (die->die_collapsed_child)
+  if (die == NULL)
+    fprintf (stderr, "%*s null", indent, "");
+  else if (die->die_collapsed_child)
     {
       fprintf (stderr, "%*s %x %c", indent, "", die->die_offset,
 	   die->die_ck_state == CK_KNOWN ? 'O' : 'X');
