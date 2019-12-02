@@ -4170,6 +4170,19 @@ dump_die_with_indent (int indent, dw_die_ref die)
 {
   if (die == NULL)
     fprintf (stderr, "%*s null", indent, "");
+  else if (die->die_offset == -1U)
+    {
+      fprintf (stderr, "%*s -1 %s", indent, "",
+	       get_DW_TAG_name (die->die_tag) + 7);
+      dw_die_ref d = die->die_nextdup;
+      while (d)
+	{
+	  const char *name = get_AT_string (d, DW_AT_name);
+	  fprintf (stderr, " -> %x %s %s", d->die_offset, name ? name : "",
+		   get_DW_TAG_name (d->die_tag) + 7);
+	  d = d->die_nextdup;
+	}
+    }
   else if (die->die_collapsed_child)
     {
       fprintf (stderr, "%*s %x %c", indent, "", die->die_offset,
