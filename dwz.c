@@ -4132,6 +4132,40 @@ find_dups_fi (dw_die_ref parent)
   return 0;
 }
 
+/* Return value of DW_AT_name for DIE, or for its specification or abstract
+   origin.  */
+static const char *
+get_name (dw_die_ref die)
+{
+  const char *name = get_AT_string (die, DW_AT_name);
+  if (name)
+    return name;
+  dw_cu_ref cu = die_cu (die);
+  bool present;
+  enum dwarf_form form;
+  unsigned int value = get_AT_int (die, DW_AT_specification, &present, &form);
+  if (present)
+    {
+      dw_die_ref ref;
+      if (form != DW_FORM_ref_addr)
+	value = cu->cu_offset + value;
+      ref = off_htab_lookup (cu, value);
+      if (ref)
+	return get_name (ref);
+    }
+  value = get_AT_int (die, DW_AT_abstract_origin, &present, &form);
+  if (present)
+    {
+      dw_die_ref ref;
+      if (form != DW_FORM_ref_addr)
+	value = cu->cu_offset + value;
+      ref = off_htab_lookup (die_cu (die), value);
+      if (ref)
+	return get_name (ref);
+    }
+  return NULL;
+}
+
 /* Dump type of DIE to stderr.  */
 static void
 dump_type (dw_die_ref die)
@@ -4155,7 +4189,7 @@ dump_type (dw_die_ref die)
   ref = off_htab_lookup (cu, value);
   if (ref != NULL && !ref->die_collapsed_child)
     {
-      const char *type_name = get_AT_string (ref, DW_AT_name);
+      const char *type_name = get_name (ref);
       if (type_name)
 	fprintf (stderr, " %s", type_name);
       fprintf (stderr, " %s", get_DW_TAG_name (ref->die_tag) + 7);
@@ -4177,7 +4211,7 @@ dump_die_with_indent (int indent, dw_die_ref die)
       dw_die_ref d = die->die_nextdup;
       while (d)
 	{
-	  const char *name = get_AT_string (d, DW_AT_name);
+	  const char *name = get_name (d);
 	  fprintf (stderr, " -> %x %s %s", d->die_offset, name ? name : "",
 		   get_DW_TAG_name (d->die_tag) + 7);
 	  d = d->die_nextdup;
@@ -4190,7 +4224,7 @@ dump_die_with_indent (int indent, dw_die_ref die)
     }
   else
     {
-      const char *name = get_AT_string (die, DW_AT_name);
+      const char *name = get_name (die);
       fprintf (stderr, "%*s %x %c %x %x %s %s", indent, "", die->die_offset,
 	       die->die_ck_state == CK_KNOWN ? 'O' : 'X',
 	       (unsigned) die->u.p1.die_hash,
