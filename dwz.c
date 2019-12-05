@@ -13287,6 +13287,7 @@ main (int argc, char *argv[])
   char *end;
   struct file_result res;
   bool hardlink = false;
+  const char *file;
 
   if (elf_version (EV_CURRENT) == EV_NONE)
     error (1, 0, "library out of date\n");
@@ -13390,6 +13391,7 @@ main (int argc, char *argv[])
 
   if (optind == argc || optind + 1 == argc)
     {
+      file = optind == argc ? "a.out" : argv[optind];
       if (multifile != NULL)
 	{
 	  error (0, 0, "Too few files for multifile optimization");
@@ -13398,13 +13400,11 @@ main (int argc, char *argv[])
       res.die_count = 0;
       ret = (low_mem_die_limit == 0
 	     ? 2
-	     : dwz (optind == argc ? "a.out" : argv[optind], outfile,
-		    &res, NULL, NULL));
+	     : dwz (file, outfile, &res, NULL, NULL));
       if (ret == 2)
 	{
 	  multifile_mode = MULTIFILE_MODE_LOW_MEM;
-	  ret = dwz (optind == argc ? "a.out" : argv[optind], outfile,
-		     &res, NULL, NULL);
+	  ret = dwz (file, outfile, &res, NULL, NULL);
 	}
     }
   else
@@ -13440,14 +13440,16 @@ main (int argc, char *argv[])
 	}
       for (i = optind; i < argc; i++)
 	{
-	  int thisret = (low_mem_die_limit == 0
-			 ? 2
-			 : dwz (argv[i], NULL, &resa[i - optind],
-				hardlinks ? resa : NULL, &argv[optind]));
+	  int thisret;
+	  file = argv[i];
+	  thisret = (low_mem_die_limit == 0
+		     ? 2
+		     : dwz (file, NULL, &resa[i - optind],
+			    hardlinks ? resa : NULL, &argv[optind]));
 	  if (thisret == 2)
 	    {
 	      multifile_mode = MULTIFILE_MODE_LOW_MEM;
-	      thisret = dwz (argv[i], NULL, &resa[i - optind],
+	      thisret = dwz (file, NULL, &resa[i - optind],
 			     hardlinks ? resa : NULL, &argv[optind]);
 	    }
 	  else if (resa[i - optind].res == 0)
@@ -13486,6 +13488,7 @@ main (int argc, char *argv[])
 	      for (i = optind; i < argc; i++)
 		{
 		  dw_cu_ref cu;
+		  file = argv[i];
 		  multifile_mode = MULTIFILE_MODE_FI;
 		  /* Don't process again files that couldn't
 		     be processed successfully.  */
@@ -13494,7 +13497,7 @@ main (int argc, char *argv[])
 		    continue;
 		  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 		    alt_clear_dups (cu->cu_die);
-		  ret |= dwz (argv[i], NULL, &resa[i - optind],
+		  ret |= dwz (file, NULL, &resa[i - optind],
 			      hardlinks ? resa : NULL, &argv[optind]);
 		}
 	      elf_end (dso->elf);
