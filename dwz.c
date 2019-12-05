@@ -126,6 +126,9 @@
 # define USED
 #endif
 
+/* Utility macro.  */
+#define IMPLIES(A, B) (!((A) && !(B)))
+
 #define obstack_chunk_alloc     malloc
 #define obstack_chunk_free      free
 
@@ -6489,13 +6492,55 @@ dump_edges (const char *msg, struct import_cu **ipus, unsigned int npus,
     dump_edges_1 (ipus[i + npus]);
 }
 
+/* Enumerate the different kinds of nodes in the import_cu/import_edge
+   graph.  */
+enum node_kind { NODE_CU, NODE_PU_INITIAL, NODE_PU_NEW };
+
+/* Return the node kind for node IDX, given that:
+   - [0, NPUS - 1] are initial PUs,
+   - [NPUS, NPUS + NCUS - 1] are CUs, and
+   - [NPUS + NCUS, ] are new PUs.  */
+static enum node_kind
+get_node_kind (unsigned int idx, unsigned int npus, unsigned int ncus)
+{
+  if (idx < npus)
+    return NODE_PU_INITIAL;
+  if (idx < npus + ncus)
+    return NODE_CU;
+  return NODE_PU_NEW;
+}
+
+/* Verify an edge from SRC to DEST during create_import_tree phase PHASE.  */
+static void
+verify_edge (enum node_kind src, enum node_kind dest, unsigned int phase)
+{
+  if (phase == 1)
+    {
+      assert (src == NODE_CU && dest == NODE_PU_INITIAL);
+      return;
+    }
+
+  assert (IMPLIES (src == NODE_CU, dest != NODE_CU));
+
+  if (phase == 2)
+    {
+      assert (IMPLIES (src == NODE_PU_NEW, dest == NODE_PU_INITIAL));
+      assert (src != NODE_PU_INITIAL);
+    }
+  else
+    assert (IMPLIES (src == NODE_PU_NEW, dest != NODE_CU));
+}
+
 /* Helper function for debugging create_import_tree.  Verify
    various invariants for CU/PU IPU.  */
 static void
-verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc)
+verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc,
+		enum node_kind kind, unsigned int npus, unsigned int ncus,
+		unsigned int phase)
 {
   struct import_edge *e1, *e2;
   unsigned int last_idx, count;
+  enum node_kind kind2;
 
   for (last_idx = 0, count = 0, e1 = ipu->incoming;
        e1;
@@ -6509,6 +6554,9 @@ verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc)
 	if (e2->icu == ipu)
 	  break;
       assert (e2);
+
+      kind2 = get_node_kind (e1->icu->idx, npus, ncus);
+      verify_edge (kind2, kind, phase);
     }
 
   /* Verify the number of incoming edges.  */
@@ -6526,6 +6574,9 @@ verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc)
 	if (e2->icu == ipu)
 	  break;
       assert (e2);
+
+      kind2 = get_node_kind (e1->icu->idx, npus, ncus);
+      verify_edge (kind, kind2, phase);
     }
 
   /* Verify the number of outgoing edges.  */
@@ -6538,7 +6589,8 @@ verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc)
 /* Helper function for debugging create_import_tree.  Call verify_edges_1
    on all CUs and PUs.  */
 void
-verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
+verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus,
+	      unsigned int phase)
 {
   struct import_cu *ipu;
   unsigned int i, ic, oc;
@@ -6551,22 +6603,35 @@ verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
   for (i = 0; i < npus; ++i)
     {
       ipu = ipus[i];
+      assert (ipu->cu != NULL);
       if (i < npus - 1)
 	assert (ipu->next == ipus[i + 1]);
-      verify_edges_1 (ipu, &ic, &oc);
+      assert (ipu->incoming != NULL);
+      if (phase <= 2)
+	assert (ipu->outgoing == NULL);
+      verify_edges_1 (ipu, &ic, &oc, NODE_PU_INITIAL, npus, ncus, phase);
     }
 
   /* Verify new PUs.  */
   assert (ipu != NULL);
   for (ipu = ipu->next; ipu; ipu = ipu->next)
-    verify_edges_1 (ipu, &ic, &oc);
+    {
+      assert (phase != 1);
+      assert (ipu->cu == NULL);
+      assert (ipu->incoming != NULL);
+      assert (ipu->outgoing != NULL);
+      verify_edges_1 (ipu, &ic, &oc, NODE_PU_NEW, npus, ncus, phase);
+    }
 
   /* Verify CUs.  */
   for (i = 0; i < ncus; i++)
     {
       ipu = ipus[npus + i];
+      assert (ipu->cu != NULL);
       assert (ipu->next == NULL);
-      verify_edges_1 (ipu, &ic, &oc);
+      assert (ipu->incoming == NULL);
+      assert (ipu->outgoing != NULL);
+      verify_edges_1 (ipu, &ic, &oc, NODE_CU, npus, ncus, phase);
     }
 
   /* Verify that the overall number of incoming and outgoing edges is
@@ -6755,7 +6820,7 @@ create_import_tree (void)
   if (unlikely (dump_edges_p))
     dump_edges ("phase 1", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
-    verify_edges (ipus, npus, ncus);
+    verify_edges (ipus, npus, ncus, 1);
   /* Now, for the above constructed bipartite graph, find K x,2 components
      where x >= 5 (for DWARF3 and above or ptr_size 4, for DWARF2 and
      ptr_size 8 it can be even x == 4) and add a new PU node, where all
@@ -6917,7 +6982,7 @@ create_import_tree (void)
   if (unlikely (dump_edges_p))
     dump_edges ("phase 2", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
-    verify_edges (ipus, npus, ncus);
+    verify_edges (ipus, npus, ncus, 2);
   /* Try to merge PUs which have the same set of referrers if
      beneficial, or if one PU has a subset of referrers of the
      other, attempt to replace all the incoming edges from the
@@ -7147,7 +7212,7 @@ create_import_tree (void)
   if (unlikely (dump_edges_p))
     dump_edges ("phase 3", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
-    verify_edges (ipus, npus, ncus);
+    verify_edges (ipus, npus, ncus, 3);
   /* Create DW_TAG_partial_unit (and containing dw_cu structures).  */
   if (fi_multifile)
     {
