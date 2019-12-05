@@ -6495,29 +6495,42 @@ static void
 verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc)
 {
   struct import_edge *e1, *e2;
-  unsigned int last_idx = 0, count;
-  for (e1 = ipu->incoming, count = 0; e1; e1 = e1->next)
+  unsigned int last_idx, count;
+
+  for (last_idx = 0, count = 0, e1 = ipu->incoming;
+       e1;
+       last_idx = e1->icu->idx, count++, e1 = e1->next)
     {
+      /* Verify that incoming edges are in ascending idx order.  */
       assert (count == 0 || e1->icu->idx > last_idx);
-      last_idx = e1->icu->idx;
-      count++;
+
+      /* Verify that each incoming edge has a corresponding outgoing edge.  */
       for (e2 = e1->icu->outgoing; e2; e2 = e2->next)
 	if (e2->icu == ipu)
 	  break;
       assert (e2);
     }
+
+  /* Verify the number of incoming edges.  */
   assert (ipu->incoming_count == count);
-  for (e1 = ipu->outgoing, count = 0; e1; e1 = e1->next)
+
+  for (last_idx = 0, count = 0, e1 = ipu->outgoing;
+       e1;
+       last_idx = e1->icu->idx, count++, e1 = e1->next)
     {
+      /* Verify that outgoing edges are in ascending idx order.  */
       assert (count == 0 || e1->icu->idx > last_idx);
-      last_idx = e1->icu->idx;
-      count++;
+
+      /* Verify that each outgoing edge has a corresponding incoming edge.  */
       for (e2 = e1->icu->incoming; e2; e2 = e2->next)
 	if (e2->icu == ipu)
 	  break;
       assert (e2);
     }
+
+  /* Verify the number of outgoing edges.  */
   assert (ipu->outgoing_count == count);
+
   *ic += ipu->incoming_count;
   *oc += ipu->outgoing_count;
 }
@@ -6528,11 +6541,34 @@ void
 verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
 {
   struct import_cu *ipu;
-  unsigned int i, ic = 0, oc = 0;
-  for (ipu = ipus[0]; ipu; ipu = ipu->next)
+  unsigned int i, ic, oc;
+
+  ic = 0;
+  oc = 0;
+
+  /* Verify initial PUs.  */
+  for (i = 0; i < npus; ++i)
+    {
+      ipu = ipus[i];
+      if (i < npus - 1)
+	assert (ipu->next == ipus[i + 1]);
+      verify_edges_1 (ipu, &ic, &oc);
+    }
+
+  /* Verify new PUs.  */
+  for (ipu = ipu->next; ipu; ipu = ipu->next)
     verify_edges_1 (ipu, &ic, &oc);
+
+  /* Verify CUs.  */
   for (i = 0; i < ncus; i++)
-    verify_edges_1 (ipus[i + npus], &ic, &oc);
+    {
+      ipu = ipus[npus + i];
+      assert (ipu->next == NULL);
+      verify_edges_1 (ipu, &ic, &oc);
+    }
+
+  /* Verify that the overall number of incoming and outgoing edges is
+     equal.  */
   assert (ic == oc);
 }
 
