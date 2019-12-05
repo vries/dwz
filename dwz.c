@@ -6547,6 +6547,7 @@ verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
   oc = 0;
 
   /* Verify initial PUs.  */
+  ipu = NULL;
   for (i = 0; i < npus; ++i)
     {
       ipu = ipus[i];
@@ -6556,6 +6557,7 @@ verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus)
     }
 
   /* Verify new PUs.  */
+  assert (ipu != NULL);
   for (ipu = ipu->next; ipu; ipu = ipu->next)
     verify_edges_1 (ipu, &ic, &oc);
 
