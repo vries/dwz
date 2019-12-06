@@ -6826,7 +6826,34 @@ create_import_tree (void)
      ptr_size 8 it can be even x == 4) and add a new PU node, where all
      CUs from the component will point to the new PU node and that new PU
      will point to all the destination PUs.  In theory with DWARF2
-     and ptr_size 1 we could need x >= 9.  */
+     and ptr_size 1 we could need x >= 9.
+
+     The example below demonstrates the type of transformation.  The
+     transformation is an optimization if the benefit of reducing the number
+     of imports (in other words, edges) is bigger than the cost of adding an
+     extra PU.  OTOH, the transformation can be done in the presence of
+     additional incoming edges for PU_3 and PU_4.
+
+     Before:                    After:
+
+     CU_1---------->PU_3        CU_1                PU_3
+         \          ^  ^            \               ^
+          \        /  /              \             /
+           \      /  /                \           /
+            x----o  /                  \         /
+           / \     /                    \       /
+          /   \   /                      \     /
+         /     \ /                        v   /
+     CU_2       x               CU_2----->PU_5
+         \     / \                        ^   \
+          \   /   \                      /     \
+           \ /     \                    /       \
+            x----o  \                  /         \
+           /      \  \                /           \
+          /        \  \              /             \
+         /          v  v            /               v
+     CU_3---------->PU_4        CU_3                PU_4
+  */
   for (i = 0; i < npus - 1; i++)
     {
       struct import_cu *pudst[2], *pusrc[10];
@@ -6984,10 +7011,54 @@ create_import_tree (void)
   if (unlikely (verify_edges_p))
     verify_edges (ipus, npus, ncus, 2);
   /* Try to merge PUs which have the same set of referrers if
-     beneficial, or if one PU has a subset of referrers of the
-     other, attempt to replace all the incoming edges from the
-     referrers intersection to the PU with larger number of
-     incoming edges by an edge from the other PU.  */
+     beneficial.
+
+     The example below demonstrates the type of transformation.  The
+     transformation is an optimization because it reduces the number of import
+     statements (in other words, edges) as well as the number of PUs.  It can
+     however not be done if PU_3 or PU_4 have additional incoming edges.
+
+     Before:               After:
+
+     CU_1----->PU_3        CU_1
+         \     ^               \
+          \   /                 \
+           \ /                   v
+            x                    PU_3_4
+           / \                   ^
+          /   \                 /
+         /     v               /
+     CU_2----->PU_4        CU_2
+
+     Or, if one PU has a subset of referrers of the other, attempt to replace
+     all the incoming edges from the referrers intersection to the PU with
+     larger number of incoming edges by an edge from the other PU.
+
+     The example below demonstrates the type of transformation.  The
+     transformation is an optimization because it reduces the number of import
+     statements (in other words, edges).  It can however not be done if PU_3
+     has additional incoming edges.
+
+     Before:               After:
+
+     CU_1----->PU_3        CU_1------>PU_3
+         \     ^                      ^  |
+          \   /                      /   |
+           \ /                      /    |
+            x                      /     |
+           / \                    /      |
+          /   \                  /       |
+         /     \                /        |
+     CU_2       \           CU_2         o
+         \       \                       |
+          \       o                      |
+           \      |                      |
+            \     |                      |
+             \    |                      |
+              \   |                      |
+               v  v                      v
+     CU_3----->PU_4        CU_3------>PU_4
+  */
   for (ipu = ipus[0]; ipu; ipu = ipu->next)
     {
       struct import_edge *e1, *e2, *e3, *e4, **e1p, **ep;
