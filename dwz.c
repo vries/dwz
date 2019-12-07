@@ -160,12 +160,14 @@ static int ignore_size;
 static int ignore_locus;
 static int dump_dies_p;
 static int dump_dups;
+static int verify_dups_p;
 #else
 #define tracing 0
 #define ignore_size 0
 #define ignore_locus 0
 #define dump_dies_p 0
 #define dump_dups 0
+#define verify_dups_p 0
 #endif
 static int unoptimized_multifile;
 static int save_temps = 0;
@@ -4083,6 +4085,28 @@ calc_sizes (dw_die_ref die)
   return ret;
 }
 
+/* Verify the duplicate chains starting at DIE.  If ORDERED, also check that
+   the duplicate chain is in the correct order.  */
+static void
+verify_dups (dw_die_ref die, bool ordered)
+{
+  dw_die_ref d, prev;
+
+  assert (die->die_dup == NULL);
+
+  for (prev = die, d = prev->die_nextdup;
+       d;
+       prev = d, d = prev->die_nextdup)
+    {
+      if (ordered)
+	assert (die_cu (prev)->cu_chunk <= die_cu (d)->cu_chunk);
+      assert (d->die_offset != -1U);
+      assert (d->die_dup == die);
+      assert (d->die_remove != d->die_op_type_referenced);
+      assert (d->die_tag == die->die_tag);
+    }
+}
+
 /* Walk toplevel DIEs in tree rooted by PARENT, and see if they
    match previously processed DIEs.  */
 static int
@@ -5983,6 +6007,8 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
 	    }
 	  child->die_nextdup = prev;
 	  obstack_ptr_grow (vec, child);
+	  if (unlikely (verify_dups_p))
+	    verify_dups (child, true);
 	  if (dump_dups)
 	    {
 	      fprintf (stderr, "duplicate chain:\n");
@@ -6208,6 +6234,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      child = copy_die_tree (die, arr[k]);
 	      for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
 		ref->die_dup = child;
+	      if (unlikely (verify_dups_p))
+		verify_dups (child, true);
 	      if (namespaces)
 		{
 		  for (ref = arr[k]->die_parent;
