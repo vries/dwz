@@ -5970,6 +5970,42 @@ partition_cmp (const void *p, const void *q)
   return 0;
 }
 
+/* Add duplicate chain for DIE to VEC.  */
+static void
+partition_found_dups (dw_die_ref die, struct obstack *vec)
+{
+  obstack_ptr_grow (vec, die);
+  if (unlikely (verify_dups_p))
+    verify_dups (die, true);
+  if (dump_dups)
+    {
+      fprintf (stderr, "duplicate chain:\n");
+      {
+	dw_die_ref d;
+	for (d = die; d; d = d->die_nextdup)
+	  dump_die (d);
+      }
+    }
+}
+
+/* Sort duplication chain for HEAD, assuming the chain was formed by
+   die_eq.  */
+static void
+sort_dups (dw_die_ref head)
+{
+  dw_die_ref prev = NULL, die, next;
+  /* Sort the die_nextdup list by increasing die_cu ()->cu_chunk.
+     When it is originally added, child has the lowest
+     cu_offset, then the DIEs are sorted in the linked list
+     from highest cu_offset down to lowest or second lowest.  */
+  for (die = head->die_nextdup; die; prev = die, die = next)
+    {
+      next = die->die_nextdup;
+      die->die_nextdup = prev;
+    }
+  head->die_nextdup = prev;
+}
+
 /* Search for duplicate removal reference DIE candidates
    in tree rooted by PARENT.  */
 static void
@@ -5982,7 +6018,7 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
 	  && child->die_dup == NULL
 	  && child->die_offset != -1U)
 	{
-	  dw_die_ref prev = NULL, die, next;
+	  dw_die_ref die;
 
 	  if (unlikely (op_multifile))
 	    {
@@ -5996,28 +6032,8 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
 	      if (die == NULL)
 		continue;
 	    }
-	  /* Sort the die_nextdup list by increasing die_cu ()->cu_chunk.
-	     When it is originally added, child has the lowest
-	     cu_offset, then the DIEs are sorted in the linked list
-	     from highest cu_offset down to lowest or second lowest.  */
-	  for (die = child->die_nextdup; die; prev = die, die = next)
-	    {
-	      next = die->die_nextdup;
-	      die->die_nextdup = prev;
-	    }
-	  child->die_nextdup = prev;
-	  obstack_ptr_grow (vec, child);
-	  if (unlikely (verify_dups_p))
-	    verify_dups (child, true);
-	  if (dump_dups)
-	    {
-	      fprintf (stderr, "duplicate chain:\n");
-	      {
-		dw_die_ref d;
-		for (d = child; d; d = d->die_nextdup)
-		  dump_die (d);
-	      }
-	    }
+	  sort_dups (child);
+	  partition_found_dups (child, vec);
 	}
       else if (child->die_named_namespace)
 	partition_find_dups (vec, child);
