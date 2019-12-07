@@ -7112,14 +7112,15 @@ create_import_tree (void)
 		continue;
 	      if (maybe_superset && maybe_subset)
 		{
-		  if (unlikely (fi_multifile) && ipu2->idx < npus + ncus)
+		  enum node_kind ipu2_kind = get_node_kind (ipu2->idx, npus, ncus);
+		  if (unlikely (fi_multifile) && ipu2_kind != NODE_PU_NEW)
 		    continue;
 		  /* If IPU and IPU2 have the same set of src nodes, then
 		     (if beneficial, with edge_cost != 0 always), merge
 		     IPU2 node into IPU, by removing all incoming edges
 		     of IPU2 and moving over all outgoing edges of IPU2
 		     to IPU.  */
-		  assert (ipu2->idx >= npus + ncus);
+		  assert (ipu2_kind == NODE_PU_NEW);
 		  size_inc = 0;
 		  if (edge_cost)
 		    size_dec = 13 + ipu2->incoming_count * edge_cost;
