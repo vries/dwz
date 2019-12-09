@@ -5985,11 +5985,6 @@ partition_found_dups (dw_die_ref die, struct obstack *vec)
   obstack_ptr_grow (vec, die);
   if (unlikely (verify_dups_p))
     verify_dups (die, true);
-  if (dump_dups_p)
-    {
-      fprintf (stderr, "duplicate chain:\n");
-      dump_dups (die);
-    }
 }
 
 /* Sort duplication chain for HEAD, assuming the chain was formed by
@@ -6357,6 +6352,14 @@ partition_dups (void)
   if (vec_size != 0)
     {
       dw_die_ref *arr = (dw_die_ref *) obstack_finish (&ob2);
+      if (dump_dups_p)
+	{
+	  for (i = 0; i < vec_size; ++i)
+	    {
+	      fprintf (stderr, "duplicate chain:\n");
+	      dump_dups (arr[i]);
+	    }
+	}
       qsort (arr, vec_size, sizeof (dw_die_ref), partition_cmp);
       if (partition_dups_1 (arr, vec_size, &first_partial_cu,
 			    &last_partial_cu, false))
