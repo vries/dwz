@@ -159,14 +159,14 @@ static int tracing;
 static int ignore_size;
 static int ignore_locus;
 static int dump_dies_p;
-static int dump_dups;
+static int dump_dups_p;
 static int verify_dups_p;
 #else
 #define tracing 0
 #define ignore_size 0
 #define ignore_locus 0
 #define dump_dies_p 0
-#define dump_dups 0
+#define dump_dups_p 0
 #define verify_dups_p 0
 #endif
 static int unoptimized_multifile;
@@ -4269,6 +4269,14 @@ dump_die (dw_die_ref die)
   dump_die_with_indent (0, die);
 }
 
+static void
+dump_dups (dw_die_ref die)
+{
+  dw_die_ref d;
+  for (d = die; d; d = d->die_nextdup)
+    dump_die (d);
+}
+
 /* Dump DIE tree at tree depth DEPTH.  */
 static void
 dump_dies (int depth, dw_die_ref die)
@@ -5977,14 +5985,10 @@ partition_found_dups (dw_die_ref die, struct obstack *vec)
   obstack_ptr_grow (vec, die);
   if (unlikely (verify_dups_p))
     verify_dups (die, true);
-  if (dump_dups)
+  if (dump_dups_p)
     {
       fprintf (stderr, "duplicate chain:\n");
-      {
-	dw_die_ref d;
-	for (d = die; d; d = d->die_nextdup)
-	  dump_die (d);
-      }
+      dump_dups (die);
     }
 }
 
@@ -13338,7 +13342,7 @@ static struct option dwz_options[] =
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
-  { "devel-dump-dups",  no_argument,	    &dump_dups, 1 },
+  { "devel-dump-dups",  no_argument,	    &dump_dups_p, 1 },
   { "devel-unoptimized-multifile",
 			 no_argument,	    &unoptimized_multifile, 1 },
   { "devel-verify-edges",no_argument,	    &verify_edges_p, 1 },
