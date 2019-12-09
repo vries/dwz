@@ -13342,6 +13342,7 @@ static struct option dwz_options[] =
   { "devel-unoptimized-multifile",
 			 no_argument,	    &unoptimized_multifile, 1 },
   { "devel-verify-edges",no_argument,	    &verify_edges_p, 1 },
+  { "devel-verify-dups", no_argument,	    &verify_dups_p, 1 },
   { "devel-dump-edges",  no_argument,	    &dump_edges_p, 1 },
   { "devel-partition-dups-opt",
 			 no_argument,	    &partition_dups_opt, 1 },
@@ -13369,6 +13370,7 @@ usage (void)
 	 "  --devel-save-temps\n"
 	 "  --devel-dump-dies\n"
 	 "  --devel-unoptimized-multifile\n"
+	 "  --devel-verify-dups\n"
 	 "  --devel-verify-edges\n"
 	 "  --devel-dump-edges\n"
 	 "  --devel-partition-dups-opt\n"
