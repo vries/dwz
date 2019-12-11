@@ -13363,11 +13363,12 @@ static struct option dwz_options[] =
 static void
 usage (void)
 {
-#define COMMON_OPTS "[-v] [-q] [-l <COUNT|none>] [-L <COUNT|none>]"
+#define COMMON_OPTS "[-q] [-l <COUNT|none>] [-L <COUNT|none>]"
   error (1, 0,
 	 "Usage:\n"
 	 "  dwz " COMMON_OPTS " [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
 	 "  dwz " COMMON_OPTS " -o OUTFILE FILE\n"
+	 "  dwz [ -v | -? ]\n"
 #undef COMMON_OPTS
 #if DEVEL
 	 "Development options:\n"
