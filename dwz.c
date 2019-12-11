@@ -13359,32 +13359,226 @@ static struct option dwz_options[] =
   { NULL,		 no_argument,	    0, 0 }
 };
 
+/* Struct describing various usage aspects of a command line option.  */
+struct option_help
+{
+  const char *short_name;
+  const char *long_name;
+  const char *argument;
+  const char *default_value;
+  const char *msg;
+};
+
+/* Describe common command line options.  */
+static struct option_help dwz_common_options_help[] =
+{
+  { "q", "quiet", NULL, NULL,
+    "Silence up the most common messages." },
+  { "l", "low-mem-die-limit", "<COUNT|none>", "10 million DIEs",
+    "Handle files larger than this limit using a slower and more memory"
+    " usage friendly mode and don't optimize those files in multifile mode." },
+  { "L", "max-die-limit", "<COUNT|none>", "50 million DIEs",
+    "Don't optimize files larger than this limit." }
+};
+
+/* Describe single-file command line options.  */
+static struct option_help dwz_single_file_options_help[] =
+{
+  { "o", "output", "OUTFILE", NULL,
+    "Place the output in OUTFILE." }
+};
+
+/* Describe mult-file command line options.  */
+static struct option_help dwz_multi_file_options_help[] =
+{
+  { "h", "hardlink", NULL, NULL,
+    "Handle hardlinked files as one file." },
+  { "m", "multifile", "COMMONFILE", NULL,
+    "Enable multifile optimization, placing common DIEs in multifile"
+    " COMMONFILE." },
+  { "M", "multifile-name", "NAME", NULL,
+    "Set .gnu_debugaltlink in files to NAME." },
+  { "r", "relative", NULL, NULL,
+    "Set .gnu_debugaltlink in files to relative path from file directory"
+    " to multifile." }
+};
+
+/* Describe misc command line options.  */
+static struct option_help dwz_misc_options_help[] =
+{
+  { "v", "version", NULL, NULL,
+    "Display dwz version information." },
+  { "?", "help", NULL, NULL,
+    "Display this information." }
+};
+
+/* Print LEN spaces to stderr.  */
+static void
+do_indent (unsigned int len)
+{
+  unsigned int i;
+
+  for (i = 0; i < len; i++)
+    fprintf (stderr, " ");
+}
+
+/* Print MSG to stderr, indenting to INDENT and wrapping at LIMIT.  Assume
+   starting position is at INDENT.  */
+static void
+wrap (unsigned int indent, unsigned int limit, const char *msg)
+{
+  unsigned int len = indent;
+  const char *s = msg;
+  while (true)
+    {
+      const char *e = strchr (s, ' ');
+      unsigned int word_len;
+      if (e == NULL)
+	word_len = strlen (s);
+      else
+	word_len = e - s;
+      if (word_len == 0)
+	return;
+
+      if (len + 1 /* space */ + word_len > limit)
+	{
+	  fprintf (stderr, "\n");
+	  do_indent (indent);
+	  len = indent;
+	}
+      else if (len > indent)
+	{
+	  fprintf (stderr, " ");
+	  len += 1;
+	}
+
+      if (e != NULL)
+	{
+	  const char *i;
+	  for (i = s; i < e; ++i)
+	    fprintf (stderr, "%c", *i);
+	}
+      else
+	fprintf (stderr, "%s", s);
+      len += word_len;
+
+      if (e == NULL)
+	break;
+
+      s = e + 1;
+    }
+}
+
+/* Print OPTIONS_HELP of length H to stderr, indenting to help message to
+   INDENT an wrapping at LIMIT.  */
+static void
+print_options_help (struct option_help *options_help, unsigned int n,
+		    unsigned int indent, unsigned int limit)
+{
+  unsigned len;
+  const char *s;
+  unsigned int i;
+
+  for (i = 0; i <  n; ++i)
+    {
+      len = 0;
+
+      fprintf (stderr, "  ");
+      len += 2;
+
+      s = options_help[i].short_name;
+      fprintf (stderr, "-%s", s);
+      len += 2;
+
+      s = options_help[i].long_name;
+      fprintf (stderr, ", --%s", s);
+      len += 4 + strlen (s);
+
+      s = options_help[i].argument;
+      if (s)
+	{
+	  fprintf (stderr, " %s", s);
+	  len += 1 + strlen (s);
+	}
+
+      if (len > indent)
+	{
+	  fprintf (stderr, "\n");
+	  do_indent (indent);
+	}
+      else
+	do_indent (indent - len);
+      len = indent;
+
+      s = options_help[i].msg;
+      wrap (indent, limit, s);
+
+      fprintf (stderr, "\n");
+
+      s = options_help[i].default_value;
+      if (s)
+	{
+	  do_indent (indent);
+	  fprintf (stderr, "Default value: %s.\n", s);
+	}
+    }
+}
+
 /* Print usage and exit.  */
 static void
 usage (void)
 {
-#define COMMON_OPTS "[-q] [-l <COUNT|none>] [-L <COUNT|none>]"
-  error (1, 0,
-	 "Usage:\n"
-	 "  dwz " COMMON_OPTS " [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
-	 "  dwz " COMMON_OPTS " -o OUTFILE FILE\n"
-	 "  dwz [ -v | -? ]\n"
-#undef COMMON_OPTS
+  unsigned int n;
+  unsigned int indent, limit;
+  const char *msg;
+
+  msg
+    = ("Usage:\n"
+       "  dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
+       "  dwz [common options] -o OUTFILE FILE\n"
+       "  dwz [ -v | -? ]");
+  error (0, 0, msg);
+
+  indent = 30;
+  limit = 80;
+  fprintf (stderr, "Common options:\n");
+  n = (sizeof (dwz_common_options_help)
+       / sizeof (dwz_common_options_help[0]));
+  print_options_help (dwz_common_options_help, n, indent, limit);
+
+  fprintf (stderr, "Single-file options:\n");
+  n = (sizeof (dwz_single_file_options_help)
+       / sizeof (dwz_single_file_options_help[0]));
+  print_options_help (dwz_single_file_options_help, n, indent, limit);
+
+  fprintf (stderr, "Multi-file options:\n");
+  n = (sizeof (dwz_multi_file_options_help)
+       / sizeof (dwz_multi_file_options_help[0]));
+  print_options_help (dwz_multi_file_options_help, n, indent, limit);
+
+  fprintf (stderr, "Miscellaneous options:\n");
+  n = (sizeof (dwz_misc_options_help)
+       / sizeof (dwz_misc_options_help[0]));
+  print_options_help (dwz_misc_options_help, n, indent, limit);
+
 #if DEVEL
-	 "Development options:\n"
-	 "  --devel-trace\n"
-	 "  --devel-ignore-size\n"
-	 "  --devel-ignore-locus\n"
-	 "  --devel-save-temps\n"
-	 "  --devel-dump-dies\n"
-	 "  --devel-unoptimized-multifile\n"
-	 "  --devel-verify-dups\n"
-	 "  --devel-verify-edges\n"
-	 "  --devel-dump-edges\n"
-	 "  --devel-partition-dups-opt\n"
-	 "  --devel-die-count-method"
+  fprintf (stderr, "Development options:\n");
+  msg
+    = ("  --devel-trace\n"
+       "  --devel-ignore-size\n"
+       "  --devel-ignore-locus\n"
+       "  --devel-save-temps\n"
+       "  --devel-dump-dies\n"
+       "  --devel-unoptimized-multifile\n"
+       "  --devel-verify-dups\n"
+       "  --devel-verify-edges\n"
+       "  --devel-dump-edges\n"
+       "  --devel-partition-dups-opt\n"
+       "  --devel-die-count-method\n");
+  fprintf (stderr, "%s", msg);
 #endif
-	 );
+
+  exit (1);
 }
 
 /* Print version and exit.  */
