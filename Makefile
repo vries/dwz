@@ -26,8 +26,8 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
-TEST_EXECS_DWARF_ASM = no-multifile-prop
-TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
+TEST_EXECS_DWARF_ASM = no-multifile-prop invalid-dw-at-stmt-list-encoding
+TEST_EXECS = hello py-section-script dwz-for-test min two-typedef \
 	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
 	start-gold hello-gnu-pubnames varval $(TEST_EXECS_DWARF_ASM)
 
@@ -38,11 +38,6 @@ hello:
 
 hello-gnu-pubnames:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g -ggnu-pubnames || touch $@
-
-dw2-restrict:
-	if [ $(UNAME) = "x86_64" ]; then \
-	  $(CC) -no-pie $(TEST_SRC)/dw2-restrict.S -o $@; \
-	else touch $@; fi
 
 dw2-skip-prologue:
 	if [ $(UNAME) = "x86_64" ]; then \

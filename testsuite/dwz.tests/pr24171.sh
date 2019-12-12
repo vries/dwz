@@ -1,5 +1,5 @@
-cp $execs/dw2-restrict 1
-cp $execs/dw2-restrict 2
+cp $execs/invalid-dw-at-stmt-list-encoding 1
+cp 1 2
 
 if dwz -m 3 1 2 2>dwz.err; status=$?; then
     true

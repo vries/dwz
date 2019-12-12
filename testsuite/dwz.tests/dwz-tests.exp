@@ -20,9 +20,6 @@ foreach test $tests {
     }
 
     set required_execs []
-    if { $basename == "pr24171.sh" } {
-	lappend required_execs "dw2-restrict"
-    }
     if { $basename == "pr24173.sh" } {
 	lappend required_execs "py-section-script"
     }
