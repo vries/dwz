@@ -31,6 +31,8 @@ TEST_EXECS = hello dw2-restrict py-section-script dwz-for-test min two-typedef \
 	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
 	start-gold hello-gnu-pubnames varval $(TEST_EXECS_DWARF_ASM)
 
+UNAME:=$(shell uname -p)
+
 hello:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g
 
@@ -38,14 +40,21 @@ hello-gnu-pubnames:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g -ggnu-pubnames || touch $@
 
 dw2-restrict:
-	$(CC) -no-pie $(TEST_SRC)/dw2-restrict.S -o $@ || touch $@
+	if [ $(UNAME) = "x86_64" ]; then \
+	  $(CC) -no-pie $(TEST_SRC)/dw2-restrict.S -o $@; \
+	else touch $@; fi
 
 dw2-skip-prologue:
-	$(CC) $(TEST_SRC)/dw2-skip-prologue.S $(TEST_SRC)/dw2-skip-prologue.c \
-	  -DINLINED -DPTRBITS=64 -o $@ || touch $@
+	if [ $(UNAME) = "x86_64" ]; then \
+	  $(CC) $(TEST_SRC)/dw2-skip-prologue.S \
+	    $(TEST_SRC)/dw2-skip-prologue.c \
+	    -DINLINED -DPTRBITS=64 -o $@; \
+	else touch $@; fi
 
 py-section-script:
-	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
+	if [ $(UNAME) = "x86_64" ]; then \
+	  $(CC) $(TEST_SRC)/py-section-script.s -o $@ -g ; \
+	else touch $@; fi
 
 DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 
@@ -71,16 +80,19 @@ start-gold:
 	$(CC) $(TEST_SRC)/start.c -fuse-ld=gold -o $@ -g -nostdlib || touch $@
 
 implptr-64bit-d2o4a8r8t0:
-	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c -o $@ \
-	  -g || touch $@
+	if [ $(UNAME) = "x86_64" ]; then \
+	  $(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c \
+	  -o $@ -g; \
+	else touch $@; fi
 
 hello-gold-gdb-index:
 	$(CC) $(TEST_SRC)/hello.c -g -fuse-ld=gold -Wl,--gdb-index -o $@ \
 	    || touch $@
 
 varval:
-	$(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@ \
-	    || touch $@
+	if [ $(UNAME) = "x86_64" ]; then \
+	  $(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@; \
+	else touch $@; fi
 
 POINTER_SIZE:=$(shell $(CC) $(TEST_SRC)/pointer-size.c -o pointer-size; \
 	./pointer-size; \
