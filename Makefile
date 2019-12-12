@@ -91,6 +91,7 @@ TEMP_ASM_FILES=$(addsuffix -dw.S, $(TEST_EXECS_DWARF_ASM))
 
 $(TEMP_ASM_FILES): %-dw.S: $(TEST_SRC)/../lib/%.exp
 	export POINTER_SIZE=$(POINTER_SIZE); \
+	  export DEJAGNU=$(DEJAGNU); \
 	  runtest --tool=dwz -srcdir $(srcdir)/testsuite/ lib/$*.exp
 
 $(TEST_EXECS_DWARF_ASM): %: %-dw.S
