@@ -84,9 +84,15 @@ foreach test $tests {
 
     set unsupported 0
     foreach required_exec $required_execs {
+	set exists [file exists $required_exec]
+	if { $exists == 0 } {
+	    set unsupported 1
+	    break
+	}
 	set size [file size $required_exec]
 	if { $size == 0 } {
 	    set unsupported 1
+	    break
 	}
     }
     if { $unsupported == 1 } {

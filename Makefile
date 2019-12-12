@@ -27,9 +27,11 @@ PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
 TEST_EXECS_DWARF_ASM = no-multifile-prop invalid-dw-at-stmt-list-encoding
-TEST_EXECS = hello py-section-script dwz-for-test min two-typedef \
-	dw2-skip-prologue start implptr-64bit-d2o4a8r8t0 hello-gold-gdb-index \
-	start-gold hello-gnu-pubnames varval $(TEST_EXECS_DWARF_ASM)
+TEST_EXECS_x86_64 = py-section-script dw2-skip-prologue \
+	implptr-64bit-d2o4a8r8t0 varval
+TEST_EXECS = hello dwz-for-test min two-typedef start hello-gold-gdb-index \
+	start-gold hello-gnu-pubnames $(TEST_EXECS_DWARF_ASM) \
+	$(TEST_EXECS_$(UNAME))
 
 UNAME:=$(shell uname -p)
 
@@ -40,16 +42,11 @@ hello-gnu-pubnames:
 	$(CC) $(TEST_SRC)/hello.c -o $@ -g -ggnu-pubnames || touch $@
 
 dw2-skip-prologue:
-	if [ $(UNAME) = "x86_64" ]; then \
-	  $(CC) $(TEST_SRC)/dw2-skip-prologue.S \
-	    $(TEST_SRC)/dw2-skip-prologue.c \
-	    -DINLINED -DPTRBITS=64 -o $@; \
-	else touch $@; fi
+	$(CC) $(TEST_SRC)/dw2-skip-prologue.S $(TEST_SRC)/dw2-skip-prologue.c \
+	  -DINLINED -DPTRBITS=64 -o $@
 
 py-section-script:
-	if [ $(UNAME) = "x86_64" ]; then \
-	  $(CC) $(TEST_SRC)/py-section-script.s -o $@ -g ; \
-	else touch $@; fi
+	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g
 
 DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 
@@ -75,19 +72,15 @@ start-gold:
 	$(CC) $(TEST_SRC)/start.c -fuse-ld=gold -o $@ -g -nostdlib || touch $@
 
 implptr-64bit-d2o4a8r8t0:
-	if [ $(UNAME) = "x86_64" ]; then \
-	  $(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c \
-	  -o $@ -g; \
-	else touch $@; fi
+	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c \
+	  -o $@ -g
 
 hello-gold-gdb-index:
 	$(CC) $(TEST_SRC)/hello.c -g -fuse-ld=gold -Wl,--gdb-index -o $@ \
 	    || touch $@
 
 varval:
-	if [ $(UNAME) = "x86_64" ]; then \
-	  $(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@; \
-	else touch $@; fi
+	$(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@
 
 POINTER_SIZE:=$(shell $(CC) $(TEST_SRC)/pointer-size.c -o pointer-size; \
 	./pointer-size; \
