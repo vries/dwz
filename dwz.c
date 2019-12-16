@@ -161,6 +161,7 @@ static int ignore_locus;
 static int dump_dies_p;
 static int dump_dups_p;
 static int verify_dups_p;
+static int verify_edge_freelist;
 #else
 #define tracing 0
 #define ignore_size 0
@@ -6483,6 +6484,98 @@ import_cu_cmp (const void *p, const void *q)
 /* Freelist for removed edges.  */
 static struct import_edge *edge_freelist;
 
+/* Prepare edge E to add to edge_freelist.  */
+static inline void FORCE_INLINE
+prepare_free_edge (struct import_edge *e UNUSED)
+{
+#if DEVEL
+  e->icu = (void *)(uintptr_t)-1;
+#endif
+}
+
+/* Add edge E to edge_freelist.  */
+static inline void FORCE_INLINE
+free_edge (struct import_edge *e)
+{
+  prepare_free_edge (e);
+  e->next = edge_freelist;
+  edge_freelist = e;
+}
+
+/* Add edge list starting at HEAD and ending at TAIL to edge_freelist.
+   Assume that prepare_free_edge has been called on all elements.  */
+static inline void FORCE_INLINE
+free_edges (struct import_edge *head, struct import_edge *tail)
+{
+#if DEVEL
+  if (verify_edge_freelist)
+    {
+      struct import_edge *e;
+      for (e = head; e; e = e->next)
+	{
+	  assert (e->icu == (void *)(uintptr_t)-1);
+	  if (e == tail)
+	    break;
+	}
+      assert (e != NULL);
+    }
+#endif
+  tail->next = edge_freelist;
+  edge_freelist = head;
+}
+
+/* Detach an edge from edge_freelist, and return it.  */
+static inline struct import_edge * FORCE_INLINE
+edge_from_freelist (void)
+{
+#if DEVEL
+  assert (edge_freelist);
+#endif
+  struct import_edge *e = edge_freelist;
+  edge_freelist = edge_freelist->next;
+#if DEVEL
+  e->next = (void *)(uintptr_t)-1;
+#endif
+  return e;
+}
+
+/* Return edge_freelist, and set it to NULL.  */
+static inline struct import_edge * FORCE_INLINE
+first_edge_from_freelist (void)
+{
+#if DEVEL
+  assert (edge_freelist);
+#endif
+  struct import_edge *e = edge_freelist;
+#if DEVEL
+  edge_freelist = NULL;
+#endif
+  return e;
+}
+
+/* Set edge_freelist to TAIL->next and return HEAD.  Assume HEAD was returned
+   by first_edge_from_freelist, and TAIL is reachable from HEAD.  */
+static inline struct import_edge * FORCE_INLINE
+last_edge_from_freelist (struct import_edge *head, struct import_edge *tail)
+{
+#if DEVEL
+  assert (!edge_freelist);
+  if (verify_edge_freelist)
+    {
+      struct import_edge *e;
+      for (e = head; e; e = e->next)
+	{
+	  if (e == tail)
+	    break;
+	}
+      assert (e != NULL);
+    }
+#endif
+  edge_freelist = tail->next;
+  tail->next = NULL;
+  return head;
+}
+
 /* Remove edges in linked list EP that refer to CUS, which
    is an array of CUCOUNT CUs/PUs.  If ADD is true, additionally
    add a new edge at the end of the linked list and return it.  */
@@ -6500,10 +6593,7 @@ remove_import_edges (struct import_edge **ep, struct import_cu **cus,
 	if (efirst == NULL)
 	  efirst = e;
 	else
-	  {
-	    e->next = edge_freelist;
-	    edge_freelist = e;
-	  }
+	  free_edge (e);
 	i++;
 	if (i == cucount && !add)
 	  return NULL;
@@ -6996,28 +7086,27 @@ create_import_tree (void)
 						   srccount, true)->icu = npu;
 			      pudst[j]->incoming_count -= srccount - 1;
 			    }
-			  npu->incoming = edge_freelist;
+			  npu->incoming = first_edge_from_freelist ();
 			  for (j = 0, e4 = npu->incoming; j < srccount; j++)
 			    {
 			      e4->icu = pusrc[j];
 			      if (j == srccount - 1)
 				{
-				  edge_freelist = e4->next;
-				  e4->next = NULL;
+				  npu->incoming
+				    = last_edge_from_freelist (npu->incoming,
+							       e4);
 				  ep = &e4->next;
 				}
 			      else
 				e4 = e4->next;
 			    }
-			  npu->outgoing = edge_freelist;
+			  npu->outgoing = first_edge_from_freelist ();
 			  for (j = 0, e4 = npu->outgoing; j < dstcount; j++)
 			    {
 			      e4->icu = pudst[j];
 			      if (j == dstcount - 1)
-				{
-				  edge_freelist = e4->next;
-				  e4->next = NULL;
-				}
+				npu->outgoing
+				  = last_edge_from_freelist (npu->outgoing, e4);
 			      else
 				e4 = e4->next;
 			    }
@@ -7045,8 +7134,7 @@ create_import_tree (void)
 					       pusrc + srccount, 1, false);
 			  pudst[j]->incoming_count--;
 			}
-		      *ep = edge_freelist;
-		      edge_freelist = edge_freelist->next;
+		      *ep = edge_from_freelist ();
 		      npu->incoming_count++;
 		      (*ep)->icu = pusrc[srccount];
 		      (*ep)->next = NULL;
@@ -7192,15 +7280,15 @@ create_import_tree (void)
 		  if (!ignore_size || size_dec > size_inc)
 		    {
 		      struct import_cu **ipup;
-		      for (e4 = ipu2->incoming, ep = NULL; e4; e4 = e4->next)
+		      for (e4 = ipu2->incoming, e3 = NULL; e4; e4 = e4->next)
 			{
 			  remove_import_edges (&e4->icu->outgoing, &ipu2, 1,
 					       false);
 			  e4->icu->outgoing_count--;
-			  ep = &e4->next;
+			  prepare_free_edge (e4);
+			  e3 = e4;
 			}
-		      *ep = edge_freelist;
-		      edge_freelist = ipu2->incoming;
+		      free_edges (ipu2->incoming, e3);
 		      for (e4 = ipu2->outgoing; e4; e4 = e4->next)
 			{
 			  for (ep = &e4->icu->incoming; *ep; ep = &(*ep)->next)
@@ -7299,15 +7387,13 @@ create_import_tree (void)
 			ep = &(*ep)->next;
 		      e4 = *ep;
 		      *ep = e4->next;
-		      e4->next = edge_freelist;
-		      edge_freelist = e4;
+		      free_edge (e4);
 		    }
 		  for (ep = &ipusub->outgoing; *ep; ep = &(*ep)->next)
 		    if ((*ep)->icu->idx >= ipusup->idx)
 		      break;
 		  assert (*ep == NULL || (*ep)->icu != ipusup);
-		  e4 = edge_freelist;
-		  edge_freelist = edge_freelist->next;
+		  e4 = edge_from_freelist ();
 		  e4->icu = ipusup;
 		  e4->next = *ep;
 		  *ep = e4;
@@ -7316,8 +7402,7 @@ create_import_tree (void)
 		    if ((*ep)->icu->idx >= ipusub->idx)
 		      break;
 		  assert (*ep == NULL || (*ep)->icu != ipusub);
-		  e4 = edge_freelist;
-		  edge_freelist = edge_freelist->next;
+		  e4 = edge_from_freelist ();
 		  e4->icu = ipusub;
 		  e4->next = *ep;
 		  *ep = e4;
