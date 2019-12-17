@@ -129,6 +129,8 @@
 
 /* Utility macro.  */
 #define IMPLIES(A, B) (!((A) && !(B)))
+#define MAX(A, B) ((A) > (B) ? (A) : (B))
+#define MIN(A, B) ((A) < (B) ? (A) : (B))
 
 
 static void
@@ -6480,9 +6482,6 @@ struct import_cu
      edges at the start), then optionally any PUs
      created by create_import_tree.  */
   unsigned int idx;
-  /* Flag used during PU merging, set for PUs already considered
-     for merging for the given first PU.  */
-  bool seen;
 };
 
 /* An edge in a linked list.  */
@@ -6850,6 +6849,48 @@ verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus,
   /* Verify that the overall number of incoming and outgoing edges is
      equal.  */
   assert (ic == oc);
+}
+
+#define BITVECTOR_TYPE unsigned int
+
+/* Return a bitvector containing NBITS bits.  */
+static inline BITVECTOR_TYPE *
+bitvector_alloc (unsigned nbits)
+{
+  size_t nbytes = (nbits / 8) + 1;
+  size_t size = nbytes + sizeof (BITVECTOR_TYPE);
+  BITVECTOR_TYPE *res = (BITVECTOR_TYPE *)malloc (size);
+  if (res == NULL)
+    dwz_oom ();
+  memset (res, 0, size);
+  return res;
+}
+
+/* Set bit IDX in bitvector VECTOR.  */
+static inline void FORCE_INLINE
+bitvector_set_bit (BITVECTOR_TYPE *vector, unsigned idx)
+{
+  unsigned div = idx / (sizeof (BITVECTOR_TYPE) * 8);
+  unsigned mod = idx % (sizeof (BITVECTOR_TYPE) * 8);
+  vector[div] |= (1 << mod);
+}
+
+/* Test bit IDX in bitvector VECTOR.  */
+static inline bool FORCE_INLINE
+bitvector_bit_p (BITVECTOR_TYPE *vector, unsigned idx)
+{
+  unsigned div = idx / (sizeof (BITVECTOR_TYPE) * 8);
+  unsigned mod = idx % (sizeof (BITVECTOR_TYPE) * 8);
+  return (vector[div] & (1 << mod)) != 0;
+}
+
+/* Clear at least bits [A, B] in VECTOR, possibly more.  */
+static inline void FORCE_INLINE
+bitvector_clear_bits (BITVECTOR_TYPE *vector, unsigned int a, unsigned int b)
+{
+  unsigned int range_min = a / (sizeof (BITVECTOR_TYPE) * 8);
+  unsigned int range_max = b / (sizeof (BITVECTOR_TYPE) * 8);
+  memset (&vector[range_min], 0, range_max - range_min + 1);
 }
 
 /* Function to optimize the size of DW_TAG_imported_unit DIEs by
@@ -7294,6 +7335,11 @@ create_import_tree (void)
                v  v                      v
      CU_3----->PU_4        CU_3------>PU_4
   */
+  /* Flag used during PU merging, set for PUs already considered
+     for merging for the given first PU.  */
+  BITVECTOR_TYPE *seen = bitvector_alloc (puidx);
+  unsigned int min_seen = UINT_MAX;
+  unsigned int max_seen = 0;
   for (ipu = ipus[0]; ipu; ipu = ipu->next)
     {
       struct import_edge *e1, *e2, *e3, *e4, **e1p, **ep, *prev;
@@ -7312,9 +7358,11 @@ create_import_tree (void)
 	      bool maybe_superset;
 	      unsigned int intersection;
 
-	      if (ipu2->idx <= ipu->idx || ipu2->seen)
+	      if (ipu2->idx <= ipu->idx || bitvector_bit_p (seen, ipu2->idx))
 		continue;
-	      ipu2->seen = true;
+	      bitvector_set_bit (seen, ipu2->idx);
+	      min_seen = MIN (min_seen, ipu2->idx);
+	      max_seen = MAX (max_seen, ipu2->idx);
 	      maybe_subset = (e1 == ipu->incoming
 			      && ipu->incoming_count <= ipu2->incoming_count);
 	      maybe_superset = ipu->incoming_count >= ipu2->incoming_count;
@@ -7540,8 +7588,12 @@ create_import_tree (void)
 		}
 	    }
 	}
-      for (icu = ipu->next; icu; icu = icu->next)
-	icu->seen = false;
+      if (min_seen <= max_seen)
+	{
+	  bitvector_clear_bits (seen, min_seen, max_seen);
+	  min_seen = UINT_MAX;
+	  max_seen = 0;
+	}
     }
   if (unlikely (dump_edges_p))
     dump_edges ("phase 3", ipus, npus, ncus);
@@ -7629,6 +7681,7 @@ create_import_tree (void)
     for (cu = alt_first_cu; cu; cu = cu->cu_next)
       cu->u1.cu_icu = NULL;
   obstack_free (&ob2, to_free);
+  free (seen);
   return 0;
 }
 
