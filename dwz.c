@@ -7318,6 +7318,26 @@ create_import_tree (void)
 	      maybe_subset = (e1 == ipu->incoming
 			      && ipu->incoming_count <= ipu2->incoming_count);
 	      maybe_superset = ipu->incoming_count >= ipu2->incoming_count;
+	      if (maybe_superset)
+		{
+		  /* If the referrer nodes of ipu are a superset of the
+		     referrer nodes of ipu2, then ipu's last referrer node
+		     should have index larger or equal to the last referrer
+		     node of ipu2.  */
+		  maybe_superset
+		    = (ipu->incoming_tail->icu->idx
+		       >= ipu2->incoming_tail->icu->idx);
+		}
+	      if (maybe_subset)
+		{
+		  /* If the referrer nodes of ipu are a subset of the
+		     referrer nodes of ipu2, then ipu's last referrer node
+		     should have index smaller or equal to the last referrer
+		     node of ipu2.  */
+		  maybe_subset
+		    = (ipu->incoming_tail->icu->idx
+		       <= ipu2->incoming_tail->icu->idx);
+		}
 	      e3 = e1;
 	      e4 = ipu2->incoming;
 	      intersection = 0;
