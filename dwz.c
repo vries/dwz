@@ -6467,6 +6467,8 @@ struct import_cu
   dw_cu_ref cu;
   /* Linked list of incoming resp. outgoing edges.  */
   struct import_edge *incoming, *outgoing;
+  /* The tail of the linked list of incoming edges.  */
+  struct import_edge *incoming_tail;
   /* Next import_cu (used to chain PUs together).  */
   struct import_cu *next;
   /* Number of incoming resp. outgoing edges.  */
@@ -6639,11 +6641,11 @@ last_edge_from_freelist (struct import_edge *head, struct import_edge *tail)
    is an array of CUCOUNT CUs/PUs.  If ADD is true, additionally
    add a new edge at the end of the linked list and return it.  */
 static struct import_edge *
-remove_import_edges (struct import_edge **ep, struct import_cu **cus,
-		     unsigned int cucount, bool add)
+remove_import_edges (struct import_edge **ep, struct import_edge **ep_tail,
+		     struct import_cu **cus, unsigned int cucount, bool add)
 {
   unsigned int i = 0;
-  struct import_edge *e, *efirst = NULL;
+  struct import_edge *e, *efirst = NULL, *prev = NULL;
   while (*ep)
     if (i < cucount && (*ep)->icu == cus[i])
       {
@@ -6654,14 +6656,22 @@ remove_import_edges (struct import_edge **ep, struct import_cu **cus,
 	else
 	  free_edge (e);
 	i++;
+	if (ep_tail && *ep_tail == e)
+	  *ep_tail = prev;
 	if (i == cucount && !add)
 	  return NULL;
       }
     else
-      ep = &(*ep)->next;
+      {
+	if (ep_tail)
+	  prev = *ep;
+	ep = &(*ep)->next;
+      }
   assert (i == cucount);
   *ep = efirst;
   efirst->next = NULL;
+  if (ep_tail)
+    *ep_tail = efirst;
   return efirst;
 }
 
@@ -6757,6 +6767,9 @@ verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc,
 
       kind2 = get_node_kind (e1->icu->idx, npus, ncus);
       verify_edge (kind2, kind, phase);
+
+      if (count == ipu->incoming_count - 1)
+	assert (ipu->incoming_tail == e1);
     }
 
   /* Verify the number of incoming edges.  */
@@ -6946,6 +6959,7 @@ create_import_tree (void)
 	  icu->outgoing_count++;
 	  prev_cu = diecu;
 	}
+      ipu->incoming_tail = &ipu->incoming[ipu->incoming_count - 1];
     }
   if (unlikely (fi_multifile) && npus == 0)
     {
@@ -7147,14 +7161,17 @@ create_import_tree (void)
 			    {
 			      if (e1next && e1next->icu == pusrc[j])
 				e1next = e1next->next;
-			      remove_import_edges (&pusrc[j]->outgoing, pudst,
-						   dstcount, true)->icu = npu;
+			      remove_import_edges (&pusrc[j]->outgoing, NULL,
+						   pudst, dstcount, true)->icu
+				= npu;
 			      pusrc[j]->outgoing_count -= dstcount - 1;
 			    }
 			  for (j = 0; j < dstcount; j++)
 			    {
-			      remove_import_edges (&pudst[j]->incoming, pusrc,
-						   srccount, true)->icu = npu;
+			      remove_import_edges (&pudst[j]->incoming,
+						   &pudst[j]->incoming_tail,
+						   pusrc, srccount, true)->icu
+				= npu;
 			      pudst[j]->incoming_count -= srccount - 1;
 			    }
 			  npu->incoming = first_edge_from_freelist ();
@@ -7166,6 +7183,7 @@ create_import_tree (void)
 				  npu->incoming
 				    = last_edge_from_freelist (npu->incoming,
 							       e4);
+				  npu->incoming_tail = e4;
 				  ep = &e4->next;
 				}
 			      else
@@ -7196,12 +7214,13 @@ create_import_tree (void)
 			       ? 1 + ptr_size : 5;
 		      if (e1next && e1next->icu == pusrc[srccount])
 			e1next = e1next->next;
-		      remove_import_edges (&pusrc[srccount]->outgoing, pudst,
-					   dstcount, true)->icu = npu;
+		      remove_import_edges (&pusrc[srccount]->outgoing, NULL,
+					   pudst, dstcount, true)->icu = npu;
 		      pusrc[srccount]->outgoing_count -= dstcount - 1;
 		      for (j = 0; j < dstcount; j++)
 			{
 			  remove_import_edges (&pudst[j]->incoming,
+					       &pudst[j]->incoming_tail,
 					       pusrc + srccount, 1, false);
 			  pudst[j]->incoming_count--;
 			}
@@ -7209,6 +7228,7 @@ create_import_tree (void)
 		      npu->incoming_count++;
 		      (*ep)->icu = pusrc[srccount];
 		      (*ep)->next = NULL;
+		      npu->incoming_tail = *ep;
 		      ep = &(*ep)->next;
 		      size -= (dstcount - 1) * cost;
 		    }
@@ -7276,7 +7296,7 @@ create_import_tree (void)
   */
   for (ipu = ipus[0]; ipu; ipu = ipu->next)
     {
-      struct import_edge *e1, *e2, *e3, *e4, **e1p, **ep;
+      struct import_edge *e1, *e2, *e3, *e4, **e1p, **ep, *prev;
       for (e1p = &ipu->incoming, e1 = *e1p;
 	   e1; e1 = *e1p != e1 ? *e1p : (e1p = &e1->next, e1->next))
 	{
@@ -7358,8 +7378,8 @@ create_import_tree (void)
 		      struct import_cu **ipup;
 		      for (e4 = ipu2->incoming, e3 = NULL; e4; e4 = e4->next)
 			{
-			  remove_import_edges (&e4->icu->outgoing, &ipu2, 1,
-					       false);
+			  remove_import_edges (&e4->icu->outgoing, NULL, &ipu2,
+					       1, false);
 			  e4->icu->outgoing_count--;
 			  prepare_free_edge (e4);
 			  e3 = e4;
@@ -7385,6 +7405,9 @@ create_import_tree (void)
 			      e3->next = *ep;
 			      *ep = e3;
 			      e3->icu = ipu;
+			      while (e4->icu->incoming_tail->next != NULL)
+				e4->icu->incoming_tail
+				  = e4->icu->incoming_tail->next;
 			    }
 			}
 		      e3 = ipu->outgoing;
@@ -7453,17 +7476,23 @@ create_import_tree (void)
 	      if (size_dec > size_inc
 		  && (!fi_multifile || ipusub->idx >= npus + ncus))
 		{
-		  for (e3 = ipusub->incoming, ep = &ipusup->incoming;
+		  for (e3 = ipusub->incoming, ep = &ipusup->incoming,
+			 prev = NULL;
 		       e3; e3 = e3->next)
 		    {
-		      remove_import_edges (&e3->icu->outgoing, &ipusup, 1,
+		      remove_import_edges (&e3->icu->outgoing, NULL, &ipusup, 1,
 					   false);
 		      e3->icu->outgoing_count--;
 		      while ((*ep)->icu != e3->icu)
-			ep = &(*ep)->next;
+			{
+			    prev = *ep;
+			    ep = &(*ep)->next;
+			}
 		      e4 = *ep;
 		      *ep = e4->next;
 		      free_edge (e4);
+		      if (ipusup->incoming_tail == e4)
+			ipusup->incoming_tail  = prev;
 		    }
 		  for (ep = &ipusub->outgoing; *ep; ep = &(*ep)->next)
 		    if ((*ep)->icu->idx >= ipusup->idx)
@@ -7482,6 +7511,8 @@ create_import_tree (void)
 		  e4->icu = ipusub;
 		  e4->next = *ep;
 		  *ep = e4;
+		  if (ipusup->incoming_tail->next == e4)
+		    ipusup->incoming_tail = e4;
 		  ipusup->incoming_count -= ipusub->incoming_count - 1;
 		  size -= size_dec - size_inc;
 		  if (ipusup == ipu)
