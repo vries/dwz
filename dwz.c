@@ -13816,7 +13816,7 @@ usage (void)
        "  dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
        "  dwz [common options] -o OUTFILE FILE\n"
        "  dwz [ -v | -? ]");
-  error (0, 0, msg);
+  error (0, 0, "%s", msg);
 
   indent = 30;
   limit = 80;
