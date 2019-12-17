@@ -34,6 +34,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/times.h>
 
 #include <obstack.h>
 
@@ -129,6 +130,33 @@
 /* Utility macro.  */
 #define IMPLIES(A, B) (!((A) && !(B)))
 
+
+static void
+report_progress (void)
+{
+  static struct tms current;
+  static struct tms prev;
+  static bool first = true;
+  static long ticks_per_second = 0;
+
+  if (!first)
+    prev = current;
+
+  times (&current);
+
+  if (first)
+    {
+      ticks_per_second = sysconf (_SC_CLK_TCK);
+      first = false;
+      return;
+    }
+
+  clock_t user = current.tms_utime - prev.tms_utime;
+  clock_t sys = current.tms_stime - prev.tms_stime;
+  fprintf (stderr, "user: %.2f\n", (float)user / (float)ticks_per_second);
+  fprintf (stderr, "sys : %.2f\n", (float)sys / (float)ticks_per_second);
+}
+
 #define obstack_chunk_alloc     malloc
 #define obstack_chunk_free      free
 
@@ -175,6 +203,7 @@ static int save_temps = 0;
 static int verify_edges_p = 0;
 static int dump_edges_p = 0;
 static int partition_dups_opt;
+static int progress_p;
 enum die_count_methods
 {
   none,
@@ -5112,6 +5141,12 @@ try_debug_info (DSO *dso)
   int kind = DEBUG_INFO;
   bool low_mem_die_limit_hit = false;
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "try_debug_info\n");
+    }
+
   if (tracing)
     fprintf (stderr, "Counting DIEs\n");
 
@@ -5288,6 +5323,14 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	  if (try_ret != 0)
 	    return try_ret;
 	}
+    }
+
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "read_debug_info %s%s\n",
+	       kind == DEBUG_INFO ? ".debug_info" : ".debug_types",
+	       low_mem && kind == DEBUG_INFO ? " (low-mem)" : "");
     }
 
   if (likely (!fi_multifile && kind != DEBUG_TYPES))
@@ -6346,6 +6389,12 @@ partition_dups (void)
   if (unlikely (fi_multifile))
     return 0;
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "partition_dups\n");
+    }
+
   to_free = obstack_alloc (&ob2, 1);
   for (cu = first_cu; cu; cu = cu->cu_next)
     partition_find_dups (&ob2, cu->cu_die);
@@ -6361,7 +6410,17 @@ partition_dups (void)
 	      dump_dups (arr[i]);
 	    }
 	}
+      if (unlikely (progress_p))
+	{
+	  report_progress ();
+	  fprintf (stderr, "partition_dups qsort\n");
+	}
       qsort (arr, vec_size, sizeof (dw_die_ref), partition_cmp);
+      if (unlikely (progress_p))
+	{
+	  report_progress ();
+	  fprintf (stderr, "partition_dups after qsort\n");
+	}
       if (partition_dups_1 (arr, vec_size, &first_partial_cu,
 			    &last_partial_cu, false))
 	{
@@ -6797,6 +6856,13 @@ create_import_tree (void)
   unsigned int puidx;
   struct import_cu *last_pu, *pu_freelist = NULL;
   unsigned char *to_free;
+
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "create_import_tree phase 1\n");
+    }
+
   /* size doesn't count anything already created before this
      function (partial units etc.) or already preexisting, just
      initially the cumulative sizes of DW_TAG_imported_unit DIEs
@@ -6962,6 +7028,11 @@ create_import_tree (void)
     dump_edges ("phase 1", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
     verify_edges (ipus, npus, ncus, 1);
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "create_import_tree phase 2\n");
+    }
   /* Now, for the above constructed bipartite graph, find K x,2 components
      where x >= 5 (for DWARF3 and above or ptr_size 4, for DWARF2 and
      ptr_size 8 it can be even x == 4) and add a new PU node, where all
@@ -7149,6 +7220,11 @@ create_import_tree (void)
     dump_edges ("phase 2", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
     verify_edges (ipus, npus, ncus, 2);
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "create_import_tree phase 3\n");
+    }
   /* Try to merge PUs which have the same set of referrers if
      beneficial.
 
@@ -7420,6 +7496,11 @@ create_import_tree (void)
     dump_edges ("phase 3", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
     verify_edges (ipus, npus, ncus, 3);
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "create_import_tree phase 4 (create partial units)\n");
+    }
   /* Create DW_TAG_partial_unit (and containing dw_cu structures).  */
   if (fi_multifile)
     {
@@ -9092,6 +9173,12 @@ compute_abbrevs (DSO *dso)
   struct abbrev_tag *t;
   unsigned int ncus, nlargeabbrevs = 0, i, laststart;
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "compute_abbrevs\n");
+    }
+
   t = (struct abbrev_tag *)
       obstack_alloc (&ob2,
 		     sizeof (*t)
@@ -9560,8 +9647,15 @@ write_abbrev (void)
   unsigned char *abbrev = malloc (debug_sections[DEBUG_ABBREV].new_size);
   unsigned char *ptr = abbrev;
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "write_abbrev\n");
+    }
+
   if (abbrev == NULL)
     dwz_oom ();
+
   debug_sections[DEBUG_ABBREV].new_data = abbrev;
   for (cu = first_cu; cu; cu = cu->cu_next)
     {
@@ -10383,6 +10477,12 @@ write_info (unsigned int *die_count)
   dw_cu_ref cu, cu_next;
   unsigned char *info = malloc (debug_sections[DEBUG_INFO].new_size);
   unsigned char *ptr = info;
+
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "write_info\n");
+    }
 
   if (info == NULL)
     dwz_oom ();
@@ -11363,6 +11463,12 @@ write_dso (DSO *dso, const char *file, struct stat *st, bool save_to_temp)
   unsigned int sorted_section_numbers[dso->ehdr.e_shnum + 1];
   GElf_Off old_sh_offset[dso->ehdr.e_shnum];
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "write_dso\n");
+    }
+
   for (i = 1; i < dso->ehdr.e_shnum; ++i)
     old_sh_offset[i] = dso->shdr[i].sh_offset;
 
@@ -12304,6 +12410,12 @@ write_multifile (DSO *dso)
   unsigned int i;
   int ret = 0;
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "write_multifile\n");
+    }
+
   if (multi_ehdr.e_ident[0] == '\0')
     multi_ehdr = dso->ehdr;
 
@@ -12765,8 +12877,23 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	    }
 	  write_abbrev ();
 	  write_info (die_count);
+	  if (unlikely (progress_p))
+	    {
+	      report_progress ();
+	      fprintf (stderr, "write_loc\n");
+	    }
 	  write_loc ();
+	  if (unlikely (progress_p))
+	    {
+	      report_progress ();
+	      fprintf (stderr, "write_types\n");
+	    }
 	  write_types ();
+	  if (unlikely (progress_p))
+	    {
+	      report_progress ();
+	      fprintf (stderr, "write_gdb_index\n");
+	    }
 	  write_gdb_index ();
 	  /* These sections are optional and it is unclear
 	     how to adjust them.  Just remove them.  */
@@ -12787,6 +12914,8 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 
 	  if (write_dso (dso, outfile, &st, save_to_temp))
 	    ret = 1;
+	  if (unlikely (progress_p))
+	    report_progress ();
 	}
     }
 
@@ -12859,6 +12988,12 @@ optimize_multifile (unsigned int *die_count)
 	  error (0, 0, "Error writing multi-file temporary files");
 	  return -1;
 	}
+    }
+
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "optimize_multifile\n");
     }
 
   debug_sections[DEBUG_INFO].size = multi_info_off;
@@ -13217,8 +13352,15 @@ read_multifile (int fd, unsigned int die_count)
   DSO *dso, *volatile ret;
   unsigned int i;
 
+  if (unlikely (progress_p))
+    {
+      report_progress ();
+      fprintf (stderr, "read_multifile\n");
+    }
+
   if (tracing)
     fprintf (stderr, "Read-multifile\n");
+
   multifile_mode = MULTIFILE_MODE_RD;
   dso = fdopen_dso (fd, multifile);
   if (dso == NULL)
@@ -13426,6 +13568,7 @@ static struct option dwz_options[] =
   { "version",		 no_argument,	    0, 'v' },
 #if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
+  { "devel-progress",	 no_argument,	    &progress_p, 1 },
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
@@ -13650,6 +13793,7 @@ usage (void)
   fprintf (stderr, "Development options:\n");
   msg
     = ("  --devel-trace\n"
+       "  --devel-progress\n"
        "  --devel-ignore-size\n"
        "  --devel-ignore-locus\n"
        "  --devel-save-temps\n"
