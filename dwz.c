@@ -2462,6 +2462,8 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
   unsigned int i;
   unsigned char *ptr;
   dw_die_ref child;
+  bool only_hash_name_p;
+  hashval_t die_hash2;
 
   switch (die->die_ck_state)
     {
@@ -2487,6 +2489,10 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
   read_uleb128 (ptr);
   s = die->die_tag;
   die->u.p1.die_hash = iterative_hash_object (s, die->u.p1.die_hash);
+  only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
+  die_hash2 = 0;
+  if (only_hash_name_p)
+    die_hash2 = die->u.p1.die_hash;
   for (i = 0; i < t->nattr; ++i)
     {
       uint32_t form = t->attr[i].form;
@@ -2786,10 +2792,26 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 		}
 	    }
 	  else
-	    ptr += 4;
+	    {
+	      ptr += 4;
+	      if (only_hash_name_p && t->attr[i].attr == DW_AT_name)
+		{
+		  s = t->attr[i].attr;
+		  die_hash2 = iterative_hash_object (s, die_hash2);
+		  die_hash2
+		    = iterative_hash (old_ptr, ptr - old_ptr, die_hash2);
+		}
+	    }
 	  break;
 	case DW_FORM_string:
 	  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
+	  if (only_hash_name_p && t->attr[i].attr == DW_AT_name)
+	    {
+	      s = t->attr[i].attr;
+	      die_hash2 = iterative_hash_object (s, die_hash2);
+	      die_hash2
+		= iterative_hash (old_ptr, ptr - old_ptr, die_hash2);
+	    }
 	  break;
 	case DW_FORM_indirect:
 	  abort ();
@@ -2901,6 +2923,9 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
   if (die->die_ck_state == CK_BEING_COMPUTED)
     die->die_ck_state = CK_KNOWN;
 
+  if (only_hash_name_p)
+    die->u.p1.die_hash = die_hash2;
+
   return 0;
 }
 
@@ -3006,6 +3031,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   unsigned int i, ret = 0;
   unsigned char *ptr;
   dw_die_ref child;
+  bool only_hash_name_p;
 
   if (top_die == die)
     {
@@ -3036,6 +3062,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   else
     assert (top_die == NULL || die->die_ck_state == CK_KNOWN);
   t = die->die_abbrev;
+  only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
   for (i = 0; i < t->nattr; ++i)
     if (t->attr[i].attr != DW_AT_sibling)
       switch (t->attr[i].form)
@@ -3214,7 +3241,8 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	}
     }
 
-  if (top_die == NULL || top_die->die_ck_state != CK_BAD)
+  if (!only_hash_name_p
+      && (top_die == NULL || top_die->die_ck_state != CK_BAD))
     for (child = die->die_child; child; child = child->die_sib)
       {
 	unsigned int r
@@ -3568,6 +3596,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
   unsigned char *ptr1, *ptr2;
   dw_die_ref ref1, ref2;
   dw_die_ref child1, child2;
+  bool only_compare_name_p;
 
 #define FAIL goto fail
   if (die1 == die2 || die_safe_dup (die2) == die1)
@@ -3575,14 +3604,31 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
   if (die1->u.p1.die_hash != die2->u.p1.die_hash
       || die1->u.p1.die_ref_hash != die2->u.p1.die_ref_hash
       || die1->die_tag != die2->die_tag
-      || die1->u.p1.die_exit - die1->u.p1.die_enter
-	 != die2->u.p1.die_exit - die2->u.p1.die_enter
+      || (!odr && (die1->u.p1.die_exit - die1->u.p1.die_enter
+		   != die2->u.p1.die_exit - die2->u.p1.die_enter))
       || die_safe_dup (die2) != NULL
       || die1->die_ck_state != CK_KNOWN
       || die2->die_ck_state != CK_KNOWN
       || die1->die_toplevel != die2->die_toplevel)
     return 0;
   assert (!die1->die_root && !die2->die_root);
+
+  only_compare_name_p
+    = odr && die1->die_odr_state != ODR_NONE && die2->die_odr_state != ODR_NONE;
+
+  if (only_compare_name_p)
+    {
+      const char *name1 = get_AT_string (die1, DW_AT_name);
+      const char *name2 = get_AT_string (die2, DW_AT_name);
+      // TODO: Handle DW_AT_linkage_name?
+      if (name1 == NULL || name2 == NULL)
+	return 0;
+      if (strcmp (name1, name2) != 0)
+	return 0;
+    }
+  else if (die1->u.p1.die_exit - die1->u.p1.die_enter
+	   != die2->u.p1.die_exit - die2->u.p1.die_enter)
+    return 0;
 
   t1 = die1->die_abbrev;
   t2 = die2->die_abbrev;
@@ -3656,6 +3702,10 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	}
       die1->die_nextdup = die2;
     }
+
+  if (only_compare_name_p)
+    return 1;
+
   while (1)
     {
       uint32_t form1, form2;
