@@ -216,6 +216,9 @@ static enum die_count_methods die_count_method = estimate;
 int odr = 0;
 enum odr_mode { ODR_BASIC, ODR_LINK };
 enum odr_mode odr_mode = ODR_LINK;
+int odr_parsed = 0;
+int no_odr_parsed = 0;
+int odr_mode_parsed = 0;
 
 typedef struct
 {
@@ -14161,6 +14164,9 @@ static struct option dwz_options[] =
   { "devel-die-count-method",
 			 required_argument, &die_count_method_parsed, 1 },
 #endif
+  { "odr",		 no_argument,	    &odr_parsed, 1 },
+  { "no-odr",		 no_argument,	    &no_odr_parsed, 1 },
+  { "odr-mode",		 required_argument, &odr_mode_parsed, 1 },
   { NULL,		 no_argument,	    0, 0 }
 };
 
@@ -14183,7 +14189,13 @@ static struct option_help dwz_common_options_help[] =
     "Handle files larger than this limit using a slower and more memory"
     " usage friendly mode and don't optimize those files in multifile mode." },
   { "L", "max-die-limit", "<COUNT|none>", "50 million DIEs",
-    "Don't optimize files larger than this limit." }
+    "Don't optimize files larger than this limit." },
+  { NULL, "odr", NULL, NULL,
+    NULL },
+  { NULL, "no-odr", NULL, "Enabled",
+    "Enable/disable one definition rule optimization." },
+  { NULL, "odr-mode", "<basic|link>", "link",
+    "Set aggressiveness level of one definition rule optimization." }
 };
 
 /* Describe single-file command line options.  */
@@ -14292,12 +14304,20 @@ print_options_help (struct option_help *options_help, unsigned int n,
       len += 2;
 
       s = options_help[i].short_name;
-      fprintf (stderr, "-%s", s);
-      len += 2;
+      if (s)
+	{
+	  fprintf (stderr, "-%s", s);
+	  len += 2;
+	}
 
       s = options_help[i].long_name;
-      fprintf (stderr, ", --%s", s);
-      len += 4 + strlen (s);
+      if (len == 4)
+	{
+	  fprintf (stderr, ", ");
+	  len += 2;
+	}
+      fprintf (stderr, "--%s", s);
+      len += 2 + strlen (s);
 
       s = options_help[i].argument;
       if (s)
@@ -14306,18 +14326,20 @@ print_options_help (struct option_help *options_help, unsigned int n,
 	  len += 1 + strlen (s);
 	}
 
-      if (len > indent)
-	{
-	  fprintf (stderr, "\n");
-	  do_indent (indent);
-	}
-      else
-	do_indent (indent - len);
-      len = indent;
-
       s = options_help[i].msg;
-      wrap (indent, limit, s);
+      if (s)
+	{
+	  if (len > indent)
+	    {
+	      fprintf (stderr, "\n");
+	      do_indent (indent);
+	    }
+	  else
+	    do_indent (indent - len);
+	  len = indent;
 
+	  wrap (indent, limit, s);
+	}
       fprintf (stderr, "\n");
 
       s = options_help[i].default_value;
@@ -14446,6 +14468,34 @@ main (int argc, char *argv[])
 		  break;
 		}
 	      error (1, 0, "invalid argument --devel-die-count-method %s",
+		     optarg);
+	    }
+	  if (odr_parsed)
+	    {
+	      assert (!no_odr_parsed);
+	      odr = 1;
+	      odr_parsed = 0;
+	    }
+	  if (no_odr_parsed)
+	    {
+	      assert (!odr_parsed);
+	      odr = 0;
+	      no_odr_parsed = 0;
+	    }
+	  if (odr_mode_parsed)
+	    {
+	      odr_mode_parsed = 0;
+	      if (strcmp (optarg, "basic") == 0)
+		{
+		  odr_mode = ODR_BASIC;
+		  break;
+		}
+	      if (strcmp (optarg, "link") == 0)
+		{
+		  odr_mode = ODR_LINK;
+		  break;
+		}
+	      error (1, 0, "invalid argument --odr-mode %s",
 		     optarg);
 	    }
 	  break;
