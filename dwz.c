@@ -214,6 +214,8 @@ enum die_count_methods
 static enum die_count_methods die_count_method = estimate;
 
 int odr = 0;
+enum odr_mode { ODR_BASIC, ODR_LINK };
+enum odr_mode odr_mode = ODR_LINK;
 
 typedef struct
 {
@@ -6234,9 +6236,67 @@ sort_dups (dw_die_ref head)
   head->die_nextdup = prev;
 }
 
+/* Merge duplicate chains D and D2, and return the head of the merged
+chain.  */
+static dw_die_ref
+merge_dups (dw_die_ref d, dw_die_ref d2)
+{
+  if (d == NULL)
+    return d2;
+  if (d2 == NULL)
+    return d;
+
+  dw_die_ref tail = NULL;
+  dw_die_ref head = NULL;
+  while (true)
+    {
+      dw_die_ref next;
+      if (d && d2)
+	{
+	  if (d->die_offset < d2->die_offset)
+	    {
+	      next = d;
+	      d = d->die_nextdup;
+	    }
+	  else
+	    {
+	      next = d2;
+	      d2 = d2->die_nextdup;
+	    }
+	}
+      else if (d)
+	{
+	  next = d;
+	  d = d->die_nextdup;
+	}
+      else if (d2)
+	{
+	  next = d2;
+	  d2 = d2->die_nextdup;
+	}
+      else
+	break;
+      if (!head)
+	head = next;
+      if (tail)
+	tail->die_nextdup = next;
+      tail = next;
+    }
+
+  for (d = head; d; d = d->die_nextdup)
+    if (d == head)
+      d->die_dup = NULL;
+    else
+      d->die_dup = head;
+
+  if (unlikely (verify_dups_p))
+    verify_dups (head, true);
+  return head;
+}
+
 /* Split maximal duplicate chain DIE into smaller chains that contain
-   structurally equal defs.  Return the first chain, and call
-   partition_found_dups for the others.  */
+   structurally equal defs, and combine the decls with one of those.
+   Return the first chain, and call partition_found_dups for the others.  */
 static dw_die_ref
 split_dups (dw_die_ref die, struct obstack *vec)
 {
@@ -6277,6 +6337,7 @@ split_dups (dw_die_ref die, struct obstack *vec)
 	d->die_dup = head;
       tail = d;
     }
+  dw_die_ref decls = head;
 
   /* Build def duplicate chains.  */
   unsigned int j;
@@ -6297,6 +6358,24 @@ split_dups (dw_die_ref die, struct obstack *vec)
 	  die_eq (d, d2);
 	}
       sort_dups (d);
+    }
+
+  if (odr_mode != ODR_BASIC)
+    {
+      /* Find the first duplicate chain containing defs.  */
+      dw_die_ref def = NULL;
+      for (i = 0; i < count; i++)
+	{
+	  d = arr[i];
+	  if (die_odr_state (NULL, d) == ODR_DECL
+	      || d->die_dup != NULL)
+	    continue;
+	  def = d;
+	  break;
+	}
+
+      /* Merge the def chain with the decls.  */
+      merge_dups (def, decls);
     }
 
   /* If some DIEs are no longer part of a duplicate chain, don't remove
@@ -6356,6 +6435,62 @@ partition_find_dups (struct obstack *vec, dw_die_ref parent)
       else if (child->die_named_namespace)
 	partition_find_dups (vec, child);
     }
+}
+
+/* Reorder duplicate chain DIE to make sure it doesn't start with a decl.  */
+static dw_die_ref
+reorder_dups (dw_die_ref die)
+{
+  unsigned decl_count = 0;
+  unsigned def_count = 0;
+  dw_die_ref d;
+
+  if (die_odr_state (NULL, die) == ODR_NONE)
+    return die;
+
+  for (d = die; d; d = d->die_nextdup)
+    {
+      if (die_odr_state (NULL, d) == ODR_DECL)
+	decl_count++;
+      else
+	def_count++;
+    }
+  if (def_count == 0 || decl_count == 0)
+    return die;
+
+  if (die_odr_state (NULL, die) != ODR_DECL)
+    return die;
+
+  dw_die_ref def = NULL;
+  dw_die_ref prev = NULL;
+  for (d = die; d; prev = d, d = d->die_nextdup)
+    {
+      if (die_odr_state (NULL, d) == ODR_DECL)
+	continue;
+      def = d;
+      break;
+    }
+
+  assert (!die->die_remove);
+  assert (def->die_remove);
+  def->die_remove = 0;
+  die->die_remove = 1;
+  def->die_ref_seen = die->die_ref_seen;
+  dw_die_ref next = def->die_nextdup;
+  if (prev)
+    prev->die_nextdup = next;
+  def->die_nextdup = die;
+  for (d = def; d; prev = d, d = d->die_nextdup)
+    {
+      if (d == def)
+	d->die_dup = NULL;
+      else
+	d->die_dup = def;
+    }
+
+  if (unlikely (verify_dups_p))
+    verify_dups (def, false);
+  return def;
 }
 
 /* Copy DIE tree of DIE, as children of new DIE PARENT.  */
@@ -6565,11 +6700,13 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      dw_die_ref child;
 	      if (second_phase && !arr[k]->die_ref_seen)
 		continue;
+	      if (odr && odr_mode != ODR_BASIC)
+		arr[k] = reorder_dups (arr[k]);
 	      child = copy_die_tree (die, arr[k]);
 	      for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
 		ref->die_dup = child;
 	      if (unlikely (verify_dups_p))
-		verify_dups (child, true);
+		verify_dups (child, odr_mode == ODR_BASIC);
 	      if (namespaces)
 		{
 		  for (ref = arr[k]->die_parent;
