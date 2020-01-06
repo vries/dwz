@@ -213,6 +213,8 @@ enum die_count_methods
 };
 static enum die_count_methods die_count_method = estimate;
 
+int odr = 0;
+
 typedef struct
 {
   Elf *elf;
