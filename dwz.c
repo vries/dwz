@@ -213,7 +213,7 @@ enum die_count_methods
 };
 static enum die_count_methods die_count_method = estimate;
 
-int odr = 0;
+int odr = 1;
 enum odr_mode { ODR_BASIC, ODR_LINK };
 enum odr_mode odr_mode = ODR_LINK;
 int odr_parsed = 0;
