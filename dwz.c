@@ -736,6 +736,7 @@ struct dw_cu
   /* Intracusize argument to init_new_die_offsets.  Set in compute_abbrevs,
      used in recompute_abbrevs.  */
   unsigned int initial_intracusize;
+  enum dwarf_source_language lang;
 };
 
 /* Internal representation of a debugging information entry (DIE).
@@ -5676,13 +5677,21 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  break;
 		case DW_FORM_flag_present:
 		  break;
+		case DW_FORM_data1:
+		  if (odr && die->die_tag == DW_TAG_compile_unit
+		      && t->attr[i].attr == DW_AT_language)
+		    cu->lang = *ptr;
+		  /* FALLTHRU */
 		case DW_FORM_ref1:
 		case DW_FORM_flag:
-		case DW_FORM_data1:
 		  ++ptr;
 		  break;
-		case DW_FORM_ref2:
 		case DW_FORM_data2:
+		  if (odr && die->die_tag == DW_TAG_compile_unit
+		      && t->attr[i].attr == DW_AT_language)
+		    cu->lang = do_read_16 (ptr);
+		  /* FALLTHRU */
+		case DW_FORM_ref2:
 		  ptr += 2;
 		  break;
 		case DW_FORM_ref4:
