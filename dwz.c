@@ -6890,7 +6890,8 @@ bitvector_clear_bits (BITVECTOR_TYPE *vector, unsigned int a, unsigned int b)
 {
   unsigned int range_min = a / (sizeof (BITVECTOR_TYPE) * 8);
   unsigned int range_max = b / (sizeof (BITVECTOR_TYPE) * 8);
-  memset (&vector[range_min], 0, range_max - range_min + 1);
+  memset (&vector[range_min], 0,
+	  (range_max - range_min + 1) * sizeof (BITVECTOR_TYPE));
 }
 
 /* Function to optimize the size of DW_TAG_imported_unit DIEs by
