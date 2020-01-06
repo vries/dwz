@@ -31,7 +31,8 @@ TEST_EXECS_x86_64 = py-section-script dw2-skip-prologue \
 	implptr-64bit-d2o4a8r8t0 varval
 TEST_EXECS = hello dwz-for-test min two-typedef start hello-gold-gdb-index \
 	start-gold hello-gnu-pubnames $(TEST_EXECS_DWARF_ASM) \
-	$(TEST_EXECS_$(UNAME))
+	$(TEST_EXECS_$(UNAME)) odr-struct odr-class odr-union odr-struct-ns \
+	odr-class-ns odr-union-ns
 
 UNAME:=$(shell uname -p)
 
@@ -96,6 +97,30 @@ $(TEMP_ASM_FILES): %-dw.S: $(TEST_SRC)/../lib/%.exp
 
 $(TEST_EXECS_DWARF_ASM): %: %-dw.S
 	$(CC) $(TEST_SRC)/main.c $< -o $@
+
+odr-struct:
+	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
+	  -DKIND=struct
+
+odr-class:
+	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
+	  -DKIND=class
+
+odr-union:
+	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
+	  -DKIND=union
+
+odr-struct-ns:
+	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
+	  -DKIND=struct -DNAMESPACE=1
+
+odr-class-ns:
+	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
+	  -DKIND=class -DNAMESPACE=1
+
+odr-union-ns:
+	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
+	  -DKIND=union -DNAMESPACE=1
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
