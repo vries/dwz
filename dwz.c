@@ -791,6 +791,8 @@ struct dw_die
   unsigned int die_collapsed_child : 1;
   /* Set if die_parent field is reused for struct dw_cu pointer.  */
   unsigned int die_root : 1;
+  /* State for ODR optimization.  */
+  enum { ODR_UNKNOWN, ODR_NONE, ODR_DEF, ODR_DECL } die_odr_state : 2;
   /* Tree pointer to parent.  */
   dw_die_ref die_parent;
 
@@ -2337,6 +2339,104 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
     }
 
   return 0;
+}
+
+/* Initialize die_odr_state field for DIE with CU.  */
+static void
+set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
+{
+  unsigned char *ptr;
+  struct abbrev_tag *t;
+  unsigned int i;
+  bool decl_p;
+  bool name_p;
+  bool other_p;
+
+  die->die_odr_state = ODR_NONE;
+
+  if (low_mem)
+    /* Todo: allow low-mem mode.  */
+    return;
+
+  if (multifile_mode == 0)
+    /* We're in regular mode, enable the ODR optimization.  */
+    ;
+  else
+    /* One definition rule does not hold across executables and shared
+       libraries, so disable.  */
+    return;
+
+  if (!die->die_toplevel)
+    /* A nested struct is not uniquely identified by its name.  There may be a
+       different type with the same name nested in a different struct.  */
+    return;
+
+  switch (cu->lang)
+    {
+    case DW_LANG_C_plus_plus:
+      /* c++ defines one-definition-rule.  */
+      if (die->die_tag == DW_TAG_structure_type
+	  || die->die_tag == DW_TAG_class_type
+	  || die->die_tag == DW_TAG_union_type)
+	/* ODR holds for all types, but we limit the optimization to these
+	   tags, which are the ones likely to profit from it.  */
+	;
+      else
+	return;
+      break;
+    default:
+      return;
+    }
+
+  ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
+  read_uleb128 (ptr);
+
+  t = die->die_abbrev;
+
+  decl_p = false;
+  name_p = false;
+  other_p = false;
+  for (i = 0; i < t->nattr; ++i)
+    {
+      if (t->attr[i].attr == DW_AT_name)
+	{
+	  name_p = true;
+	  continue;
+	}
+
+      if (t->attr[i].attr == DW_AT_declaration)
+	{
+	  decl_p = true;
+	  continue;
+	}
+
+      other_p = true;
+    }
+
+  if (!name_p)
+    /* Ignore anonymous types.  */
+    return;
+
+  if (decl_p && !other_p && die->die_child == NULL)
+    {
+      /* Detected a declaration with no attributes other than DW_AT_name and
+	 DW_AT_declaration, and no children.  */
+      die->die_odr_state = ODR_DECL;
+      return;
+    }
+
+  die->die_odr_state = ODR_DEF;
+}
+
+/* Return the initialized die_odr_state field for DIE with CU.  */
+static unsigned int UNUSED
+die_odr_state (dw_cu_ref cu, dw_die_ref die)
+{
+  if (die->die_odr_state != ODR_UNKNOWN)
+    return die->die_odr_state;
+
+  set_die_odr_state (cu, die);
+  return die->die_odr_state;
 }
 
 /* This function computes u.p1.die_hash and die_ck_state of DIE.
