@@ -824,6 +824,12 @@ struct dw_die
 	  /* Iterative hash of other references.  Computed by
 	     checksum_ref_die function.  */
 	  hashval_t die_ref_hash;
+	  /* For ODR phase 1, we change die_hash for ODR_DEF and ODR_DECL DIEs
+	     to only hash in the tag and the name, to be able to construct
+	     maximal duplicate chains.  But during ODR phase 2, we want to
+	     compare ODR_DEF DIEs in the normal way, for which we need the
+	     unchanged die_hash, which we store here in die_hash2.  */
+	  hashval_t die_hash2;
 	  /* Tick count of entering and leaving a DIE during depth first
 	     traversal of the CU, used to quickly find if a subtree is
 	     referenced.  */
@@ -2924,7 +2930,11 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
     die->die_ck_state = CK_KNOWN;
 
   if (only_hash_name_p)
-    die->u.p1.die_hash = die_hash2;
+    {
+      unsigned int tmp = die->u.p1.die_hash;
+      die->u.p1.die_hash = die_hash2;
+      die->u.p1.die_hash2 = tmp;
+    }
 
   return 0;
 }
@@ -3581,6 +3591,8 @@ expand_children (dw_die_ref die)
   return ret;
 }
 
+static unsigned odr_phase;
+
 /* Return 1 if DIE1 and DIE2 match.  TOP_DIE1 and TOP_DIE2
    is the corresponding ultimate parent with die_toplevel
    set.  u.p1.die_hash and u.p1.die_ref_hash hashes should
@@ -3616,7 +3628,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
   only_compare_name_p
     = odr && die1->die_odr_state != ODR_NONE && die2->die_odr_state != ODR_NONE;
 
-  if (only_compare_name_p)
+  if (only_compare_name_p && odr_phase == 1)
     {
       const char *name1 = get_AT_string (die1, DW_AT_name);
       const char *name2 = get_AT_string (die2, DW_AT_name);
@@ -3629,6 +3641,13 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
   else if (die1->u.p1.die_exit - die1->u.p1.die_enter
 	   != die2->u.p1.die_exit - die2->u.p1.die_enter)
     return 0;
+
+  if (only_compare_name_p && odr_phase == 2
+      && die1->die_odr_state == ODR_DEF && die2->die_odr_state == ODR_DEF)
+    {
+      if (die1->u.p1.die_hash2 != die2->u.p1.die_hash2)
+	return 0;
+    }
 
   t1 = die1->die_abbrev;
   t2 = die2->die_abbrev;
@@ -3703,7 +3722,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
       die1->die_nextdup = die2;
     }
 
-  if (only_compare_name_p)
+  if (only_compare_name_p && odr_phase == 1)
     return 1;
 
   while (1)
@@ -5461,6 +5480,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   struct dw_cu cu_buf;
   struct dw_die die_buf;
 
+  if (odr)
+    odr_phase = 1;
+
   unsigned int estimated_nr_dies = estimate_nr_dies ();
   if (kind == DEBUG_INFO
       && multifile_mode == 0
@@ -6212,6 +6234,96 @@ sort_dups (dw_die_ref head)
   head->die_nextdup = prev;
 }
 
+/* Split maximal duplicate chain DIE into smaller chains that contain
+   structurally equal defs.  Return the first chain, and call
+   partition_found_dups for the others.  */
+static dw_die_ref
+split_dups (dw_die_ref die, struct obstack *vec)
+{
+  dw_die_ref res = NULL;
+
+  /* Count the DIEs in the duplicate chain.  */
+  unsigned count = 0;
+  dw_die_ref d;
+  for (d = die; d; d = d->die_nextdup)
+    count++;
+  assert (count >= 2);
+
+  /* Break up the duplicate chain.  */
+  dw_die_ref arr[count];
+  unsigned int i;
+  for (d = die, i = 0; d; d = d->die_nextdup, i++)
+    arr[i] = d;
+  for (i = 0; i < count; i++)
+    {
+      d = arr[i];
+      d->die_nextdup = NULL;
+      d->die_dup = NULL;
+    }
+
+  /* Build decls duplicate chain.  */
+  dw_die_ref tail = NULL;
+  dw_die_ref head = NULL;
+  for (i = 0; i < count; i++)
+    {
+      d = arr[i];
+      if (die_odr_state (NULL, d) != ODR_DECL)
+	continue;
+      if (!head)
+	head = d;
+      if (tail)
+	tail->die_nextdup = d;
+      if (d != head)
+	d->die_dup = head;
+      tail = d;
+    }
+
+  /* Build def duplicate chains.  */
+  unsigned int j;
+  dw_die_ref d2;
+  for (i = 0; i < count; i++)
+    {
+      d = arr[i];
+      if (d->die_dup || d->die_nextdup
+	  || die_odr_state (NULL, d) == ODR_DECL)
+	continue;
+      tail = d;
+      for (j = i + 1; j < count; j++)
+	{
+	  d2 = arr[j];
+	  if (d2->die_dup || d2->die_nextdup
+	      || die_odr_state (NULL, d2) == ODR_DECL)
+	    continue;
+	  die_eq (d, d2);
+	}
+      sort_dups (d);
+    }
+
+  /* If some DIEs are no longer part of a duplicate chain, don't remove
+     them.  */
+  for (i = 0; i < count; i++)
+    {
+      d = arr[i];
+      if (d->die_dup == NULL
+	  && d->die_nextdup == NULL)
+	d->die_remove = 0;
+    }
+
+  /* Notice the new duplicate chains.  */
+  for (i = 0; i < count; i++)
+    {
+      d = arr[i];
+      if (d->die_dup != NULL
+	  || d->die_nextdup == NULL)
+	continue;
+      if (res == NULL)
+	res = d;
+      else
+	partition_found_dups (d, vec);
+    }
+  return res;
+}
+
 /* Search for duplicate removal reference DIE candidates
    in tree rooted by PARENT.  */
 static void
@@ -6548,6 +6660,7 @@ partition_dups (void)
   dw_cu_ref cu, first_partial_cu = NULL, last_partial_cu = NULL;
   size_t vec_size, i;
   unsigned char *to_free;
+  dw_die_ref *arr;
 
   if (unlikely (fi_multifile))
     return 0;
@@ -6559,12 +6672,73 @@ partition_dups (void)
     }
 
   to_free = obstack_alloc (&ob2, 1);
+
+  if (odr)
+    odr_phase = 2;
+
   for (cu = first_cu; cu; cu = cu->cu_next)
     partition_find_dups (&ob2, cu->cu_die);
   vec_size = obstack_object_size (&ob2) / sizeof (void *);
+
+  size_t gap_start, gap_end;
+  if (odr)
+    {
+      size_t j;
+      gap_end = vec_size;
+      arr = (dw_die_ref *) obstack_base (&ob2);
+      if (progress_p)
+	{
+	  report_progress ();
+	  fprintf (stderr, "partition_dups split_dups\n");
+	}
+      for (i = 0; i < vec_size;)
+	{
+	  dw_die_ref die = arr[i];
+	  if (die_odr_state (NULL, die) == ODR_NONE)
+	    {
+	      i++;
+	      continue;
+	    }
+	  die = split_dups (die, &ob2);
+	  if (die && unlikely (verify_dups_p))
+	    verify_dups (die, true);
+	  arr = (dw_die_ref *) obstack_base (&ob2);
+	  if (die == NULL)
+	    {
+	      arr[i] = arr[vec_size - 1];
+	      arr[vec_size - 1] = NULL;
+	      vec_size--;
+	    }
+	  else
+	    {
+	      arr[i] = die;
+	      ++i;
+	    }
+	}
+      gap_start = vec_size;
+
+      vec_size = obstack_object_size (&ob2) / sizeof (void *);
+
+      if (gap_start != gap_end)
+	{
+	  for (i = gap_start, j = gap_end; j < vec_size; ++i, ++j)
+	    {
+	      arr[i] = arr[j];
+	      arr[j] = NULL;
+	    }
+	  vec_size = i;
+	}
+    }
+
+  if (odr)
+    odr_phase = 3;
+
   if (vec_size != 0)
     {
-      dw_die_ref *arr = (dw_die_ref *) obstack_finish (&ob2);
+      arr = (dw_die_ref *) obstack_finish (&ob2);
+      if (odr)
+	for (i = 0; i < vec_size; ++i)
+	  assert (arr[i] != NULL);
       if (dump_dups_p)
 	{
 	  for (i = 0; i < vec_size; ++i)
