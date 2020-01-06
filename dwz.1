@@ -88,6 +88,23 @@ containing more than
 \fICOUNT\fR DIEs at all.  The default is 50 million DIEs.  Specifying none as
 argument disables the limit.
 .TP
+.B \-\-odr / \-\-no-odr
+Enable/disable One-Definition-Rule optimization for C++ compilation units.
+This optimization causes struct/union/class DIEs with the same name to be
+considered equal.  This has the effect that DIEs referring to distinct DIEs
+representing the same type (like f.i. pointer type DIEs) are considered equal,
+and may be deduplicated.
+Enabled by default.
+.TP
+.B \-\-odr-mode=<basic|link>
+Set the One-Definition-Rule optimization aggressiveness: basic or link.
+When using the link setting, the optimization will attempt to replace
+declarations of a struct/union/class with a corresponding definition.  When
+using the basic setting, that part of the optimization is disabled.
+In normal operation, the link setting should be used.  The basic setting is
+provided only as fallback in case of problems with the link setting.  Set to
+link by default.
+.TP
 .B \-? \-\-help
 Print short help and exit.
 .TP
