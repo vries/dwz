@@ -681,6 +681,7 @@ struct dw_file
   char *dir;
   char *file;
   uint64_t time, size;
+  unsigned int file_angle_brackets_encapsulated_no_slash : 1;
 };
 
 /* Internal representation of a compilation (or partial)
@@ -1230,17 +1231,24 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
       cu->cu_files[file_cnt].dir = (char *) dirt[value];
       cu->cu_files[file_cnt].time = read_uleb128 (ptr);
       cu->cu_files[file_cnt].size = read_uleb128 (ptr);
+      size_t file_len = (char *) end - cu->cu_files[file_cnt].file;
+      size_t strlen_file = file_len - 1;
+      bool file_has_slash = false;
       if (cu->cu_files[file_cnt].file[0] != '/'
 	  && cu->cu_files[file_cnt].dir != NULL)
 	{
-	  size_t file_len = (char *) end - cu->cu_files[file_cnt].file;
 	  size_t dir_len = strlen (cu->cu_files[file_cnt].dir);
 	  if (dir_len)
 	    {
 	      obstack_grow (&ob, cu->cu_files[file_cnt].dir,
 			    dir_len);
+	      strlen_file += dir_len;
 	      if (cu->cu_files[file_cnt].dir[dir_len - 1] != '/')
-		obstack_1grow (&ob, '/');
+		{
+		  obstack_1grow (&ob, '/');
+		  strlen_file++;
+		}
+	      file_has_slash = true;
 	      obstack_grow (&ob, cu->cu_files[file_cnt].file,
 			    file_len);
 	      cu->cu_files[file_cnt].file
@@ -1248,6 +1256,11 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
 	      cu->cu_files[file_cnt].dir = NULL;
 	    }
 	}
+      cu->cu_files[file_cnt].file_angle_brackets_encapsulated_no_slash
+	= (!file_has_slash
+	   && cu->cu_files[file_cnt].file[0] == '<'
+	   && cu->cu_files[file_cnt].file[strlen_file - 1] == '>'
+	   && strchr (cu->cu_files[file_cnt].file, '/') == NULL);
       file_cnt++;
     }
 
@@ -2620,9 +2633,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 					die->u.p1.die_hash);
 		  /* Ignore DW_AT_comp_dir for DW_AT_*_file <built-in>
 		     etc. if immediately followed by DW_AT_*_line 0.  */
-		  else if (cu_file->file[0] == '<'
-			   && cu_file->file[file_len - 1] == '>'
-			   && strchr (cu_file->file, '/') == NULL
+		  else if (cu_file->file_angle_brackets_encapsulated_no_slash
 			   && i + 1 < t->nattr
 			   && t->attr[i + 1].attr
 			      == (t->attr[i].attr == DW_AT_decl_file
@@ -3833,14 +3844,12 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 		= &cu1->cu_files[value1 - 1];
 	      struct dw_file *cu_file2
 		= &cu2->cu_files[value2 - 1];
-	      unsigned int file_len;
 
 	      if (cu_file1->time != cu_file2->time
 		  || cu_file1->size != cu_file2->size
 		  || strcmp (cu_file1->file, cu_file2->file))
 		FAIL;
 
-	      file_len = strlen (cu_file1->file);
 	      if (cu_file1->dir != NULL)
 		{
 		  if (cu_file2->dir == NULL
@@ -3851,9 +3860,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 		FAIL;
 	      /* Ignore DW_AT_comp_dir for DW_AT_*_file <built-in>
 		 etc. if immediately followed by DW_AT_*_line 0.  */
-	      else if (cu_file1->file[0] == '<'
-		       && cu_file1->file[file_len - 1] == '>'
-		       && strchr (cu_file1->file, '/') == NULL
+	      else if (cu_file1->file_angle_brackets_encapsulated_no_slash
 		       && i + 1 < t1->nattr
 		       && j + 1 < t2->nattr
 		       && t1->attr[i + 1].attr
