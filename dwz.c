@@ -4380,6 +4380,8 @@ find_dups_fi (dw_die_ref parent)
 static const char *
 get_name (dw_die_ref die)
 {
+  if (die->die_collapsed_child)
+    return NULL;
   const char *name = get_AT_string (die, DW_AT_name);
   if (name)
     return name;
