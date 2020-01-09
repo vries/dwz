@@ -192,6 +192,7 @@ static int dump_dies_p;
 static int dump_dups_p;
 static int verify_dups_p;
 static int verify_edge_freelist;
+static int stats_p;
 #else
 #define tracing 0
 #define ignore_size 0
@@ -199,6 +200,7 @@ static int verify_edge_freelist;
 #define dump_dies_p 0
 #define dump_dups_p 0
 #define verify_dups_p 0
+#define stats_p 0
 #endif
 static int unoptimized_multifile;
 static int save_temps = 0;
@@ -219,6 +221,105 @@ enum odr_mode odr_mode = ODR_LINK;
 int odr_parsed = 0;
 int no_odr_parsed = 0;
 int odr_mode_parsed = 0;
+
+/* Struct to gather statistics.  */
+struct stats
+{
+  const char *file;
+  unsigned int root_cnt;
+  unsigned int namespace_cnt;
+  unsigned int lower_toplevel;
+  unsigned int die_count;
+  unsigned int lower_toplevel_with_checksum;
+  unsigned int dup_cnt;
+  unsigned int dup_chain_cnt;
+  unsigned int dup_chain_max_length;
+  unsigned int part_cnt;
+  unsigned int pu_ph1_cnt;
+  unsigned int pu_ph2_cnt;
+  unsigned int pu_toplevel_die_cnt;
+};
+struct stats *stats;
+
+/* Initialize stats struct.  */
+static void
+init_stats (const char *file)
+{
+  if (stats == NULL)
+    stats = (struct stats *)malloc (sizeof (*stats));
+  memset (stats, 0, sizeof (*stats));
+  stats->file = file;
+}
+
+/* Print stats struct, parsing statistics.  */
+static void
+print_parse_stats (void)
+{
+  if (stats == NULL || stats->file == NULL)
+    return;
+
+  fprintf (stderr, "Parse statistics for %s\n", stats->file);
+
+  fprintf (stderr, "root_count                     : %10u\n",
+	   stats->root_cnt);
+  fprintf (stderr, "namespace_count                : %10u\n",
+	   stats->namespace_cnt);
+  unsigned int upper_toplevel = stats->root_cnt + stats->namespace_cnt;
+  fprintf (stderr, "upper_toplevel                 : %10u\n",
+	   upper_toplevel);
+  unsigned lower_toplevel
+    = stats->lower_toplevel + stats->lower_toplevel_with_checksum;
+  fprintf (stderr, "lower_toplevel                 : %10u\n",
+	   lower_toplevel);
+  unsigned int toplevel = upper_toplevel + lower_toplevel;
+  fprintf (stderr, "toplevel                       : %10u\n",
+	   toplevel);
+  unsigned non_toplevel = stats->die_count - toplevel;
+  fprintf (stderr, "non_toplevel                   : %10u\n",
+	   non_toplevel);
+  fprintf (stderr, "die_count                      : %10u\n",
+	   stats->die_count);
+}
+
+/* Print stats struct, dups statistics.  */
+static void
+print_dups_stats (void)
+{
+  if (stats == NULL || stats->file == NULL)
+    return;
+
+  fprintf (stderr, "Duplicate statistics for %s\n", stats->file);
+
+  fprintf (stderr, "lower_toplevel with checksum   : %10u\n",
+	   stats->lower_toplevel_with_checksum);
+  fprintf (stderr, "dup_cnt                        : %10u\n",
+	   stats->dup_cnt);
+  fprintf (stderr, "dup_chain_cnt                  : %10u\n",
+	   stats->dup_chain_cnt);
+  fprintf (stderr, "average dup_chain length       : %10.2f\n",
+	   (double)stats->dup_cnt / (double)stats->dup_chain_cnt);
+  fprintf (stderr, "max dup_chain length           : %10u\n",
+	   stats->dup_chain_max_length);
+}
+
+static void
+print_part_stats (void)
+{
+  if (stats == NULL || stats->file == NULL)
+    return;
+
+  fprintf (stderr, "Partition statistics for %s\n", stats->file);
+
+  fprintf (stderr, "part_cnt                       : %10u\n", stats->part_cnt);
+  fprintf (stderr, "pu_ph1_cnt                     : %10u\n",
+	   stats->pu_ph1_cnt);
+  fprintf (stderr, "pu_ph2_cnt                     : %10u\n",
+	   stats->pu_ph2_cnt);
+  fprintf (stderr, "pu_cnt                         : %10u\n",
+	   stats->pu_ph1_cnt + stats->pu_ph2_cnt);
+  fprintf (stderr, "pu_toplevel_die_cnt            : %10u\n",
+	   stats->pu_toplevel_die_cnt);
+}
 
 typedef struct
 {
@@ -4331,10 +4432,15 @@ find_dups (dw_die_ref parent)
   void **slot;
   dw_die_ref child;
 
+  if (stats_p && parent->die_root)
+    stats->root_cnt++;
+
   for (child = parent->die_child; child; child = child->die_sib)
     {
       if (child->die_ck_state == CK_KNOWN)
 	{
+	  if (stats_p)
+	    stats->lower_toplevel_with_checksum++;
 	  if (child->die_dup != NULL)
 	    continue;
 	  slot = htab_find_slot_with_hash (dup_htab, child,
@@ -4346,8 +4452,14 @@ find_dups (dw_die_ref parent)
 	    *slot = child;
 	}
       else if (child->die_named_namespace)
-	if (find_dups (child))
-	  return 1;
+	{
+	  if (stats_p)
+	    stats->namespace_cnt++;
+	  if (find_dups (child))
+	    return 1;
+	}
+      else if (stats_p)
+	stats->lower_toplevel++;
     }
   return 0;
 }
@@ -6155,6 +6267,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
     }
   if (tracing)
     htab_report (off_htab, "off_htab post-parsing");
+  if (stats_p)
+    stats->die_count = ndies;
   if (die_count)
     *die_count = ndies;
   htab_delete (dup_htab);
@@ -6228,6 +6342,16 @@ partition_found_dups (dw_die_ref die, struct obstack *vec)
   obstack_ptr_grow (vec, die);
   if (unlikely (verify_dups_p))
     verify_dups (die, true);
+
+  if (stats_p)
+    {
+      uint64_t length = 0;
+      for (; die; die = die->die_nextdup)
+	length++;
+      stats->dup_cnt += length;
+      stats->dup_chain_max_length = MAX (stats->dup_chain_max_length, length);
+      stats->dup_chain_cnt++;
+    }
 }
 
 /* Sort duplication chain for HEAD, assuming the chain was formed by
@@ -6588,6 +6712,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	    break;
 	  cnt = this_cnt;
 	}
+      if (stats_p && !second_phase)
+	stats->part_cnt++;
       if (cnt == 0)
 	{
 	  dw_cu_ref last_cu1 = NULL;
@@ -6685,6 +6811,13 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  dw_cu_ref refcu = die_cu (arr[i]);
 	  dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
 	  memset (partial_cu, '\0', sizeof (*partial_cu));
+	  if (stats_p)
+	    {
+	      if (!second_phase)
+		stats->pu_ph1_cnt++;
+	      else
+		stats->pu_ph2_cnt++;
+	    }
 	  partial_cu->cu_kind = CU_PU;
 	  partial_cu->cu_offset = *last_partial_cu == NULL
 				  ? 0 : (*last_partial_cu)->cu_offset + 1;
@@ -6715,6 +6848,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      if (odr && odr_mode != ODR_BASIC)
 		arr[k] = reorder_dups (arr[k]);
 	      child = copy_die_tree (die, arr[k]);
+	      if (stats_p)
+		stats->pu_toplevel_die_cnt++;
 	      for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
 		ref->die_dup = child;
 	      if (unlikely (verify_dups_p))
@@ -6882,6 +7017,9 @@ partition_dups (void)
   if (odr)
     odr_phase = 3;
 
+  if (stats_p)
+    print_dups_stats ();
+
   if (vec_size != 0)
     {
       arr = (dw_die_ref *) obstack_finish (&ob2);
@@ -6928,6 +7066,10 @@ partition_dups (void)
       first_cu = first_partial_cu;
     }
   obstack_free (&ob2, to_free);
+
+  if (stats_p)
+    print_part_stats ();
+
   return 0;
 }
 
@@ -11770,7 +11912,11 @@ read_dwarf (DSO *dso, bool quieter, unsigned int *die_count)
       return 1;
     }
 
-  return read_debug_info (dso, DEBUG_INFO, die_count);
+  int res;
+  res = read_debug_info (dso, DEBUG_INFO, die_count);
+  if (res == 0 && stats_p)
+    print_parse_stats ();
+  return res;
 }
 
 /* Open an ELF file NAME.  */
@@ -14172,6 +14318,7 @@ static struct option dwz_options[] =
 			 no_argument,	    &partition_dups_opt, 1 },
   { "devel-die-count-method",
 			 required_argument, &die_count_method_parsed, 1 },
+  { "devel-stats",	 no_argument,	    &stats_p, 1 },
 #endif
   { "odr",		 no_argument,	    &odr_parsed, 1 },
   { "no-odr",		 no_argument,	    &no_odr_parsed, 1 },
@@ -14402,6 +14549,7 @@ usage (void)
   msg
     = ("  --devel-trace\n"
        "  --devel-progress\n"
+       "  --devel-stats\n"
        "  --devel-ignore-size\n"
        "  --devel-ignore-locus\n"
        "  --devel-save-temps\n"
@@ -14581,6 +14729,8 @@ main (int argc, char *argv[])
 	  error (0, 0, "Too few files for multifile optimization");
 	  multifile = NULL;
 	}
+      if (stats_p)
+	init_stats (file);
       res.die_count = 0;
       ret = (low_mem_die_limit == 0
 	     ? 2
@@ -14626,6 +14776,8 @@ main (int argc, char *argv[])
 	{
 	  int thisret;
 	  file = argv[i];
+	  if (stats_p)
+	    init_stats (file);
 	  thisret = (low_mem_die_limit == 0
 		     ? 2
 		     : dwz (file, NULL, &resa[i - optind],
@@ -14673,6 +14825,8 @@ main (int argc, char *argv[])
 		{
 		  dw_cu_ref cu;
 		  file = argv[i];
+		  if (stats_p)
+		    init_stats (file);
 		  multifile_mode = MULTIFILE_MODE_FI;
 		  /* Don't process again files that couldn't
 		     be processed successfully.  */
@@ -14700,6 +14854,9 @@ main (int argc, char *argv[])
 	}
       free (resa);
     }
+
+  if (stats_p)
+    free (stats);
 
   return ret;
 }
