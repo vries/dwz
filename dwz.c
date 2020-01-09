@@ -4410,6 +4410,7 @@ verify_dups (dw_die_ref die, bool ordered)
   dw_die_ref d, prev;
 
   assert (die->die_dup == NULL);
+  assert (die->die_collapsed_children == 0);
 
   for (prev = die, d = prev->die_nextdup;
        d;
