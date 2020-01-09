@@ -190,6 +190,7 @@ static int ignore_size;
 static int ignore_locus;
 static int dump_dies_p;
 static int dump_dups_p;
+static int dump_pus_p;
 static int verify_dups_p;
 static int verify_edge_freelist;
 static int stats_p;
@@ -199,6 +200,7 @@ static int stats_p;
 #define ignore_locus 0
 #define dump_dies_p 0
 #define dump_dups_p 0
+#define dump_pus_p 0
 #define verify_dups_p 0
 #define stats_p 0
 #endif
@@ -6819,6 +6821,9 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      else
 		stats->pu_ph2_cnt++;
 	    }
+	  if (dump_pus_p)
+	    fprintf (stderr, "Partial unit (%s):\n",
+		     second_phase ? "phase two" : "phase one");
 	  partial_cu->cu_kind = CU_PU;
 	  partial_cu->cu_offset = *last_partial_cu == NULL
 				  ? 0 : (*last_partial_cu)->cu_offset + 1;
@@ -6848,6 +6853,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		continue;
 	      if (odr && odr_mode != ODR_BASIC)
 		arr[k] = reorder_dups (arr[k]);
+	      if (dump_pus_p)
+		dump_die (arr[k]);
 	      child = copy_die_tree (die, arr[k]);
 	      if (stats_p)
 		stats->pu_toplevel_die_cnt++;
@@ -14310,6 +14317,7 @@ static struct option dwz_options[] =
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
   { "devel-dump-dups",  no_argument,	    &dump_dups_p, 1 },
+  { "devel-dump-pus",  no_argument,	    &dump_pus_p, 1 },
   { "devel-unoptimized-multifile",
 			 no_argument,	    &unoptimized_multifile, 1 },
   { "devel-verify-edges",no_argument,	    &verify_edges_p, 1 },
@@ -14555,6 +14563,7 @@ usage (void)
        "  --devel-ignore-locus\n"
        "  --devel-save-temps\n"
        "  --devel-dump-dies\n"
+       "  --devel-dump-dups\n"
        "  --devel-unoptimized-multifile\n"
        "  --devel-verify-dups\n"
        "  --devel-verify-edges\n"
