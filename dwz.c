@@ -12572,6 +12572,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		    {
 		      dw_cu_ref refdcu = die_cu (refd);
 		      value = refd->u.p2.die_new_offset;
+		      assert (IMPLIES (cu->cu_kind == CU_PU,
+				       die_cu (refd)->cu_kind == CU_PU));
 		      assert (value && refdcu->cu_kind != CU_ALT);
 		      if (t->attr[j].form == DW_FORM_ref_addr)
 			{
