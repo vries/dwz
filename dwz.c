@@ -10922,7 +10922,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		  refdt = refd;
 		  while (refdt->die_toplevel == 0)
 		    refdt = refdt->die_parent;
-		  if (refdt->die_dup && refdt->die_op_type_referenced)
+		  if (refdt->die_dup && refdt->die_op_type_referenced
+		      && cu->cu_kind != CU_PU)
 		    {
 		      if (cu == die_cu (refdt->die_dup))
 			refd = die_find_dup (refdt, refdt->die_dup, refd);
