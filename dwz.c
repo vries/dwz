@@ -7079,54 +7079,28 @@ partition_dups (void)
     partition_find_dups (&ob2, cu->cu_die);
   vec_size = obstack_object_size (&ob2) / sizeof (void *);
 
-  size_t gap_start, gap_end;
   if (odr)
     {
-      size_t j;
-      gap_end = vec_size;
       arr = (dw_die_ref *) obstack_base (&ob2);
       if (progress_p)
 	{
 	  report_progress ();
 	  fprintf (stderr, "partition_dups split_dups\n");
 	}
-      for (i = 0; i < vec_size;)
+      for (i = 0; i < vec_size; i++)
 	{
 	  dw_die_ref die = arr[i];
 	  if (die_odr_state (NULL, die) == ODR_NONE)
-	    {
-	      i++;
-	      continue;
-	    }
+	    continue;
 	  die = split_dups (die, &ob2);
-	  if (die && unlikely (verify_dups_p))
+	  assert (die != NULL);
+	  if (unlikely (verify_dups_p))
 	    verify_dups (die, true);
 	  arr = (dw_die_ref *) obstack_base (&ob2);
-	  if (die == NULL)
-	    {
-	      arr[i] = arr[vec_size - 1];
-	      arr[vec_size - 1] = NULL;
-	      vec_size--;
-	    }
-	  else
-	    {
-	      arr[i] = die;
-	      ++i;
-	    }
+	  arr[i] = die;
 	}
-      gap_start = vec_size;
 
       vec_size = obstack_object_size (&ob2) / sizeof (void *);
-
-      if (gap_start != gap_end)
-	{
-	  for (i = gap_start, j = gap_end; j < vec_size; ++i, ++j)
-	    {
-	      arr[i] = arr[j];
-	      arr[j] = NULL;
-	    }
-	  vec_size = i;
-	}
 
       reset_die_ref_seen ();
       for (i = 0; i < vec_size; i++)
