@@ -6434,6 +6434,103 @@ merge_dups (dw_die_ref d, dw_die_ref d2)
   return head;
 }
 
+static void
+mark_singletons (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
+		 struct obstack *vec)
+{
+  struct abbrev_tag *t;
+  unsigned int i;
+  unsigned char *ptr;
+  dw_die_ref child;
+  bool found;
+
+  t = die->die_abbrev;
+
+  found = false;
+  for (i = 0; i < t->nattr; ++i)
+    {
+      struct abbrev_attr *attr = &t->attr[i];
+      if (attr->attr == DW_AT_sibling)
+	continue;
+      switch (attr->form)
+	{
+	case DW_FORM_ref_udata:
+	case DW_FORM_ref1:
+	case DW_FORM_ref2:
+	case DW_FORM_ref4:
+	case DW_FORM_ref8:
+	case DW_FORM_indirect:
+	  found = true;
+	  break;
+	}
+    }
+  if (!found)
+    goto handle_children;
+
+  if (unlikely (cu->cu_kind == CU_TYPES))
+    ptr = debug_sections[DEBUG_TYPES].data;
+  else
+    ptr = debug_sections[DEBUG_INFO].data;
+  ptr += die->die_offset;
+  read_uleb128 (ptr);
+  for (i = 0; i < t->nattr; ++i)
+    {
+      struct abbrev_attr *attr = &t->attr[i];
+      uint32_t form = attr->form;
+      uint64_t value;
+      dw_die_ref ref, reft;
+
+      while (form == DW_FORM_indirect)
+	form = read_uleb128 (ptr);
+
+      switch (form)
+	{
+	case DW_FORM_ref_udata:
+	case DW_FORM_ref1:
+	case DW_FORM_ref2:
+	case DW_FORM_ref4:
+	case DW_FORM_ref8:
+	  switch (form)
+	    {
+	    case DW_FORM_ref_udata: value = read_uleb128 (ptr); break;
+	    case DW_FORM_ref1: value = read_8 (ptr); break;
+	    case DW_FORM_ref2: value = read_16 (ptr); break;
+	    case DW_FORM_ref4: value = read_32 (ptr); break;
+	    case DW_FORM_ref8: value = read_64 (ptr); break;
+	    default: abort ();
+	    }
+	  if (t->attr[i].attr == DW_AT_sibling)
+	    break;
+	  ref = off_htab_lookup (cu, cu->cu_offset + value);
+	  if (!ref->die_collapsed_child
+	      && ref->u.p1.die_enter >= top_die->u.p1.die_enter
+	      && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
+	    break;
+	  reft = ref;
+	  while (!reft->die_root
+		 && reft->die_parent->die_tag != DW_TAG_compile_unit
+		 && reft->die_parent->die_tag != DW_TAG_partial_unit
+		 && !reft->die_parent->die_named_namespace)
+	    reft = reft->die_parent;
+	  if (reft->die_dup != NULL || reft->die_nextdup != NULL)
+	    break;
+	  if (reft->die_ref_seen)
+	    break;
+	  reft->die_ref_seen = 1;
+	  partition_found_dups (reft, vec);
+	  mark_singletons (die_cu (reft), reft, reft, vec);
+	  break;
+	default:
+	  ptr = skip_attr_no_dw_form_indirect (cu->cu_version, form, ptr);
+	  break;
+	}
+    }
+
+ handle_children:
+  for (child = die->die_child; child; child = child->die_sib)
+    mark_singletons (cu, top_die, child, vec);
+}
+
 /* Split maximal duplicate chain DIE into smaller chains that contain
    structurally equal defs, and combine the decls with one of those.
    Return the first chain, and call partition_found_dups for the others.  */
@@ -6533,8 +6630,7 @@ split_dups (dw_die_ref die, struct obstack *vec)
   for (i = 0; i < count; i++)
     {
       d = arr[i];
-      if (d->die_dup != NULL
-	  || d->die_nextdup == NULL)
+      if (d->die_dup != NULL)
 	continue;
       if (res == NULL)
 	res = d;
@@ -6946,6 +7042,15 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
   return ret;
 }
 
+static inline void FORCE_INLINE
+reset_die_ref_seen (void)
+{
+  dw_die_ref die;
+  dw_cu_ref cu;
+  FOREACH_CU_NORMAL_LOW_TOPLEVEL_DIE (cu, die)
+    die->die_ref_seen = 0;
+}
+
 /* Decide what DIEs matching in multiple CUs might be worthwhile
    to be moved into partial units, construct those partial units.  */
 static int
@@ -7022,6 +7127,25 @@ partition_dups (void)
 	    }
 	  vec_size = i;
 	}
+
+      reset_die_ref_seen ();
+      for (i = 0; i < vec_size; i++)
+	{
+	  dw_die_ref die = arr[i];
+	  if (die->die_dup == NULL
+	      && die->die_nextdup == NULL)
+	    die->die_ref_seen = 1;
+	}
+      for (i = 0; i < vec_size; i++)
+	{
+	  dw_die_ref die = arr[i];
+	  if (die->die_dup == NULL
+	      && die->die_nextdup == NULL)
+	    mark_singletons (die_cu (die), die, die, &ob2);
+	  arr = (dw_die_ref *) obstack_base (&ob2);
+	}
+
+      vec_size = obstack_object_size (&ob2) / sizeof (void *);
     }
 
   if (odr)
@@ -7035,7 +7159,11 @@ partition_dups (void)
       arr = (dw_die_ref *) obstack_finish (&ob2);
       if (odr)
 	for (i = 0; i < vec_size; ++i)
-	  assert (arr[i] != NULL);
+	  {
+	    assert (arr[i] != NULL);
+	    if (unlikely (verify_dups_p))
+	      verify_dups (arr[i], true);
+	  }
       if (dump_dups_p)
 	{
 	  for (i = 0; i < vec_size; ++i)
