@@ -4413,6 +4413,7 @@ verify_dups (dw_die_ref die, bool ordered)
 
   assert (die->die_dup == NULL);
   assert (die->die_collapsed_children == 0);
+  assert (die->die_remove == 0);
 
   for (prev = die, d = prev->die_nextdup;
        d;
@@ -6517,13 +6518,14 @@ split_dups (dw_die_ref die, struct obstack *vec)
       merge_dups (def, decls);
     }
 
-  /* If some DIEs are no longer part of a duplicate chain, don't remove
-     them.  */
   for (i = 0; i < count; i++)
     {
       d = arr[i];
-      if (d->die_dup == NULL
-	  && d->die_nextdup == NULL)
+      if (d->die_dup == NULL)
+	/* If DIE is now either:
+	   - no longer part of a duplicate chain, or
+	   - head of a duplicate chain,
+	   don't remove it.  */
 	d->die_remove = 0;
     }
 
