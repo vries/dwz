@@ -7051,6 +7051,38 @@ reset_die_ref_seen (void)
     die->die_ref_seen = 0;
 }
 
+/* If the duplicate chain DIE consists of a singleton ODR_DEF die merged with
+   the ODR_DECL chain, return the singleton ODR_DEF die.  Otherwise, return
+   NULL.  */
+static inline dw_die_ref FORCE_INLINE
+merged_singleton (dw_die_ref die)
+{
+  dw_die_ref res = NULL;
+  dw_die_ref d;
+  size_t decl_cnt = 0;
+
+  for (d = die; d; d = d->die_nextdup)
+    switch (die_odr_state (NULL, d))
+      {
+      case ODR_DEF:
+	if (res)
+	  return NULL;
+	else
+	  res = d;
+	break;
+      case ODR_DECL:
+	decl_cnt++;
+	break;
+      default:
+	return NULL;
+      }
+
+  if (decl_cnt == 0)
+    return NULL;
+
+  return res;
+}
+
 /* Decide what DIEs matching in multiple CUs might be worthwhile
    to be moved into partial units, construct those partial units.  */
 static int
@@ -7116,6 +7148,13 @@ partition_dups (void)
 	  if (die->die_dup == NULL
 	      && die->die_nextdup == NULL)
 	    mark_singletons (die_cu (die), die, die, &ob2);
+	  else if (odr_mode != ODR_BASIC
+		   && die_odr_state (NULL, die) != ODR_NONE)
+	    {
+	      dw_die_ref s = merged_singleton (die);
+	      if (s)
+		mark_singletons (die_cu (s), s, s, &ob2);
+	    }
 	  arr = (dw_die_ref *) obstack_base (&ob2);
 	}
 
