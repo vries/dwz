@@ -6957,8 +6957,6 @@ partition_dups_2 (dw_die_ref *arr, size_t i, size_t j, size_t cnt,
 	  dw_die_ref child;
 	  if (second_phase && !arr[k]->die_ref_seen)
 	    continue;
-	  if (odr && odr_mode != ODR_BASIC)
-	    arr[k] = reorder_dups (arr[k]);
 	  if (dump_pus_p)
 	    dump_die (arr[k]);
 	  child = copy_die_tree (die, arr[k]);
@@ -7307,6 +7305,9 @@ partition_dups (void)
       if (stats_p)
 	stats->part_cnt += nr_partitions;
       initialize_partitions (arr, vec_size, nr_partitions, start, end, cnt);
+      if (odr && odr_mode != ODR_BASIC)
+	for (i = 0; i < vec_size; ++i)
+	  arr[i] = reorder_dups (arr[i]);
       if (partition_dups_1 (arr, nr_partitions, start, end, cnt,
 			    &first_partial_cu, &last_partial_cu, false))
 	{
