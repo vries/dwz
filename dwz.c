@@ -6821,9 +6821,239 @@ cnt_ref_cus (dw_die_ref ref)
 
   return cnt;
 }
-/* Helper function of partition_dups_1.  Decide what DIEs matching in
-   multiple CUs might be worthwhile to be moved into partial units,
-   construct those partial units.  */
+
+/* Helper function of partition_dups_1.  Decide what DIEs in partition
+   ARR[I, J - 1] with CNT unique referrer CUs might be worthwhile to be moved
+   into partial units, and construct those partial units.  Return true in
+   phase one if no partial unit was constructed.  */
+static bool
+partition_dups_2 (dw_die_ref *arr, size_t i, size_t j, size_t cnt,
+		  dw_cu_ref *first_partial_cu,
+		  dw_cu_ref *last_partial_cu,
+		  bool second_phase)
+{
+  bool ret = false;
+  dw_die_ref ref;
+  size_t size = 0, k, orig_size, new_size, namespaces = 0;
+  unsigned int force = 0;
+
+  for (k = i; k < j; k++)
+    {
+      if (second_phase && arr[k]->die_ref_seen)
+	force++;
+      size += calc_sizes (arr[k]);
+      for (ref = arr[k]->die_parent;
+	   ref->die_named_namespace && ref->die_dup == NULL;
+	   ref = ref->die_parent)
+	{
+	  ref->die_dup = arr[k];
+	  namespaces++;
+	}
+    }
+  /* If during second_phase there are some DIEs we want to force
+     into a partial unit because they are referenced from something
+     already forced into a partial unit, but also some DIEs with
+     the same set of referrers, try to see if we can put also those
+     into the partial unit.  They can be put there only if they
+     don't refer to DIEs that won't be put into partial units.  */
+  if (unlikely (partition_dups_opt)
+      && second_phase && force && force < j - i)
+    {
+      /* First optimistically assume all such DIEs can be put there,
+	 thus mark all such DIEs as going to be included, so that
+	 even if one of those DIEs references another one from those
+	 DIEs it can be included.  */
+      for (k = i; k < j; k++)
+	{
+	  assert (arr[k]->die_ref_seen < 2);
+	  if (arr[k]->die_ref_seen == 0)
+	    arr[k]->die_ref_seen = 2;
+	}
+      for (k = i; k < j; k++)
+	if (arr[k]->die_ref_seen == 2
+	    && !mark_refs (die_cu (arr[k]), arr[k], arr[k],
+			   (MARK_REFS_FOLLOW_DUPS | MARK_REFS_RETURN_VAL)))
+	  break;
+      /* If that is not possible and some DIEs couldn't be included,
+	 fallback to assume other DIEs won't be included.  */
+      if (k < j)
+	{
+	  for (k = i; k < j; k++)
+	    if (arr[k]->die_ref_seen == 2)
+	      arr[k]->die_ref_seen = 0;
+	  for (k = i; k < j; k++)
+	    if (arr[k]->die_ref_seen == 0)
+	      {
+		arr[k]->die_ref_seen = 2;
+		if (!mark_refs (die_cu (arr[k]), arr[k], arr[k],
+				(MARK_REFS_FOLLOW_DUPS
+				 | MARK_REFS_RETURN_VAL)))
+		  arr[k]->die_ref_seen = 0;
+	      }
+	}
+    }
+  if (namespaces)
+    {
+      for (k = i; k < j; k++)
+	for (ref = arr[k]->die_parent; ref->die_named_namespace;
+	     ref = ref->die_parent)
+	  ref->die_dup = NULL;
+    }
+  orig_size = size * cnt;
+  /* Estimated size of CU header and DW_TAG_partial_unit
+     with DW_AT_stmt_list and DW_AT_comp_dir attributes
+     21 (also child end byte), plus in each CU referencing it
+     DW_TAG_imported_unit with DW_AT_import attribute
+     (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).
+     For DW_TAG_namespace or DW_TAG_module needed as
+     parents of the DIEs conservatively assume 10 bytes
+     for the abbrev index, DW_AT_name attribute and
+     DW_AT_sibling attribute and child end.  */
+  new_size = size + 21
+    + (die_cu (arr[i])->cu_version == 2
+       ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
+  if (!second_phase)
+    force = ignore_size || orig_size > new_size;
+  if (force)
+    {
+      dw_die_ref die, *diep;
+      dw_cu_ref refcu = die_cu (arr[i]);
+      dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
+      memset (partial_cu, '\0', sizeof (*partial_cu));
+      if (stats_p)
+	{
+	  if (!second_phase)
+	    stats->pu_ph1_cnt++;
+	  else
+	    stats->pu_ph2_cnt++;
+	}
+      if (dump_pus_p)
+	fprintf (stderr, "Partial unit (%s):\n",
+		 second_phase ? "phase two" : "phase one");
+      partial_cu->cu_kind = CU_PU;
+      partial_cu->cu_offset = *last_partial_cu == NULL
+	? 0 : (*last_partial_cu)->cu_offset + 1;
+      partial_cu->cu_version = refcu->cu_version;
+      if (*first_partial_cu == NULL)
+	*first_partial_cu = *last_partial_cu = partial_cu;
+      else
+	{
+	  (*last_partial_cu)->cu_next = partial_cu;
+	  *last_partial_cu = partial_cu;
+	}
+      die = pool_alloc (dw_die, sizeof (struct dw_die));
+      memset (die, '\0', sizeof (*die));
+      die->die_toplevel = 1;
+      partial_cu->cu_die = die;
+      die->die_tag = DW_TAG_partial_unit;
+      die->die_offset = -1U;
+      die->die_root = 1;
+      die->die_parent = (dw_die_ref) partial_cu;
+      die->die_nextdup = refcu->cu_die;
+      die->die_size = 9;
+      diep = &die->die_child;
+      for (k = i; k < j; k++)
+	{
+	  dw_die_ref child;
+	  if (second_phase && !arr[k]->die_ref_seen)
+	    continue;
+	  if (odr && odr_mode != ODR_BASIC)
+	    arr[k] = reorder_dups (arr[k]);
+	  if (dump_pus_p)
+	    dump_die (arr[k]);
+	  child = copy_die_tree (die, arr[k]);
+	  if (stats_p)
+	    stats->pu_toplevel_die_cnt++;
+	  for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
+	    ref->die_dup = child;
+	  if (unlikely (verify_dups_p))
+	    verify_dups (child, odr_mode == ODR_BASIC);
+	  if (namespaces)
+	    {
+	      for (ref = arr[k]->die_parent;
+		   ref->die_named_namespace && ref->die_dup == NULL;
+		   ref = ref->die_parent)
+		{
+		  dw_die_ref namespc
+		    = pool_alloc (dw_die, sizeof (struct dw_die));
+		  memset (namespc, '\0', sizeof (struct dw_die));
+		  namespc->die_toplevel = 1;
+		  namespc->die_tag = ref->die_tag;
+		  namespc->die_offset = -1U;
+		  namespc->die_nextdup = ref;
+		  namespc->die_child = child;
+		  namespc->die_parent = die;
+		  namespc->die_size = 9;
+		  namespc->die_named_namespace = 1;
+		  child->die_parent = namespc;
+		  ref->die_dup = namespc;
+		  child = namespc;
+		}
+	      if (ref->die_dup != NULL)
+		{
+		  dw_die_ref *diep2;
+		  for (diep2 = &ref->die_dup->die_child->die_sib;
+		       *diep2; diep2 = &(*diep2)->die_sib)
+		    ;
+		  *diep2 = child;
+		  child->die_parent = ref->die_dup;
+		  continue;
+		}
+	    }
+	  *diep = child;
+	  diep = &child->die_sib;
+	}
+      if (namespaces)
+	{
+	  for (k = i; k < j; k++)
+	    {
+	      if (second_phase && !arr[k]->die_ref_seen)
+		continue;
+	      for (ref = arr[k]->die_parent;
+		   ref->die_named_namespace; ref = ref->die_parent)
+		ref->die_dup = NULL;
+	    }
+	}
+    }
+  else if (!second_phase)
+    ret = true;
+  if (second_phase)
+    {
+      dw_die_ref next;
+      for (k = i; k < j; k++)
+	{
+	  if (arr[k]->die_dup != NULL)
+	    continue;
+	  for (ref = arr[k]; ref; ref = next)
+	    {
+	      dw_cu_ref refcu = die_cu (ref);
+	      next = ref->die_nextdup;
+	      ref->die_dup = NULL;
+	      ref->die_nextdup = NULL;
+	      ref->die_remove = 0;
+	      /* If there are dups within a single CU
+		 (arguably a bug in the DWARF producer),
+		 keep them linked together, but don't link
+		 DIEs across different CUs.  */
+	      while (next && refcu == die_cu (next))
+		{
+		  dw_die_ref cur = next;
+		  next = cur->die_nextdup;
+		  cur->die_dup = ref;
+		  cur->die_nextdup = ref->die_nextdup;
+		  ref->die_nextdup = cur;
+		}
+	    }
+	}
+    }
+
+  return ret;
+}
+
+/* Helper function of partition_dups.  Partition array ARR of size VEC_SIZE
+   into slices with equal set of referrer CUs, and for each partition attempt
+   to move the DIEs into a PU.  In phase one, return true if phase two should
+   be run.  */
 static bool
 partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		  dw_cu_ref *first_partial_cu,
@@ -6834,14 +7064,18 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
   bool ret = false;
   for (i = 0; i < vec_size; i = j)
     {
-      dw_die_ref ref;
-      size_t cnt = 0, size = 0, k, orig_size, new_size, namespaces = 0;
-      unsigned int force = 0;
+      /* Start partition at i.  */
+      size_t cnt = 0;
+
+      /* If partition has been moved to partial unit, skip (in phase two).  */
       if (arr[i]->die_dup != NULL)
 	{
 	  j = i + 1;
 	  continue;
 	}
+
+      /* Increase size of partition, as long as set of unique referrer CUs is
+	 identical.  */
       for (j = i + 1; j < vec_size; j++)
 	{
 	  size_t this_cnt;
@@ -6849,220 +7083,22 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	    break;
 	  cnt = this_cnt;
 	}
+
       if (stats_p && !second_phase)
 	stats->part_cnt++;
+
+      /* If the partition has size 1, cnt is stil 0, so count the number of
+	 unique referrer CUs.  */
       if (cnt == 0)
 	cnt = cnt_ref_cus (arr[i]);
-      for (k = i; k < j; k++)
-	{
-	  if (second_phase && arr[k]->die_ref_seen)
-	    force++;
-	  size += calc_sizes (arr[k]);
-	  for (ref = arr[k]->die_parent;
-	       ref->die_named_namespace && ref->die_dup == NULL;
-	       ref = ref->die_parent)
-	    {
-	      ref->die_dup = arr[k];
-	      namespaces++;
-	    }
-	}
-      /* If during second_phase there are some DIEs we want to force
-	 into a partial unit because they are referenced from something
-	 already forced into a partial unit, but also some DIEs with
-	 the same set of referrers, try to see if we can put also those
-	 into the partial unit.  They can be put there only if they
-	 don't refer to DIEs that won't be put into partial units.  */
-      if (unlikely (partition_dups_opt)
-	  && second_phase && force && force < j - i)
-	{
-	  /* First optimistically assume all such DIEs can be put there,
-	     thus mark all such DIEs as going to be included, so that
-	     even if one of those DIEs references another one from those
-	     DIEs it can be included.  */
-	  for (k = i; k < j; k++)
-	    {
-	      assert (arr[k]->die_ref_seen < 2);
-	      if (arr[k]->die_ref_seen == 0)
-		arr[k]->die_ref_seen = 2;
-	    }
-	  for (k = i; k < j; k++)
-	    if (arr[k]->die_ref_seen == 2
-		&& !mark_refs (die_cu (arr[k]), arr[k], arr[k],
-			       (MARK_REFS_FOLLOW_DUPS | MARK_REFS_RETURN_VAL)))
-	      break;
-	  /* If that is not possible and some DIEs couldn't be included,
-	     fallback to assume other DIEs won't be included.  */
-	  if (k < j)
-	    {
-	      for (k = i; k < j; k++)
-		if (arr[k]->die_ref_seen == 2)
-		  arr[k]->die_ref_seen = 0;
-	      for (k = i; k < j; k++)
-		if (arr[k]->die_ref_seen == 0)
-		  {
-		    arr[k]->die_ref_seen = 2;
-		    if (!mark_refs (die_cu (arr[k]), arr[k], arr[k],
-				    (MARK_REFS_FOLLOW_DUPS
-				     | MARK_REFS_RETURN_VAL)))
-		      arr[k]->die_ref_seen = 0;
-		  }
-	    }
-	}
-      if (namespaces)
-	{
-	  for (k = i; k < j; k++)
-	    for (ref = arr[k]->die_parent; ref->die_named_namespace;
-		 ref = ref->die_parent)
-	      ref->die_dup = NULL;
-	}
-      orig_size = size * cnt;
-      /* Estimated size of CU header and DW_TAG_partial_unit
-	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
-	 21 (also child end byte), plus in each CU referencing it
-	 DW_TAG_imported_unit with DW_AT_import attribute
-	 (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).
-	 For DW_TAG_namespace or DW_TAG_module needed as
-	 parents of the DIEs conservatively assume 10 bytes
-	 for the abbrev index, DW_AT_name attribute and
-	 DW_AT_sibling attribute and child end.  */
-      new_size = size + 21
-		 + (die_cu (arr[i])->cu_version == 2
-		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
-      if (!second_phase)
-	force = ignore_size || orig_size > new_size;
-      if (force)
-	{
-	  dw_die_ref die, *diep;
-	  dw_cu_ref refcu = die_cu (arr[i]);
-	  dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
-	  memset (partial_cu, '\0', sizeof (*partial_cu));
-	  if (stats_p)
-	    {
-	      if (!second_phase)
-		stats->pu_ph1_cnt++;
-	      else
-		stats->pu_ph2_cnt++;
-	    }
-	  if (dump_pus_p)
-	    fprintf (stderr, "Partial unit (%s):\n",
-		     second_phase ? "phase two" : "phase one");
-	  partial_cu->cu_kind = CU_PU;
-	  partial_cu->cu_offset = *last_partial_cu == NULL
-				  ? 0 : (*last_partial_cu)->cu_offset + 1;
-	  partial_cu->cu_version = refcu->cu_version;
-	  if (*first_partial_cu == NULL)
-	    *first_partial_cu = *last_partial_cu = partial_cu;
-	  else
-	    {
-	      (*last_partial_cu)->cu_next = partial_cu;
-	      *last_partial_cu = partial_cu;
-	    }
-	  die = pool_alloc (dw_die, sizeof (struct dw_die));
-	  memset (die, '\0', sizeof (*die));
-	  die->die_toplevel = 1;
-	  partial_cu->cu_die = die;
-	  die->die_tag = DW_TAG_partial_unit;
-	  die->die_offset = -1U;
-	  die->die_root = 1;
-	  die->die_parent = (dw_die_ref) partial_cu;
-	  die->die_nextdup = refcu->cu_die;
-	  die->die_size = 9;
-	  diep = &die->die_child;
-	  for (k = i; k < j; k++)
-	    {
-	      dw_die_ref child;
-	      if (second_phase && !arr[k]->die_ref_seen)
-		continue;
-	      if (odr && odr_mode != ODR_BASIC)
-		arr[k] = reorder_dups (arr[k]);
-	      if (dump_pus_p)
-		dump_die (arr[k]);
-	      child = copy_die_tree (die, arr[k]);
-	      if (stats_p)
-		stats->pu_toplevel_die_cnt++;
-	      for (ref = arr[k]->die_nextdup; ref; ref = ref->die_nextdup)
-		ref->die_dup = child;
-	      if (unlikely (verify_dups_p))
-		verify_dups (child, odr_mode == ODR_BASIC);
-	      if (namespaces)
-		{
-		  for (ref = arr[k]->die_parent;
-		       ref->die_named_namespace && ref->die_dup == NULL;
-		       ref = ref->die_parent)
-		    {
-		      dw_die_ref namespc
-			= pool_alloc (dw_die, sizeof (struct dw_die));
-		      memset (namespc, '\0', sizeof (struct dw_die));
-		      namespc->die_toplevel = 1;
-		      namespc->die_tag = ref->die_tag;
-		      namespc->die_offset = -1U;
-		      namespc->die_nextdup = ref;
-		      namespc->die_child = child;
-		      namespc->die_parent = die;
-		      namespc->die_size = 9;
-		      namespc->die_named_namespace = 1;
-		      child->die_parent = namespc;
-		      ref->die_dup = namespc;
-		      child = namespc;
-		    }
-		  if (ref->die_dup != NULL)
-		    {
-		      dw_die_ref *diep2;
-		      for (diep2 = &ref->die_dup->die_child->die_sib;
-			   *diep2; diep2 = &(*diep2)->die_sib)
-			;
-		      *diep2 = child;
-		      child->die_parent = ref->die_dup;
-		      continue;
-		    }
-		}
-	      *diep = child;
-	      diep = &child->die_sib;
-	    }
-	  if (namespaces)
-	    {
-	      for (k = i; k < j; k++)
-		{
-		  if (second_phase && !arr[k]->die_ref_seen)
-		    continue;
-		  for (ref = arr[k]->die_parent;
-		       ref->die_named_namespace; ref = ref->die_parent)
-		    ref->die_dup = NULL;
-		}
-	    }
-	}
-      else if (!second_phase)
+
+      /* Handle one partition.  */
+      if (partition_dups_2 (arr, i, j, cnt, first_partial_cu, last_partial_cu,
+			    second_phase))
+	/* Phase two required.  */
 	ret = true;
-      if (second_phase)
-	{
-	  dw_die_ref next;
-	  for (k = i; k < j; k++)
-	    {
-	      if (arr[k]->die_dup != NULL)
-		continue;
-	      for (ref = arr[k]; ref; ref = next)
-		{
-		  dw_cu_ref refcu = die_cu (ref);
-		  next = ref->die_nextdup;
-		  ref->die_dup = NULL;
-		  ref->die_nextdup = NULL;
-		  ref->die_remove = 0;
-		  /* If there are dups within a single CU
-		     (arguably a bug in the DWARF producer),
-		     keep them linked together, but don't link
-		     DIEs across different CUs.  */
-		  while (next && refcu == die_cu (next))
-		    {
-		      dw_die_ref cur = next;
-		      next = cur->die_nextdup;
-		      cur->die_dup = ref;
-		      cur->die_nextdup = ref->die_nextdup;
-		      ref->die_nextdup = cur;
-		    }
-		}
-	    }
-	}
     }
+
   return ret;
 }
 
