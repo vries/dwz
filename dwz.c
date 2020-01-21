@@ -7055,13 +7055,64 @@ partition_dups_2 (dw_die_ref *arr, size_t i, size_t j, size_t cnt,
    to move the DIEs into a PU.  In phase one, return true if phase two should
    be run.  */
 static bool
-partition_dups_1 (dw_die_ref *arr, size_t vec_size,
+partition_dups_1 (dw_die_ref *arr, size_t nr_partitions,
+		  size_t *part_start, size_t *part_end, size_t *part_cnt,
 		  dw_cu_ref *first_partial_cu,
 		  dw_cu_ref *last_partial_cu,
 		  bool second_phase)
 {
-  size_t i, j;
+  size_t part_idx = 0;
   bool ret = false;
+  for (part_idx = 0; part_idx < nr_partitions; part_idx++)
+    {
+      size_t i = part_start[part_idx];
+      size_t j = part_end[part_idx];
+      size_t cnt = part_cnt[part_idx];
+
+      /* If partition has been moved to partial unit, skip (in phase two).  */
+      if (arr[i]->die_dup != NULL)
+	continue;
+
+      /* Handle one partition.  */
+      if (partition_dups_2 (arr, i, j, cnt, first_partial_cu, last_partial_cu,
+			    second_phase))
+	/* Phase two required.  */
+	ret = true;
+    }
+
+  return ret;
+}
+
+static size_t
+count_partitions (dw_die_ref *arr, size_t vec_size)
+{
+  size_t i, j;
+  size_t nr_partitions = 0;
+  for (i = 0; i < vec_size; i = j)
+    {
+      /* Start partition at i.  */
+
+      /* Increase size of partition, as long as set of unique referrer CUs is
+	 identical.  */
+      for (j = i + 1; j < vec_size; j++)
+	{
+	  size_t this_cnt;
+	  if (!same_ref_cus_p (arr[i], arr[j], &this_cnt))
+	    break;
+	}
+
+      nr_partitions++;
+    }
+
+  return nr_partitions;
+}
+
+static void
+initialize_partitions (dw_die_ref *arr, size_t vec_size, size_t nr_partitions,
+		       size_t *part_start, size_t *part_end, size_t *part_cnt)
+{
+  size_t i, j;
+  size_t part_idx = 0;
   for (i = 0; i < vec_size; i = j)
     {
       /* Start partition at i.  */
@@ -7084,22 +7135,17 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  cnt = this_cnt;
 	}
 
-      if (stats_p && !second_phase)
-	stats->part_cnt++;
-
       /* If the partition has size 1, cnt is stil 0, so count the number of
 	 unique referrer CUs.  */
       if (cnt == 0)
 	cnt = cnt_ref_cus (arr[i]);
 
-      /* Handle one partition.  */
-      if (partition_dups_2 (arr, i, j, cnt, first_partial_cu, last_partial_cu,
-			    second_phase))
-	/* Phase two required.  */
-	ret = true;
+      part_start[part_idx] = i;
+      part_end[part_idx] = j;
+      part_cnt[part_idx] = cnt;
+      part_idx++;
     }
-
-  return ret;
+  assert (part_idx == nr_partitions);
 }
 
 static inline void FORCE_INLINE
@@ -7256,8 +7302,13 @@ partition_dups (void)
 	  report_progress ();
 	  fprintf (stderr, "partition_dups after qsort\n");
 	}
-      if (partition_dups_1 (arr, vec_size, &first_partial_cu,
-			    &last_partial_cu, false))
+      size_t nr_partitions = count_partitions (arr, vec_size);
+      size_t start[nr_partitions], end[nr_partitions], cnt[nr_partitions];
+      if (stats_p)
+	stats->part_cnt += nr_partitions;
+      initialize_partitions (arr, vec_size, nr_partitions, start, end, cnt);
+      if (partition_dups_1 (arr, nr_partitions, start, end, cnt,
+			    &first_partial_cu, &last_partial_cu, false))
 	{
 	  for (i = 0; i < vec_size; i++)
 	    arr[i]->die_ref_seen = arr[i]->die_dup != NULL;
@@ -7265,8 +7316,8 @@ partition_dups (void)
 	    if (arr[i]->die_dup != NULL)
 	      mark_refs (die_cu (arr[i]), arr[i], arr[i],
 			 MARK_REFS_FOLLOW_DUPS);
-	  partition_dups_1 (arr, vec_size, &first_partial_cu,
-			    &last_partial_cu, true);
+	  partition_dups_1 (arr, nr_partitions, start, end, cnt,
+			    &first_partial_cu, &last_partial_cu, true);
 	  for (i = 0; i < vec_size; i++)
 	    arr[i]->die_ref_seen = 0;
 	}
