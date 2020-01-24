@@ -1902,7 +1902,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  else
 	    ptr += 4;
 	  ref = off_htab_lookup (NULL, addr);
-	  if (ref == NULL)
+	  if (ref == NULL || (unlikely (low_mem) && ref->die_tag == 0))
 	    {
 	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
 		     dso->filename, get_DW_OP_str (op));
