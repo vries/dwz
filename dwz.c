@@ -14706,6 +14706,7 @@ usage (void)
        "  --devel-save-temps\n"
        "  --devel-dump-dies\n"
        "  --devel-dump-dups\n"
+       "  --devel-dump-pus\n"
        "  --devel-unoptimized-multifile\n"
        "  --devel-verify-dups\n"
        "  --devel-verify-edges\n"
