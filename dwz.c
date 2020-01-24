@@ -220,8 +220,6 @@ static enum die_count_methods die_count_method = estimate;
 int odr = 1;
 enum odr_mode { ODR_BASIC, ODR_LINK };
 enum odr_mode odr_mode = ODR_LINK;
-int odr_parsed = 0;
-int no_odr_parsed = 0;
 int odr_mode_parsed = 0;
 
 /* Struct to gather statistics.  */
@@ -14473,8 +14471,8 @@ static struct option dwz_options[] =
 			 required_argument, &die_count_method_parsed, 1 },
   { "devel-stats",	 no_argument,	    &stats_p, 1 },
 #endif
-  { "odr",		 no_argument,	    &odr_parsed, 1 },
-  { "no-odr",		 no_argument,	    &no_odr_parsed, 1 },
+  { "odr",		 no_argument,	    &odr, 1 },
+  { "no-odr",		 no_argument,	    &odr, 0 },
   { "odr-mode",		 required_argument, &odr_mode_parsed, 1 },
   { NULL,		 no_argument,	    0, 0 }
 };
@@ -14780,18 +14778,6 @@ main (int argc, char *argv[])
 		}
 	      error (1, 0, "invalid argument --devel-die-count-method %s",
 		     optarg);
-	    }
-	  if (odr_parsed)
-	    {
-	      assert (!no_odr_parsed);
-	      odr = 1;
-	      odr_parsed = 0;
-	    }
-	  if (no_odr_parsed)
-	    {
-	      assert (!odr_parsed);
-	      odr = 0;
-	      no_odr_parsed = 0;
 	    }
 	  if (odr_mode_parsed)
 	    {
