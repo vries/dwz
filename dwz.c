@@ -210,6 +210,7 @@ static int verify_edges_p = 0;
 static int dump_edges_p = 0;
 static int partition_dups_opt;
 static int progress_p;
+static int import_opt_p = 1;
 enum die_count_methods
 {
   none,
@@ -7859,6 +7860,8 @@ create_import_tree (void)
     dump_edges ("phase 1", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
     verify_edges (ipus, npus, ncus, 1);
+  if (!import_opt_p)
+    goto opt_done;
   if (unlikely (progress_p))
     {
       report_progress ();
@@ -8371,10 +8374,12 @@ create_import_tree (void)
 	  max_seen = 0;
 	}
     }
+  free (seen);
   if (unlikely (dump_edges_p))
     dump_edges ("phase 3", ipus, npus, ncus);
   if (unlikely (verify_edges_p))
     verify_edges (ipus, npus, ncus, 3);
+ opt_done:
   if (unlikely (progress_p))
     {
       report_progress ();
@@ -8457,7 +8462,6 @@ create_import_tree (void)
     for (cu = alt_first_cu; cu; cu = cu->cu_next)
       cu->u1.cu_icu = NULL;
   obstack_free (&ob2, to_free);
-  free (seen);
   return 0;
 }
 
@@ -14451,6 +14455,10 @@ static struct option dwz_options[] =
   { "multifile-name",	 required_argument, 0, 'M' },
   { "relative",		 no_argument,	    0, 'r' },
   { "version",		 no_argument,	    0, 'v' },
+  { "import-optimization",
+			 no_argument,	    &import_opt_p, 1 },
+  { "no-import-optimization",
+			 no_argument,	    &import_opt_p, 0 },
 #if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-progress",	 no_argument,	    &progress_p, 1 },
@@ -14502,7 +14510,12 @@ static struct option_help dwz_common_options_help[] =
   { NULL, "no-odr", NULL, "Enabled",
     "Enable/disable one definition rule optimization." },
   { NULL, "odr-mode", "<basic|link>", "link",
-    "Set aggressiveness level of one definition rule optimization." }
+    "Set aggressiveness level of one definition rule optimization." },
+  { NULL, "import-optimization", NULL, NULL,
+    NULL },
+  { NULL, "no-import-optimization", NULL, "Enabled",
+    "Enable/disable optimization that reduces the number of"
+    " DW_TAG_imported_unit DIEs." }
 };
 
 /* Describe single-file command line options.  */

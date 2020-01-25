@@ -105,6 +105,14 @@ In normal operation, the link setting should be used.  The basic setting is
 provided only as fallback in case of problems with the link setting.  Set to
 link by default.
 .TP
+.B \-\-import-optimize / \-\-no-import-optimize
+Enable/disable optimization that reduces the number of
+\fIDW_TAG_imported_unit\fR DIEs generated to import the partial units created
+by \fBdwz\fR.  Disabling the optimization can be used to work around problems
+in the optimization, or to make it easier to observe which CU imports which
+PU.
+Enabled by default.
+.TP
 .B \-? \-\-help
 Print short help and exit.
 .TP
