@@ -6893,16 +6893,25 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       orig_size = size * cnt;
       /* Estimated size of CU header and DW_TAG_partial_unit
 	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
-	 21 (also child end byte), plus in each CU referencing it
-	 DW_TAG_imported_unit with DW_AT_import attribute
-	 (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).
-	 For DW_TAG_namespace or DW_TAG_module needed as
+	 21 (also child end byte).  */
+      size_t pu_size = 21;
+      /* DW_TAG_imported_unit with DW_AT_import attribute
+	 (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).  */
+      size_t import_size
+	= (die_cu (arr[i])->cu_version == 2 ? 1 + ptr_size : 5);
+      /* For DW_TAG_namespace or DW_TAG_module needed as
 	 parents of the DIEs conservatively assume 10 bytes
 	 for the abbrev index, DW_AT_name attribute and
 	 DW_AT_sibling attribute and child end.  */
-      new_size = size + 21
-		 + (die_cu (arr[i])->cu_version == 2
-		    ? 1 + ptr_size : 5) * cnt + 10 * namespaces;
+      size_t namespace_size = 10;
+      new_size = (/* Size of DIEs.  */
+		  size
+		  /* Size of PU.  */
+		  + pu_size
+		  /* Size of imports.  */
+		  + import_size * cnt
+		  /* Size of namespace DIEs.  */
+		  + namespace_size * namespaces);
       if (!second_phase)
 	force = ignore_size || orig_size > new_size;
       if (force)
