@@ -211,6 +211,7 @@ static int dump_edges_p = 0;
 static int partition_dups_opt;
 static int progress_p;
 static int import_opt_p = 1;
+static int force_p = 0;
 enum die_count_methods
 {
   none,
@@ -13679,7 +13680,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	  cleanup ();
 	  ret = 1;
 	}
-      else if (!ignore_size
+      else if (!(ignore_size || force_p)
 	       && ((debug_sections[DEBUG_INFO].new_size
 		    + debug_sections[DEBUG_ABBREV].new_size
 		    + debug_sections[DEBUG_STR].new_size
@@ -14495,6 +14496,7 @@ static struct option dwz_options[] =
   { "devel-progress",	 no_argument,	    &progress_p, 1 },
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
+  { "devel-force",	 no_argument,	    &force_p, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
   { "devel-dump-dups",  no_argument,	    &dump_dups_p, 1 },
@@ -14747,6 +14749,7 @@ usage (void)
        "  --devel-stats\n"
        "  --devel-ignore-size\n"
        "  --devel-ignore-locus\n"
+       "  --devel-force\n"
        "  --devel-save-temps\n"
        "  --devel-dump-dies\n"
        "  --devel-dump-dups\n"
