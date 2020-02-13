@@ -223,6 +223,7 @@ int odr = 1;
 enum odr_mode { ODR_BASIC, ODR_LINK };
 enum odr_mode odr_mode = ODR_LINK;
 int odr_mode_parsed = 0;
+bool odr_active_p = false;
 
 /* Struct to gather statistics.  */
 struct stats
@@ -2543,6 +2544,8 @@ set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
   if (!name_p)
     /* Ignore anonymous types.  */
     return;
+
+  odr_active_p = true;
 
   if (decl_p && !other_p && die->die_child == NULL)
     {
@@ -5610,6 +5613,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   struct dw_cu cu_buf;
   struct dw_die die_buf;
 
+  odr_active_p = false;
   if (odr)
     odr_phase = 1;
 
@@ -6958,7 +6962,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      dw_die_ref child;
 	      if (second_phase && !arr[k]->die_ref_seen)
 		continue;
-	      if (odr && odr_mode != ODR_BASIC)
+	      if (odr_active_p && odr_mode != ODR_BASIC)
 		arr[k] = reorder_dups (arr[k]);
 	      if (dump_pus_p)
 		dump_die (arr[k]);
@@ -7113,14 +7117,14 @@ partition_dups (void)
 
   to_free = obstack_alloc (&ob2, 1);
 
-  if (odr)
+  if (odr_active_p)
     odr_phase = 2;
 
   for (cu = first_cu; cu; cu = cu->cu_next)
     partition_find_dups (&ob2, cu->cu_die);
   vec_size = obstack_object_size (&ob2) / sizeof (void *);
 
-  if (odr)
+  if (odr_active_p)
     {
       arr = (dw_die_ref *) obstack_base (&ob2);
       if (progress_p)
@@ -7170,7 +7174,7 @@ partition_dups (void)
       vec_size = obstack_object_size (&ob2) / sizeof (void *);
     }
 
-  if (odr)
+  if (odr_active_p)
     odr_phase = 3;
 
   if (stats_p)
@@ -7179,7 +7183,7 @@ partition_dups (void)
   if (vec_size != 0)
     {
       arr = (dw_die_ref *) obstack_finish (&ob2);
-      if (odr)
+      if (odr_active_p)
 	for (i = 0; i < vec_size; ++i)
 	  {
 	    assert (arr[i] != NULL);
