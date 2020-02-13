@@ -14487,9 +14487,9 @@ static struct option dwz_options[] =
   { "multifile-name",	 required_argument, 0, 'M' },
   { "relative",		 no_argument,	    0, 'r' },
   { "version",		 no_argument,	    0, 'v' },
-  { "import-optimization",
+  { "import-optimize",
 			 no_argument,	    &import_opt_p, 1 },
-  { "no-import-optimization",
+  { "no-import-optimize",
 			 no_argument,	    &import_opt_p, 0 },
 #if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
@@ -14544,9 +14544,9 @@ static struct option_help dwz_common_options_help[] =
     "Enable/disable one definition rule optimization." },
   { NULL, "odr-mode", "<basic|link>", "link",
     "Set aggressiveness level of one definition rule optimization." },
-  { NULL, "import-optimization", NULL, NULL,
+  { NULL, "import-optimize", NULL, NULL,
     NULL },
-  { NULL, "no-import-optimization", NULL, "Enabled",
+  { NULL, "no-import-optimize", NULL, "Enabled",
     "Enable/disable optimization that reduces the number of"
     " DW_TAG_imported_unit DIEs." }
 };
