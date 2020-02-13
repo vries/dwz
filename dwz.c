@@ -10774,6 +10774,65 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
     }
 }
 
+/* Write DW_TAG_unit_* DIE (with ORIGIN being the corresponding original DIE) to
+   memory starting at PTR, return pointer after the DIE.  */
+static unsigned char *
+write_unit_die (unsigned char *ptr, dw_die_ref die, dw_die_ref origin)
+{
+  struct abbrev_tag *t = die->u.p2.die_new_abbrev;
+
+  if (t->nattr == 0)
+    return ptr;
+
+  if (t->attr[0].attr == DW_AT_stmt_list)
+    {
+      enum dwarf_form form;
+      unsigned char *p = get_AT (origin, DW_AT_stmt_list, &form);
+      assert (p && (form == DW_FORM_sec_offset
+		    || form == DW_FORM_data4));
+      if (wr_multifile)
+	write_32 (ptr, multi_line_off);
+      else if (op_multifile)
+	write_32 (ptr, 0);
+      else
+	{
+	  memcpy (ptr, p, 4);
+	  ptr += 4;
+	}
+    }
+  if (t->attr[t->nattr - 1].attr == DW_AT_comp_dir)
+    {
+      enum dwarf_form form;
+      unsigned char *p = get_AT (origin, DW_AT_comp_dir, &form);
+      assert (p);
+      assert (form == t->attr[t->nattr - 1].form
+	      || (form == DW_FORM_strp
+		  && t->attr[t->nattr - 1].form
+		  == DW_FORM_GNU_strp_alt));
+      if (form == DW_FORM_strp)
+	{
+	  if (unlikely (wr_multifile || op_multifile || fi_multifile))
+	    {
+	      unsigned int strp = lookup_strp_offset (read_32 (p));
+	      write_32 (ptr, strp);
+	    }
+	  else
+	    {
+	      memcpy (ptr, p, 4);
+	      ptr += 4;
+	    }
+	}
+      else
+	{
+	  size_t len = strlen ((char *) p) + 1;
+	  memcpy (ptr, p, len);
+	  ptr += len;
+	}
+    }
+
+  return ptr;
+}
+
 /* Write DIE (with REF being the corresponding original DIE) to
    memory starting at PTR, return pointer after the DIE.  */
 static unsigned char *
@@ -11164,53 +11223,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
       {
       case DW_TAG_partial_unit:
       case DW_TAG_compile_unit:
-	if (t->nattr == 0)
-	  break;
-	if (t->attr[0].attr == DW_AT_stmt_list)
-	  {
-	    enum dwarf_form form;
-	    unsigned char *p = get_AT (origin, DW_AT_stmt_list, &form);
-	    assert (p && (form == DW_FORM_sec_offset
-			  || form == DW_FORM_data4));
-	    if (wr_multifile)
-	      write_32 (ptr, multi_line_off);
-	    else if (op_multifile)
-	      write_32 (ptr, 0);
-	    else
-	      {
-		memcpy (ptr, p, 4);
-		ptr += 4;
-	      }
-	  }
-	if (t->attr[t->nattr - 1].attr == DW_AT_comp_dir)
-	  {
-	    enum dwarf_form form;
-	    unsigned char *p = get_AT (origin, DW_AT_comp_dir, &form);
-	    assert (p);
-	    assert (form == t->attr[t->nattr - 1].form
-		    || (form == DW_FORM_strp
-			&& t->attr[t->nattr - 1].form
-			   == DW_FORM_GNU_strp_alt));
-	    if (form == DW_FORM_strp)
-	      {
-		if (unlikely (wr_multifile || op_multifile || fi_multifile))
-		  {
-		    unsigned int strp = lookup_strp_offset (read_32 (p));
-		    write_32 (ptr, strp);
-		  }
-		else
-		  {
-		    memcpy (ptr, p, 4);
-		    ptr += 4;
-		  }
-	      }
-	    else
-	      {
-		size_t len = strlen ((char *) p) + 1;
-		memcpy (ptr, p, len);
-		ptr += len;
-	      }
-	  }
+	ptr = write_unit_die (ptr, die, origin);
 	break;
       case DW_TAG_namespace:
       case DW_TAG_module:
