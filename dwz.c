@@ -6899,7 +6899,34 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       /* Estimated size of CU header and DW_TAG_partial_unit
 	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
 	 21 (also child end byte).  */
-      size_t pu_size = 21;
+      size_t pu_size
+	= (/* CU Header: unit length (initial length).
+	      32-bit DWARF: 4 bytes, 64-bit DWARF: 12 bytes.  */
+	   4
+	   /* CU Header: version (uhalf).
+	      2 bytes.  */
+	   + 2
+	   /* CU Header: debug_abbrev_offset (section offset).
+	      32-bit DWARF: 4 bytes, 64-bit DWARF: 8 bytes.  */
+	   + 4
+	   /* CU Header: address_size (ubyte).
+	      1 byte.  */
+	   + 1
+	   /* CU Root DIE: abbreviation code (unsigned LEB128).
+	      1 or more bytes.  Optimistically assume 1.  */
+	   + 1
+	   /* CU Root DIE: DW_AT_stmt_list (lineptr).
+	      32-bit DWARF: 4 bytes, 64-bit DWARF: 8 bytes.  */
+	   + 4
+	   /* CU Root DIE: DW_AT_comp_dir (string).
+	      DW_FORM_strp: 32-bit DWARF: 4 bytes, 64-bit DWARF: 8 bytes.
+	      DW_FORM_string: 1 or more bytes.
+	      Assume 4 bytes.  */
+	   + 4
+	   /* CU root DIE children terminator: abbreviation code 0
+					       (unsigned LEB128).
+	      1 byte.  */
+	   + 1);
       /* DW_TAG_imported_unit with DW_AT_import attribute
 	 (5 or 9 bytes (the latter for DWARF2 and ptr_size 8)).  */
       size_t import_size
