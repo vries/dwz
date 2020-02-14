@@ -212,6 +212,13 @@ static int partition_dups_opt;
 static int progress_p;
 static int import_opt_p = 1;
 static int force_p = 0;
+enum deduplication_mode
+{
+  dm_none,
+  dm_intra_cu,
+  dm_inter_cu
+};
+static enum deduplication_mode deduplication_mode = dm_inter_cu;
 enum die_count_methods
 {
   none,
@@ -6945,7 +6952,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		  /* Size of namespace DIEs.  */
 		  + namespace_size * namespaces);
       if (!second_phase)
-	force = ignore_size || orig_size > new_size;
+	force = ((deduplication_mode == dm_inter_cu)
+		 && (ignore_size || orig_size > new_size));
       if (force)
 	{
 	  dw_die_ref die, *diep;
@@ -7067,7 +7075,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		     (arguably a bug in the DWARF producer),
 		     keep them linked together, but don't link
 		     DIEs across different CUs.  */
-		  while (next && refcu == die_cu (next))
+		  while (deduplication_mode != dm_none
+			 && next && refcu == die_cu (next))
 		    {
 		      dw_die_ref cur = next;
 		      next = cur->die_nextdup;
@@ -14504,6 +14513,7 @@ make_temp_file (const char *name)
 }
 
 int die_count_method_parsed;
+int deduplication_mode_parsed;
 
 /* Options for getopt_long.  */
 static struct option dwz_options[] =
@@ -14542,6 +14552,8 @@ static struct option dwz_options[] =
   { "devel-die-count-method",
 			 required_argument, &die_count_method_parsed, 1 },
   { "devel-stats",	 no_argument,	    &stats_p, 1 },
+  { "devel-deduplication-mode",
+			 required_argument, &deduplication_mode_parsed, 1 },
 #endif
   { "odr",		 no_argument,	    &odr, 1 },
   { "no-odr",		 no_argument,	    &odr, 0 },
@@ -14790,7 +14802,8 @@ usage (void)
        "  --devel-verify-edges\n"
        "  --devel-dump-edges\n"
        "  --devel-partition-dups-opt\n"
-       "  --devel-die-count-method\n");
+       "  --devel-die-count-method\n"
+       "  --devel-deduplication-mode={none,intra-cu,inter-cu}\n");
   fprintf (stderr, "%s", msg);
 #endif
 
@@ -14856,6 +14869,27 @@ main (int argc, char *argv[])
 		  break;
 		}
 	      error (1, 0, "invalid argument --devel-die-count-method %s",
+		     optarg);
+	    }
+	  if (deduplication_mode_parsed)
+	    {
+	      deduplication_mode_parsed = 0;
+	      if (strcmp (optarg, "none") == 0)
+		{
+		  deduplication_mode = dm_none;
+		  break;
+		}
+	      if (strcmp (optarg, "intra-cu") == 0)
+		{
+		  deduplication_mode = dm_intra_cu;
+		  break;
+		}
+	      if (strcmp (optarg, "inter-cu") == 0)
+		{
+		  deduplication_mode = dm_inter_cu;
+		  break;
+		}
+	      error (1, 0, "invalid argument --devel-deduplication-mode %s",
 		     optarg);
 	    }
 	  if (odr_mode_parsed)
