@@ -219,7 +219,7 @@ enum deduplication_mode
   dm_inter_cu
 };
 static enum deduplication_mode deduplication_mode = dm_inter_cu;
-static int uni_lang_p = 0;
+static int uni_lang_p = 1;
 enum die_count_methods
 {
   none,
