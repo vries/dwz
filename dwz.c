@@ -5991,7 +5991,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		case DW_FORM_flag_present:
 		  break;
 		case DW_FORM_data1:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if ((die->die_tag == DW_TAG_compile_unit
+		       || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    cu->lang = *ptr;
 		  /* FALLTHRU */
@@ -6000,7 +6001,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  ++ptr;
 		  break;
 		case DW_FORM_data2:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if ((die->die_tag == DW_TAG_compile_unit
+		       || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    cu->lang = do_read_16 (ptr);
 		  /* FALLTHRU */
