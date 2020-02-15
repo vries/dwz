@@ -220,6 +220,7 @@ enum deduplication_mode
 };
 static enum deduplication_mode deduplication_mode = dm_inter_cu;
 static int uni_lang_p = 1;
+static int gen_cu_p = 0;
 enum die_count_methods
 {
   none,
@@ -6785,6 +6786,33 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   return new_die;
 }
 
+/* If all DIEs in the duplication chain DIE are in CUs with the same
+   language, return that language.  Otherwise, return 0.  */
+static enum dwarf_source_language
+partition_lang (dw_die_ref die)
+{
+  enum dwarf_source_language lang;
+  dw_die_ref d;
+
+  if (die == NULL)
+    return 0;
+
+  lang = die_cu (die)->lang;
+  switch (lang)
+    {
+    case DW_LANG_C_plus_plus:
+      break;
+    default:
+      return 0;
+    }
+
+  for (d = die->die_nextdup; d; d = d->die_nextdup)
+    if (die_cu (d)->lang != lang)
+      return 0;
+
+  return lang;
+}
+
 /* Return how many bytes we need to encode VAL.  */
 static unsigned int
 nr_bytes_for (uint64_t val)
@@ -6864,6 +6892,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      cnt++;
 	    }
 	}
+      enum dwarf_source_language part_lang
+	= gen_cu_p ? partition_lang (arr[i]) : 0;
       for (k = i; k < j; k++)
 	{
 	  if (second_phase && arr[k]->die_ref_seen)
@@ -6929,7 +6959,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
       orig_size = size * cnt;
       /* Estimated size of CU header and DW_TAG_partial_unit
 	 with DW_AT_stmt_list and DW_AT_comp_dir attributes
-	 21 (also child end byte).  */
+	 21 (also child end byte).  With DW_AT_language c++, 22.  */
       size_t pu_size
 	= (/* CU Header: unit length (initial length).
 	      32-bit DWARF: 4 bytes, 64-bit DWARF: 12 bytes.  */
@@ -6956,7 +6986,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	   + 4
           /* CU Root DIE: DW_AT_language (constant).
              1 or 2 bytes.  */
-	   + (uni_lang_p ? nr_bytes_for (die_cu (arr[i])->lang) : 0)
+	   + ((uni_lang_p || part_lang) ? nr_bytes_for (die_cu (arr[i])->lang) : 0)
 	   /* CU root DIE children terminator: abbreviation code 0
 					       (unsigned LEB128).
 	      1 byte.  */
@@ -6975,7 +7005,7 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		  /* Size of PU.  */
 		  + pu_size
 		  /* Size of imports.  */
-		  + import_size * cnt
+		  + (part_lang != 0 ? 0 : import_size * cnt)
 		  /* Size of namespace DIEs.  */
 		  + namespace_size * namespaces);
       if (!second_phase)
@@ -7037,6 +7067,11 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		ref->die_dup = child;
 	      if (unlikely (verify_dups_p))
 		verify_dups (child, odr_mode == ODR_BASIC);
+	      if (part_lang != 0)
+		{
+		  die->die_tag = DW_TAG_compile_unit;
+		  partial_cu->lang = part_lang;
+		}
 	      if (namespaces)
 		{
 		  for (ref = arr[k]->die_parent;
@@ -7804,6 +7839,9 @@ create_import_tree (void)
       dw_die_ref die, rdie;
       dw_cu_ref prev_cu;
 
+      if (pu->cu_die->die_tag == DW_TAG_compile_unit)
+	continue;
+
       last_partial_cu = pu;
       for (rdie = pu->cu_die->die_child;
 	   rdie->die_named_namespace; rdie = rdie->die_child)
@@ -7858,7 +7896,7 @@ create_import_tree (void)
 	}
       ipu->incoming_tail = &ipu->incoming[ipu->incoming_count - 1];
     }
-  if (unlikely (fi_multifile) && npus == 0)
+  if (npus == 0)
     {
       obstack_free (&ob2, to_free);
       return 0;
@@ -8521,6 +8559,7 @@ create_import_tree (void)
 	  die->die_offset = -1U;
 	  die->die_nextdup = e->icu->cu->cu_die;
 	  die->die_parent = cu->cu_die;
+	  assert (e->icu->cu->cu_die->die_tag == DW_TAG_partial_unit);
 	  die->die_size = (cu->cu_version == 2 ? 1 + ptr_size : 5);
 	  /* Put the new DW_TAG_imported_unit DIE after all typed DWARF
 	     stack referenced base types and after all previously added
@@ -9782,7 +9821,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	    die->die_size += 4;
 	    t->nattr++;
 	  }
-	if (uni_lang_p)
+	if (uni_lang_p || cu->cu_die->die_tag == DW_TAG_compile_unit)
 	  {
 	    unsigned int lang_size = nr_bytes_for (cu->lang);
 	    die->die_size += lang_size;
@@ -14591,6 +14630,10 @@ static struct option dwz_options[] =
 			 no_argument,	    &uni_lang_p, 1 },
   { "no-uni-lang",
 			 no_argument,	    &uni_lang_p, 0 },
+  { "cu",
+			 no_argument,	    &gen_cu_p, 1 },
+  { "no-cu",
+			 no_argument,	    &gen_cu_p, 0 },
 #if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-progress",	 no_argument,	    &progress_p, 1 },
