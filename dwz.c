@@ -397,6 +397,11 @@ typedef struct
     }					\
   while (0)
 
+/* Macro to skip a uleb128 or sleb128 number and update ptr to the end of the
+   number.  */
+#define skip_leb128(ptr) \
+  do {} while ((*ptr++) & 0x80)
+
 /* Macro to parse a uint16_t value represented using form, return it and
    update ptr to the end of the value at the same time.  If the value doesn't
    fit, assign true to error_p.  */
@@ -1218,7 +1223,7 @@ read_abbrev (DSO *dso, unsigned char *ptr)
       unsigned int nattr = 0;
       unsigned char *p = ptr;
 
-      read_uleb128 (p);
+      skip_leb128 (p);
       p++;
       while (read_uleb128 (p) != 0)
 	{
@@ -1256,7 +1261,7 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	  t->attr[t->nattr].attr = attr;
 	  t->attr[t->nattr++].form = form;
 	}
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
       if (t->nattr > max_nattr)
 	max_nattr = t->nattr;
       slot = htab_find_slot_with_hash (h, t, t->hash, INSERT);
@@ -1370,8 +1375,8 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
 	  return 1;
 	}
 
-      read_uleb128 (ptr);
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
+      skip_leb128 (ptr);
       file_cnt++;
     }
 
@@ -1677,7 +1682,7 @@ skip_attr_no_dw_form_indirect (unsigned int cu_version, uint32_t form,
     case DW_FORM_sdata:
     case DW_FORM_ref_udata:
     case DW_FORM_udata:
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
       break;
     case DW_FORM_string:
       ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
@@ -1739,7 +1744,7 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
   else
     ptr = debug_sections[DEBUG_INFO].data;
   ptr += die->die_offset;
-  read_uleb128 (ptr);
+  skip_leb128 (ptr);
   for (i = 0; i < t->nattr; ++i)
     {
       uint32_t form = t->attr[i].form;
@@ -1989,7 +1994,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  if (need_adjust)
 	    *need_adjust = true;
 	  if (op == DW_OP_GNU_implicit_pointer)
-	    read_uleb128 (ptr);
+	    skip_leb128 (ptr);
 	  break;
 	case DW_OP_const8u:
 	case DW_OP_const8s:
@@ -2002,12 +2007,12 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	case DW_OP_consts:
 	case DW_OP_breg0 ... DW_OP_breg31:
 	case DW_OP_fbreg:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_bregx:
 	case DW_OP_bit_piece:
-	  read_uleb128 (ptr);
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_implicit_value:
 	  {
@@ -2036,7 +2041,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	    break;
 	  goto typed_dwarf;
 	case DW_OP_GNU_regval_type:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  addr = read_uleb128 (ptr);
 	  goto typed_dwarf;
 	case DW_OP_GNU_const_type:
@@ -2208,7 +2213,7 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	     low-mem phase1.  */
 	  add_dummy_die (cu, addr);
 	  if (op == DW_OP_GNU_implicit_pointer)
-	    read_uleb128 (ptr);
+	    skip_leb128 (ptr);
 	  break;
 	case DW_OP_const8u:
 	case DW_OP_const8s:
@@ -2221,12 +2226,12 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	case DW_OP_consts:
 	case DW_OP_breg0 ... DW_OP_breg31:
 	case DW_OP_fbreg:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_bregx:
 	case DW_OP_bit_piece:
-	  read_uleb128 (ptr);
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_implicit_value:
 	  {
@@ -2250,19 +2255,19 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	  break;
 	case DW_OP_GNU_convert:
 	case DW_OP_GNU_reinterpret:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_GNU_regval_type:
-	  read_uleb128 (ptr);
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_GNU_const_type:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  ptr += *ptr + 1;
 	  break;
 	case DW_OP_GNU_deref_type:
 	  ++ptr;
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	default:
 	  error (0, 0, "%s: Unknown DWARF %s",
@@ -2581,7 +2586,7 @@ set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
     }
 
   ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
-  read_uleb128 (ptr);
+  skip_leb128 (ptr);
 
   t = die->die_abbrev;
 
@@ -2680,7 +2685,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
     die->die_ck_state = CK_BAD;
   t = die->die_abbrev;
   ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
-  read_uleb128 (ptr);
+  skip_leb128 (ptr);
   s = die->die_tag;
   die->u.p1.die_hash = iterative_hash_object (s, die->u.p1.die_hash);
   only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
@@ -2916,7 +2921,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  break;
 	case DW_FORM_sdata:
 	case DW_FORM_udata:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_FORM_ref_udata:
 	case DW_FORM_ref1:
@@ -3279,7 +3284,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   if (i == -1U)
     {
       ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
       for (i = 0; i < t->nattr; ++i)
 	{
 	  uint32_t form = t->attr[i].form;
@@ -3328,7 +3333,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	      break;
 	    case DW_FORM_sdata:
 	    case DW_FORM_udata:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      break;
 	    case DW_FORM_ref_udata:
 	    case DW_FORM_ref1:
@@ -3658,7 +3663,7 @@ expand_child (dw_die_ref top_die, bool checksum)
   else
     {
       t = top_die->die_abbrev;
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
       ptr = skip_attrs (cu, t, ptr);
     }
 
@@ -3855,8 +3860,8 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	ptr2 = debug_sections[DEBUG_INFO].data;
       ptr2 += die2->die_offset;
     }
-  read_uleb128 (ptr1);
-  read_uleb128 (ptr2);
+  skip_leb128 (ptr1);
+  skip_leb128 (ptr2);
   i = 0;
   j = 0;
   if (die1->die_toplevel)
@@ -3926,7 +3931,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    form1 = read_uleb128 (ptr1);
 	  switch (form1)
 	    {
-	    case DW_FORM_ref_udata: read_uleb128 (ptr1); break;
+	    case DW_FORM_ref_udata: skip_leb128 (ptr1); break;
 	    case DW_FORM_ref1: ptr1++; break;
 	    case DW_FORM_ref2: read_16 (ptr1); break;
 	    case DW_FORM_ref4: read_32 (ptr1); break;
@@ -3942,7 +3947,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    form2 = read_uleb128 (ptr2);
 	  switch (form2)
 	    {
-	    case DW_FORM_ref_udata: read_uleb128 (ptr2); break;
+	    case DW_FORM_ref_udata: skip_leb128 (ptr2); break;
 	    case DW_FORM_ref1: ptr2++; break;
 	    case DW_FORM_ref2: read_16 (ptr2); break;
 	    case DW_FORM_ref4: read_32 (ptr2); break;
@@ -4140,8 +4145,8 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  break;
 	case DW_FORM_sdata:
 	case DW_FORM_udata:
-	  read_uleb128 (ptr1);
-	  read_uleb128 (ptr2);
+	  skip_leb128 (ptr1);
+	  skip_leb128 (ptr2);
 	  break;
 	case DW_FORM_strp:
 	  if (unlikely (op_multifile || rd_multifile || fi_multifile))
@@ -5171,7 +5176,7 @@ mark_refs (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die, int mode)
       else
 	ptr = debug_sections[DEBUG_INFO].data;
       ptr += die->die_offset;
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
       for (i = 0; i < t->nattr; ++i)
 	{
 	  uint32_t form = t->attr[i].form;
@@ -5221,7 +5226,7 @@ mark_refs (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die, int mode)
 	      break;
 	    case DW_FORM_sdata:
 	    case DW_FORM_udata:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      break;
 	    case DW_FORM_ref_udata:
 	    case DW_FORM_ref1:
@@ -6109,7 +6114,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		    }
 		  /* FALLTHRU */
 		case DW_FORM_ref_udata:
-		  read_uleb128 (ptr);
+		  skip_leb128 (ptr);
 		  break;
 		case DW_FORM_strp:
 		  if (t->attr[i].attr == DW_AT_name
@@ -6572,7 +6577,7 @@ mark_singletons (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   else
     ptr = debug_sections[DEBUG_INFO].data;
   ptr += die->die_offset;
-  read_uleb128 (ptr);
+  skip_leb128 (ptr);
   for (i = 0; i < t->nattr; ++i)
     {
       struct abbrev_attr *attr = &t->attr[i];
@@ -8811,12 +8816,12 @@ macro_eq (const void *p, const void *q)
 	{
 	case DW_MACRO_GNU_define:
 	case DW_MACRO_GNU_undef:
-	  read_uleb128 (p1);
+	  skip_leb128 (p1);
 	  p1 = (unsigned char *) strchr ((char *) p1, '\0') + 1;
 	  break;
 	case DW_MACRO_GNU_define_indirect:
 	case DW_MACRO_GNU_undef_indirect:
-	  read_uleb128 (p1);
+	  skip_leb128 (p1);
 	  if (memcmp (s1, p2, p1 - s1) != 0)
 	    return 0;
 	  p2 += p1 - s1;
@@ -8929,12 +8934,12 @@ read_macro (DSO *dso)
 	    {
 	    case DW_MACRO_GNU_define:
 	    case DW_MACRO_GNU_undef:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
 	    case DW_MACRO_GNU_start_file:
-	      read_uleb128 (ptr);
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
 	      can_share = false;
 	      break;
 	    case DW_MACRO_GNU_end_file:
@@ -8942,7 +8947,7 @@ read_macro (DSO *dso)
 	      break;
 	    case DW_MACRO_GNU_define_indirect:
 	    case DW_MACRO_GNU_undef_indirect:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      strp = read_32 (ptr);
 	      note_strp_offset (strp);
 	      if (wr_multifile)
@@ -9045,12 +9050,12 @@ read_macro (DSO *dso)
 	    {
 	    case DW_MACRO_GNU_define:
 	    case DW_MACRO_GNU_undef:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
 	    case DW_MACRO_GNU_start_file:
-	      read_uleb128 (ptr);
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
 	      can_share = false;
 	      break;
 	    case DW_MACRO_GNU_end_file:
@@ -9058,7 +9063,7 @@ read_macro (DSO *dso)
 	      break;
 	    case DW_MACRO_GNU_define_indirect:
 	    case DW_MACRO_GNU_undef_indirect:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      ptr += 4;
 	      break;
 	    case DW_MACRO_GNU_transparent_include:
@@ -9083,12 +9088,12 @@ read_macro (DSO *dso)
 		{
 		case DW_MACRO_GNU_define:
 		case DW_MACRO_GNU_undef:
-		  read_uleb128 (ptr);
+		  skip_leb128 (ptr);
 		  ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 		  break;
 		case DW_MACRO_GNU_define_indirect:
 		case DW_MACRO_GNU_undef_indirect:
-		  read_uleb128 (ptr);
+		  skip_leb128 (ptr);
 		  memcpy (dst, start, ptr - start);
 		  dst += ptr - start;
 		  strp = lookup_strp_offset (read_32 (ptr));
@@ -9133,12 +9138,12 @@ optimize_write_macro (void **slot, void *data)
 	{
 	case DW_MACRO_GNU_define:
 	case DW_MACRO_GNU_undef:
-	  read_uleb128 (p);
+	  skip_leb128 (p);
 	  p = (unsigned char *) strchr ((char *) p, '\0') + 1;
 	  break;
 	case DW_MACRO_GNU_define_indirect:
 	case DW_MACRO_GNU_undef_indirect:
-	  read_uleb128 (p);
+	  skip_leb128 (p);
 	  memcpy (*pp, s, p - s);
 	  *pp += p - s;
 	  strp = read_32 (p);
@@ -9200,12 +9205,12 @@ handle_macro (void)
 	    {
 	    case DW_MACRO_GNU_define:
 	    case DW_MACRO_GNU_undef:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
 	    case DW_MACRO_GNU_define_indirect:
 	    case DW_MACRO_GNU_undef_indirect:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      hash = iterative_hash (s, ptr - s, hash);
 	      p = debug_sections[DEBUG_STR].data + read_32 (ptr);
 	      len = strlen ((char *) p);
@@ -9316,12 +9321,12 @@ write_macro (void)
 	    {
 	    case DW_MACRO_GNU_define:
 	    case DW_MACRO_GNU_undef:
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
 	    case DW_MACRO_GNU_start_file:
-	      read_uleb128 (ptr);
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
 	      break;
 	    case DW_MACRO_GNU_end_file:
 	      break;
@@ -9330,7 +9335,7 @@ write_macro (void)
 	      memcpy (dst, s, ptr - 1 - s);
 	      dst += ptr - 1 - s;
 	      s = ptr - 1;
-	      read_uleb128 (ptr);
+	      skip_leb128 (ptr);
 	      strp = read_32 (ptr);
 	      if (note_strp_offset2 (strp) == DW_FORM_GNU_strp_alt)
 		{
@@ -9450,7 +9455,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
       unsigned char *ptr = base + ref->die_offset;
       struct abbrev_tag *reft = ref->die_abbrev;
 
-      read_uleb128 (ptr);
+      skip_leb128 (ptr);
       /* No longer count the abbrev uleb128 size in die_size.
 	 We'll add it back after determining the new abbrevs.  */
       if (unlikely (wr_multifile || op_multifile || fi_multifile)
@@ -9702,7 +9707,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		  break;
 		case DW_FORM_sdata:
 		case DW_FORM_udata:
-		  read_uleb128 (ptr);
+		  skip_leb128 (ptr);
 		  break;
 		case DW_FORM_strp:
 		  if (unlikely (op_multifile || fi_multifile))
@@ -10835,7 +10840,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	  else
 	    ptr += 4;
 	  if (op == DW_OP_GNU_implicit_pointer)
-	    read_uleb128 (ptr);
+	    skip_leb128 (ptr);
 	  break;
 	case DW_OP_const8u:
 	case DW_OP_const8s:
@@ -10848,12 +10853,12 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	case DW_OP_consts:
 	case DW_OP_breg0 ... DW_OP_breg31:
 	case DW_OP_fbreg:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_bregx:
 	case DW_OP_bit_piece:
-	  read_uleb128 (ptr);
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_implicit_value:
 	  leni = read_uleb128 (ptr);
@@ -10873,7 +10878,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	    break;
 	  goto typed_dwarf;
 	case DW_OP_GNU_regval_type:
-	  read_uleb128 (ptr);
+	  skip_leb128 (ptr);
 	  orig_ptr = ptr;
 	  addr = read_uleb128 (ptr);
 	  goto typed_dwarf;
@@ -11031,7 +11036,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
       struct abbrev_tag *reft = ref->die_abbrev;
       unsigned int i, j;
 
-      read_uleb128 (inptr);
+      skip_leb128 (inptr);
       for (i = 0, j = 0; i < reft->nattr; ++i)
 	{
 	  uint32_t form = reft->attr[i].form;
@@ -11207,7 +11212,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	      break;
 	    case DW_FORM_sdata:
 	    case DW_FORM_udata:
-	      read_uleb128 (inptr);
+	      skip_leb128 (inptr);
 	      break;
 	    case DW_FORM_strp:
 	      if (unlikely (wr_multifile || op_multifile || fi_multifile))
@@ -13030,7 +13035,7 @@ propagate_multifile_refs_backward (dw_cu_ref cu, dw_die_ref top_die,
     return;
 
   ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
-  read_uleb128 (ptr);
+  skip_leb128 (ptr);
   for (i = 0; i < t->nattr; ++i)
     {
       uint32_t form = t->attr[i].form;
