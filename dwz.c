@@ -397,6 +397,63 @@ typedef struct
     }					\
   while (0)
 
+/* Macro to parse a uint16_t value represented using form, return it and
+   update ptr to the end of the value at the same time.  If the value doesn't
+   fit, assign true to error_p.  */
+#define read_u16(ptr, form, error_p)			\
+  ({							\
+    uint16_t ret = 0;					\
+    switch (form)					\
+      {							\
+      case DW_FORM_data1:				\
+	ret = read_8 (ptr);				\
+	break;						\
+      case DW_FORM_data2:				\
+	ret = read_16 (ptr);				\
+	break;						\
+      case DW_FORM_data4:				\
+	{						\
+	  uint32_t res = read_32 (ptr);			\
+	  ret = (uint16_t)res;				\
+	  if ((uint32_t)ret != res)			\
+	    error_p = true;				\
+	  break;					\
+	}						\
+      case DW_FORM_data8:				\
+	{						\
+	  uint64_t res = read_64 (ptr);			\
+	  ret = (uint16_t)res;				\
+	  if ((uint64_t)ret != res)			\
+	    error_p = true;				\
+	  break;					\
+	}						\
+      case DW_FORM_udata:				\
+	{						\
+	  uint64_t res = read_uleb128 (ptr);		\
+	  ret = (uint16_t)res;				\
+	  if ((uint64_t)ret != res)			\
+	    error_p = true;				\
+	  break;					\
+	}						\
+      case DW_FORM_sdata:				\
+	{						\
+	  union {					\
+	    uint64_t u;					\
+	    int64_t i;					\
+	  } res;					\
+	  res.u = read_sleb128 (ptr);			\
+	  ret = (uint16_t)res.u;			\
+	  if (res.i < 0 || (uint64_t)ret != res.u)	\
+	    error_p = true;				\
+	  break;					\
+	}						\
+      default:						\
+	error_p = true;					\
+	break;						\
+      }							\
+    ret;						\
+  })
+
 /* Pointer size in the debug info, in bytes.  Only debug info
    with a single pointer size are handled.  */
 static int ptr_size;
@@ -5592,6 +5649,23 @@ try_debug_info (DSO *dso)
   return ret;
 }
 
+/* Read language attribute encoded using FORM from location PTR, return
+   pointer to location after the attribute.  Assign the attribute value
+   to *LANG.  */
+static unsigned char *
+read_lang (unsigned char *ptr, enum dwarf_form form,
+	   enum dwarf_source_language *lang)
+{
+  bool error_p = false;
+  *lang = read_u16 (ptr, form, error_p);
+  if (unlikely (error_p))
+    {
+      *lang = 0;
+      error (0, 0, "Invalid DW_AT_language attribute, ignoring");
+    }
+  return ptr;
+}
+
 /* First phase of the DWARF compression.  Parse .debug_info section
    (for kind == DEBUG_INFO) or .debug_types section (for kind == DEBUG_TYPES)
    for each CU in it construct internal representation for the CU
@@ -6007,19 +6081,34 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		case DW_FORM_ref2:
 		  ptr += 2;
 		  break;
-		case DW_FORM_ref4:
 		case DW_FORM_data4:
+		  if (odr && die->die_tag == DW_TAG_compile_unit
+		      && t->attr[i].attr == DW_AT_language)
+		    read_lang (ptr, form, &cu->lang);
+		  /* FALLTHRU */
+		case DW_FORM_ref4:
 		case DW_FORM_sec_offset:
 		  ptr += 4;
 		  break;
-		case DW_FORM_ref8:
 		case DW_FORM_data8:
+		  if (odr && die->die_tag == DW_TAG_compile_unit
+		      && t->attr[i].attr == DW_AT_language)
+		    read_lang (ptr, form, &cu->lang);
+		  /* FALLTHRU */
+		case DW_FORM_ref8:
 		case DW_FORM_ref_sig8:
 		  ptr += 8;
 		  break;
 		case DW_FORM_sdata:
-		case DW_FORM_ref_udata:
 		case DW_FORM_udata:
+		  if (odr && die->die_tag == DW_TAG_compile_unit
+		      && t->attr[i].attr == DW_AT_language)
+		    {
+		      ptr = read_lang (ptr, form, &cu->lang);
+		      break;
+		    }
+		  /* FALLTHRU */
+		case DW_FORM_ref_udata:
 		  read_uleb128 (ptr);
 		  break;
 		case DW_FORM_strp:
