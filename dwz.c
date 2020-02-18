@@ -219,6 +219,7 @@ enum deduplication_mode
   dm_inter_cu
 };
 static enum deduplication_mode deduplication_mode = dm_inter_cu;
+static int uni_lang_p = 0;
 enum die_count_methods
 {
   none,
@@ -2688,6 +2689,8 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
   skip_leb128 (ptr);
   s = die->die_tag;
   die->u.p1.die_hash = iterative_hash_object (s, die->u.p1.die_hash);
+  if (uni_lang_p && die == top_die)
+    die->u.p1.die_hash = iterative_hash_object (cu->lang, die->u.p1.die_hash);
   only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
   die_hash2 = 0;
   if (only_hash_name_p)
@@ -3815,6 +3818,10 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
       || die1->die_toplevel != die2->die_toplevel)
     return 0;
   assert (!die1->die_root && !die2->die_root);
+
+  if (uni_lang_p && die1 == top_die1 && die2 == top_die2
+      && cu1->lang != cu2->lang)
+    return 0;
 
   only_compare_name_p
     = odr && die1->die_odr_state != ODR_NONE && die2->die_odr_state != ODR_NONE;
@@ -5698,6 +5705,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   bool low_mem_phase1 = low_mem && kind == DEBUG_INFO;
   struct dw_cu cu_buf;
   struct dw_die die_buf;
+  bool lang_p = odr || uni_lang_p;
 
   odr_active_p = false;
   if (odr)
@@ -6070,7 +6078,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		case DW_FORM_flag_present:
 		  break;
 		case DW_FORM_data1:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if (lang_p
+		      && (die->die_tag == DW_TAG_compile_unit
+			  || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    cu->lang = *ptr;
 		  /* FALLTHRU */
@@ -6079,7 +6089,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  ++ptr;
 		  break;
 		case DW_FORM_data2:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if (lang_p
+		      && (die->die_tag == DW_TAG_compile_unit
+			  || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    cu->lang = do_read_16 (ptr);
 		  /* FALLTHRU */
@@ -6087,7 +6099,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  ptr += 2;
 		  break;
 		case DW_FORM_data4:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if (lang_p
+		      && (die->die_tag == DW_TAG_compile_unit
+			  || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    read_lang (ptr, form, &cu->lang);
 		  /* FALLTHRU */
@@ -6096,7 +6110,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  ptr += 4;
 		  break;
 		case DW_FORM_data8:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if (lang_p
+		      && (die->die_tag == DW_TAG_compile_unit
+			  || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    read_lang (ptr, form, &cu->lang);
 		  /* FALLTHRU */
@@ -6106,7 +6122,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  break;
 		case DW_FORM_sdata:
 		case DW_FORM_udata:
-		  if (odr && die->die_tag == DW_TAG_compile_unit
+		  if (lang_p
+		      && (die->die_tag == DW_TAG_compile_unit
+			  || die->die_tag == DW_TAG_partial_unit)
 		      && t->attr[i].attr == DW_AT_language)
 		    {
 		      ptr = read_lang (ptr, form, &cu->lang);
@@ -6870,6 +6888,21 @@ copy_die_tree (dw_die_ref parent, dw_die_ref die)
   return new_die;
 }
 
+/* Return how many bytes we need to encode VAL.  */
+static unsigned int
+nr_bytes_for (uint64_t val)
+{
+  unsigned int n;
+
+  if (val == 0)
+    return 1;
+
+  for (n = 0; val > 0; n++)
+    val = val >> 8;
+
+  return n;
+}
+
 /* Helper function of partition_dups_1.  Decide what DIEs matching in
    multiple CUs might be worthwhile to be moved into partial units,
    construct those partial units.  */
@@ -7024,6 +7057,9 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      DW_FORM_string: 1 or more bytes.
 	      Assume 4 bytes.  */
 	   + 4
+	  /* CU Root DIE: DW_AT_language (constant).
+	     1 or 2 bytes.  */
+	   + (uni_lang_p ? nr_bytes_for (die_cu (arr[i])->lang) : 0)
 	   /* CU root DIE children terminator: abbreviation code 0
 					       (unsigned LEB128).
 	      1 byte.  */
@@ -7068,6 +7104,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  partial_cu->cu_offset = *last_partial_cu == NULL
 				  ? 0 : (*last_partial_cu)->cu_offset + 1;
 	  partial_cu->cu_version = refcu->cu_version;
+	  if (uni_lang_p)
+	    partial_cu->lang = refcu->lang;
 	  if (*first_partial_cu == NULL)
 	    *first_partial_cu = *last_partial_cu = partial_cu;
 	  else
@@ -9847,6 +9885,24 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	    die->die_size += 4;
 	    t->nattr++;
 	  }
+	if (uni_lang_p)
+	  {
+	    unsigned int lang_size = nr_bytes_for (cu->lang);
+	    die->die_size += lang_size;
+	    t->attr[t->nattr].attr = DW_AT_language;
+	    switch (lang_size)
+	      {
+	      case 1:
+		t->attr[t->nattr].form = DW_FORM_data1;
+		break;
+	      case 2:
+		t->attr[t->nattr].form = DW_FORM_data2;
+		break;
+	      default:
+		abort ();
+	      }
+	    t->nattr++;
+	  }
 	if (refcu->cu_comp_dir)
 	  {
 	    enum dwarf_form form;
@@ -10975,6 +11031,14 @@ write_unit_die (unsigned char *ptr, dw_die_ref die, dw_die_ref origin)
 		memcpy (ptr, p, len);
 		ptr += len;
 	      }
+	  }
+	  break;
+	case DW_AT_language:
+	  {
+	    enum dwarf_source_language lang = die_cu (die)->lang;
+	    unsigned int lang_size = nr_bytes_for (lang);
+	    write_size (ptr, lang_size, lang);
+	    ptr += lang_size;
 	  }
 	  break;
 	default:
@@ -14648,6 +14712,10 @@ static struct option dwz_options[] =
   { "devel-stats",	 no_argument,	    &stats_p, 1 },
   { "devel-deduplication-mode",
 			 required_argument, &deduplication_mode_parsed, 1 },
+  { "devel-uni-lang",
+			 no_argument,	    &uni_lang_p, 1 },
+  { "devel-no-uni-lang",
+			 no_argument,	    &uni_lang_p, 0 },
 #endif
   { "odr",		 no_argument,	    &odr, 1 },
   { "no-odr",		 no_argument,	    &odr, 0 },
@@ -14897,7 +14965,8 @@ usage (void)
        "  --devel-dump-edges\n"
        "  --devel-partition-dups-opt\n"
        "  --devel-die-count-method\n"
-       "  --devel-deduplication-mode={none,intra-cu,inter-cu}\n");
+       "  --devel-deduplication-mode={none,intra-cu,inter-cu}\n"
+       "  --devel-uni-lang / --devel-no-uni-lang\n");
   fprintf (stderr, "%s", msg);
 #endif
 
