@@ -1996,6 +1996,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
+	case DW_OP_implicit_pointer:
 	case DW_OP_GNU_variable_value:
 	  cu = die_cu (die);
 	  addr = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
@@ -2023,7 +2024,7 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  die->die_ck_state = CK_BAD;
 	  if (need_adjust)
 	    *need_adjust = true;
-	  if (op == DW_OP_GNU_implicit_pointer)
+	  if (op == DW_OP_GNU_implicit_pointer || op == DW_OP_implicit_pointer)
 	    skip_leb128 (ptr);
 	  break;
 	case DW_OP_const8u:
@@ -2051,12 +2052,13 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  }
 	  break;
 	case DW_OP_GNU_entry_value:
+	case DW_OP_entry_value:
 	  {
 	    uint32_t leni = read_uleb128 (ptr);
 	    if ((uint64_t) (end - ptr) < leni)
 	      {
-		error (0, 0, "%s: DWARF DW_OP_GNU_entry_value with too large"
-		       " length", dso->filename);
+		error (0, 0, "%s: %s with too large length",
+		       get_DW_OP_str (op),  dso->filename);
 		return 1;
 	      }
 	    if (read_exprloc (dso, die, ptr, leni, need_adjust))
@@ -2065,20 +2067,25 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  }
 	  break;
 	case DW_OP_GNU_convert:
+	case DW_OP_convert:
 	case DW_OP_GNU_reinterpret:
+	case DW_OP_reinterpret:
 	  addr = read_uleb128 (ptr);
 	  if (addr == 0)
 	    break;
 	  goto typed_dwarf;
 	case DW_OP_GNU_regval_type:
+	case DW_OP_regval_type:
 	  skip_leb128 (ptr);
 	  addr = read_uleb128 (ptr);
 	  goto typed_dwarf;
 	case DW_OP_GNU_const_type:
+	case DW_OP_const_type:
 	  addr = read_uleb128 (ptr);
 	  ptr += *ptr + 1;
 	  goto typed_dwarf;
 	case DW_OP_GNU_deref_type:
+	case DW_OP_deref_type:
 	  ++ptr;
 	  addr = read_uleb128 (ptr);
 	typed_dwarf:
@@ -2231,6 +2238,7 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
+	case DW_OP_implicit_pointer:
 	case DW_OP_GNU_variable_value:
 	  cu = die_cu (die);
 	  addr = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
@@ -2242,7 +2250,7 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	     necessary if die_cu (ref) != cu, but we don't track cu's during
 	     low-mem phase1.  */
 	  add_dummy_die (cu, addr);
-	  if (op == DW_OP_GNU_implicit_pointer)
+	  if (op == DW_OP_GNU_implicit_pointer || op == DW_OP_implicit_pointer)
 	    skip_leb128 (ptr);
 	  break;
 	case DW_OP_const8u:
@@ -2270,12 +2278,13 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	  }
 	  break;
 	case DW_OP_GNU_entry_value:
+	case DW_OP_entry_value:
 	  {
 	    uint32_t leni = read_uleb128 (ptr);
 	    if ((uint64_t) (end - ptr) < leni)
 	      {
-		error (0, 0, "%s: DWARF DW_OP_GNU_entry_value with too large"
-		       " length", dso->filename);
+		error (0, 0, "%s: %s with too large length",
+		       get_DW_OP_str (op), dso->filename);
 		return 1;
 	      }
 	    if (read_exprloc_low_mem_phase1 (dso, die, ptr, leni))
@@ -2284,18 +2293,23 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 	  }
 	  break;
 	case DW_OP_GNU_convert:
+	case DW_OP_convert:
 	case DW_OP_GNU_reinterpret:
+	case DW_OP_reinterpret:
 	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_GNU_regval_type:
+	case DW_OP_regval_type:
 	  skip_leb128 (ptr);
 	  skip_leb128 (ptr);
 	  break;
 	case DW_OP_GNU_const_type:
-	  skip_leb128 (ptr);
+	case DW_OP_const_type:
+	  read_uleb128 (ptr);
 	  ptr += *ptr + 1;
 	  break;
 	case DW_OP_GNU_deref_type:
+	case DW_OP_deref_type:
 	  ++ptr;
 	  skip_leb128 (ptr);
 	  break;
@@ -11040,6 +11054,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	  break;
 	case DW_OP_call_ref:
 	case DW_OP_GNU_implicit_pointer:
+	case DW_OP_implicit_pointer:
 	case DW_OP_GNU_variable_value:
 	  addr = read_size (ptr, refcu->cu_version == 2 ? ptr_size : 4);
 	  assert (cu->cu_version == refcu->cu_version);
@@ -11057,7 +11072,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	    ptr += ptr_size;
 	  else
 	    ptr += 4;
-	  if (op == DW_OP_GNU_implicit_pointer)
+	  if (op == DW_OP_GNU_implicit_pointer || op == DW_OP_implicit_pointer)
 	    skip_leb128 (ptr);
 	  break;
 	case DW_OP_const8u:
@@ -11083,28 +11098,34 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 	  ptr += leni;
 	  break;
 	case DW_OP_GNU_entry_value:
+	case DW_OP_entry_value:
 	  leni = read_uleb128 (ptr);
 	  assert ((uint64_t) (end - ptr) >= leni);
 	  adjust_exprloc (cu, die, refcu, ref, ptr, leni);
 	  ptr += leni;
 	  break;
 	case DW_OP_GNU_convert:
+	case DW_OP_convert:
 	case DW_OP_GNU_reinterpret:
+	case DW_OP_reinterpret:
 	  orig_ptr = ptr;
 	  addr = read_uleb128 (ptr);
 	  if (addr == 0)
 	    break;
 	  goto typed_dwarf;
 	case DW_OP_GNU_regval_type:
+	case DW_OP_regval_type:
 	  skip_leb128 (ptr);
 	  orig_ptr = ptr;
 	  addr = read_uleb128 (ptr);
 	  goto typed_dwarf;
 	case DW_OP_GNU_const_type:
+	case DW_OP_const_type:
 	  orig_ptr = ptr;
 	  addr = read_uleb128 (ptr);
 	  goto typed_dwarf;
 	case DW_OP_GNU_deref_type:
+	case DW_OP_deref_type:
 	  ++ptr;
 	  orig_ptr = ptr;
 	  addr = read_uleb128 (ptr);
@@ -11127,7 +11148,7 @@ adjust_exprloc (dw_cu_ref cu, dw_die_ref die, dw_cu_ref refcu,
 		*ptr++ = 0x80;
 	      *ptr++ = 0;
 	    }
-	  if (op == DW_OP_GNU_const_type)
+	  if (op == DW_OP_GNU_const_type || op == DW_OP_const_type)
 	    ptr += *ptr + 1;
 	  break;
 	default:
