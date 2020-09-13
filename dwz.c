@@ -2370,6 +2370,7 @@ add_locexpr_dummy_dies (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 {
   if (form == DW_FORM_block1)
     {
+      /* Old DWARF uses blocks instead of exprlocs.  */
       switch (attr)
 	{
 	case DW_AT_frame_base:
@@ -2392,6 +2393,12 @@ add_locexpr_dummy_dies (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 	case DW_AT_associated:
 	case DW_AT_data_location:
 	case DW_AT_byte_stride:
+	case DW_AT_rank:
+	case DW_AT_call_value:
+	case DW_AT_call_target:
+	case DW_AT_call_target_clobbered:
+	case DW_AT_call_data_location:
+	case DW_AT_call_data_value:
 	case DW_AT_GNU_call_site_value:
 	case DW_AT_GNU_call_site_data_value:
 	case DW_AT_GNU_call_site_target:
@@ -2748,6 +2755,8 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_high_pc:
 	case DW_AT_entry_pc:
 	case DW_AT_ranges:
+	case DW_AT_call_return_pc:
+	case DW_AT_call_pc:
 	  die->die_ck_state = CK_BAD;
 	  break;
 	case DW_AT_start_scope:
@@ -2758,6 +2767,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	   can't be moved to other files easily.  */
 	case DW_AT_stmt_list:
 	case DW_AT_macro_info:
+	case DW_AT_macros:
 	case DW_AT_GNU_macros:
 	  if (!die->die_root)
 	    die->die_no_multifile = 1;
@@ -3068,6 +3078,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 
       if (form == DW_FORM_block1)
 	{
+	  /* Old DWARF uses blocks instead of exprlocs.  */
 	  switch (t->attr[i].attr)
 	    {
 	    case DW_AT_frame_base:
@@ -3090,6 +3101,12 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	    case DW_AT_associated:
 	    case DW_AT_data_location:
 	    case DW_AT_byte_stride:
+	    case DW_AT_rank:
+	    case DW_AT_call_value:
+	    case DW_AT_call_target:
+	    case DW_AT_call_target_clobbered:
+	    case DW_AT_call_data_location:
+	    case DW_AT_call_data_value:
 	    case DW_AT_GNU_call_site_value:
 	    case DW_AT_GNU_call_site_data_value:
 	    case DW_AT_GNU_call_site_target:
@@ -4020,6 +4037,10 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	case DW_AT_high_pc:
 	case DW_AT_entry_pc:
 	case DW_AT_ranges:
+	case DW_AT_call_return_pc:
+	case DW_AT_call_pc:
+	  /* We shouldn't be hitting DIEs with attributes referencing
+	     addresses and we should have removed DW_AT_subling.  */
 	  abort ();
 	case DW_AT_decl_file:
 	case DW_AT_call_file:
@@ -6296,7 +6317,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		      goto fail;
 		    }
 
-		  if (t->attr[i].attr > DW_AT_linkage_name
+		  if (t->attr[i].attr > DW_AT_loclists_base
 		      && (t->attr[i].attr < DW_AT_MIPS_fde
 			  || t->attr[i].attr > DW_AT_MIPS_has_inlines)
 		      && (t->attr[i].attr < DW_AT_sf_names
@@ -9729,7 +9750,8 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		}
 
 	      if (unlikely (fi_multifile)
-		  && reft->attr[i].attr == DW_AT_GNU_macros
+		  && (reft->attr[i].attr == DW_AT_GNU_macros
+		      || reft->attr[i].attr == DW_AT_macros)
 		  && alt_macro_htab != NULL)
 		{
 		  struct macro_entry me, *m;
@@ -9741,8 +9763,9 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		      value = read_32 (ptr);
 		      break;
 		    default:
-		      error (0, 0, "Unhandled %s for DW_AT_GNU_macros",
-			     get_DW_FORM_str (form));
+		      error (0, 0, "Unhandled %s for %s",
+			     get_DW_FORM_str (form),
+			     get_DW_AT_str (reft->attr[i].attr));
 		      return 1;
 		    }
 		  me.ptr = debug_sections[DEBUG_MACRO].data + value;
@@ -9750,8 +9773,8 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		    htab_find_with_hash (macro_htab, &me, value);
 		  if (m->len)
 		    {
-		      error (0, 0, "DW_AT_GNU_macros referencing "
-				   "transparent include");
+		      error (0, 0, "%s referencing transparent include",
+			     get_DW_AT_str (reft->attr[i].attr));
 		      return 1;
 		    }
 		  ptr -= 4;
@@ -11276,7 +11299,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	    }
 
 	  if (unlikely (fi_multifile)
-	      && reft->attr[i].attr == DW_AT_GNU_macros
+	      && (reft->attr[i].attr == DW_AT_GNU_macros
+		  || reft->attr[i].attr == DW_AT_macros)
 	      && alt_macro_htab != NULL)
 	    {
 	      struct macro_entry me, *m;
@@ -11537,6 +11561,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	  memcpy (ptr, orig_ptr, inptr - orig_ptr);
 	  ptr += inptr - orig_ptr;
 
+	  /* Old DWARF uses blocks instead of exprlocs.  */
 	  if (form == DW_FORM_block1)
 	    switch (reft->attr[i].attr)
 	      {
@@ -11560,6 +11585,12 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	      case DW_AT_associated:
 	      case DW_AT_data_location:
 	      case DW_AT_byte_stride:
+	      case DW_AT_rank:
+	      case DW_AT_call_value:
+	      case DW_AT_call_target:
+	      case DW_AT_call_target_clobbered:
+	      case DW_AT_call_data_location:
+	      case DW_AT_call_data_value:
 	      case DW_AT_GNU_call_site_value:
 	      case DW_AT_GNU_call_site_data_value:
 	      case DW_AT_GNU_call_site_target:
