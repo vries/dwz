@@ -670,6 +670,28 @@ get_DW_AT_str (unsigned int at)
   return buf;
 }
 
+/* Retrun a DW_UT_* name.  */
+static const char *
+get_DW_UT_str (unsigned int ut)
+{
+  const char *name;
+  static char buf[7 + 3 * sizeof (int)];
+  switch (ut)
+    {
+    case DW_UT_compile: name = "DW_UT_compile"; break;
+    case DW_UT_type: name = "DW_UT_type"; break;
+    case DW_UT_partial: name = "DW_UT_partial"; break;
+    case DW_UT_skeleton: name = "DW_UT_skeleton"; break;
+    case DW_UT_split_compile: name = "DW_UT_split_compile"; break;
+    case DW_UT_split_type: name = "DW_UT_split_type"; break;
+    default: name = 0; break;
+    }
+  if (name)
+    return name;
+  sprintf (buf, "DW_UT_%u", ut);
+  return buf;
+}
+
 /* This must match the debug_sections array content
    below.  */
 enum debug_section_kind
@@ -1332,8 +1354,8 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
   value = read_16 (ptr);
   if (value < 2 || value > 4)
     {
-      error (0, 0, "%s: DWARF version %d unhandled", dso->filename,
-	     value);
+      error (0, 0, "%s: DWARF version %d in .debug_line unhandled",
+	     dso->filename, value);
       return 1;
     }
 
@@ -5572,22 +5594,38 @@ try_debug_info (DSO *dso)
 	}
 
       cu_version = read_16 (ptr);
-      if (cu_version < 2 || cu_version > 4)
+      if (kind == DEBUG_TYPES && (cu_version < 2 || cu_version > 4))
 	{
-	  error (0, 0, "%s: DWARF version %d unhandled", dso->filename,
-		 cu_version);
+	  error (0, 0, "%s: DWARF version %d in .debug_types unhandled",
+		 dso->filename, cu_version);
+	  goto fail;
+	}
+      else if (cu_version < 2 || cu_version > 5)
+	{
+	  error (0, 0, "%s: DWARF version %d in .debug_info unhandled",
+		 dso->filename, cu_version);
 	  goto fail;
 	}
 
-      value = read_32 (ptr);
-      if (value >= debug_sections[DEBUG_ABBREV].size)
+      if (cu_version == 5)
 	{
-	  if (debug_sections[DEBUG_ABBREV].data == NULL)
-	    error (0, 0, "%s: .debug_abbrev not present", dso->filename);
-	  else
-	    error (0, 0, "%s: DWARF CU abbrev offset too large",
-		   dso->filename);
-	  goto fail;
+	  value = read_8 (ptr);
+	  if (value != DW_UT_compile && value != DW_UT_partial)
+	    error (0, 0, "%s: DWARF CU type %s unhandled", dso->filename,
+		   get_DW_UT_str (value));
+	}
+      else
+	{
+	  value = read_32 (ptr);
+	  if (value >= debug_sections[DEBUG_ABBREV].size)
+	    {
+	      if (debug_sections[DEBUG_ABBREV].data == NULL)
+		error (0, 0, "%s: .debug_abbrev not present", dso->filename);
+	      else
+		error (0, 0, "%s: DWARF CU abbrev offset too large",
+		       dso->filename);
+	      goto fail;
+	    }
 	}
 
       if (ptr_size == 0)
@@ -5607,6 +5645,20 @@ try_debug_info (DSO *dso)
 	  goto fail;
 	}
 
+      if (cu_version == 5)
+	{
+	  value = read_32 (ptr);
+	  if (value >= debug_sections[DEBUG_ABBREV].size)
+	    {
+	      if (debug_sections[DEBUG_ABBREV].data == NULL)
+		error (0, 0, "%s: .debug_abbrev not present", dso->filename);
+	      else
+		error (0, 0, "%s: DWARF CU abbrev offset too large",
+		       dso->filename);
+	      goto fail;
+	    }
+	}
+
       if (abbrev == NULL || value != last_abbrev_offset)
 	{
 	  if (abbrev)
@@ -5614,7 +5666,11 @@ try_debug_info (DSO *dso)
 	  abbrev
 	    = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value);
 	  if (abbrev == NULL)
-	    goto fail;
+	    {
+	      error (0, 0, "%s: Couldn't read abbrev at offset 0x%x",
+		     dso->filename, value);
+	      goto fail;
+	    }
 	}
       last_abbrev_offset = value;
 
@@ -5800,22 +5856,39 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	}
 
       cu_version = read_16 (ptr);
-      if (cu_version < 2 || cu_version > 4)
+      if (kind == DEBUG_TYPES && (cu_version < 2 || cu_version > 4))
 	{
-	  error (0, 0, "%s: DWARF version %d unhandled", dso->filename,
-		 cu_version);
+	  error (0, 0, "%s: DWARF version %d in .debug_types unhandled",
+		 dso->filename, cu_version);
+	  goto fail;
+	}
+      else if (cu_version < 2 || cu_version > 5)
+	{
+	  error (0, 0, "%s: DWARF version %d in .debug_info unhandled",
+		 dso->filename, cu_version);
 	  goto fail;
 	}
 
-      value = read_32 (ptr);
-      if (value >= debug_sections[DEBUG_ABBREV].size)
+      if (cu_version == 5)
 	{
-	  if (debug_sections[DEBUG_ABBREV].data == NULL)
-	    error (0, 0, "%s: .debug_abbrev not present", dso->filename);
-	  else
-	    error (0, 0, "%s: DWARF CU abbrev offset too large",
-		   dso->filename);
-	  goto fail;
+	  value = read_8 (ptr);
+	  if (value != DW_UT_compile && value != DW_UT_partial)
+	    error (0, 0, "%s: DWARF CU type %s unhandled", dso->filename,
+		   get_DW_UT_str (value));
+
+	}
+      else
+	{
+	  value = read_32 (ptr);
+	  if (value >= debug_sections[DEBUG_ABBREV].size)
+	    {
+	      if (debug_sections[DEBUG_ABBREV].data == NULL)
+		error (0, 0, "%s: .debug_abbrev not present", dso->filename);
+	      else
+		error (0, 0, "%s: DWARF CU abbrev offset too large",
+		       dso->filename);
+	      goto fail;
+	    }
 	}
 
       if (ptr_size == 0)
@@ -5833,6 +5906,20 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	  error (0, 0, "%s: DWARF pointer size differs between CUs",
 		 dso->filename);
 	  goto fail;
+	}
+
+      if (cu_version == 5)
+	{
+	  value = read_32 (ptr);
+	  if (value >= debug_sections[DEBUG_ABBREV].size)
+	    {
+	      if (debug_sections[DEBUG_ABBREV].data == NULL)
+		error (0, 0, "%s: .debug_abbrev not present", dso->filename);
+	      else
+		error (0, 0, "%s: DWARF CU abbrev offset too large",
+		       dso->filename);
+	      goto fail;
+	    }
 	}
 
       if (unlikely (op_multifile))
@@ -5914,7 +6001,12 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	  abbrev
 	    = read_abbrev (dso, debug_sections[DEBUG_ABBREV].data + value);
 	  if (abbrev == NULL)
-	    goto fail;
+	    {
+	      error (0, 0, "%s: Couldn't read abbrev at offset 0x%x",
+		     dso->filename, value);
+
+	      goto fail;
+	    }
 	}
       last_abbrev_offset = value;
 
