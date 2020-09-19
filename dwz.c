@@ -1260,7 +1260,8 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	  nattr++;
 	  form = read_uleb128 (p);
 	  if (form == 2
-	      || (form > DW_FORM_flag_present && form != DW_FORM_ref_sig8))
+	      || (form > DW_FORM_flag_present && (form != DW_FORM_ref_sig8
+						  || form != DW_FORM_data16)))
 	    {
 	      error (0, 0, "%s: Unknown DWARF %s",
 		     dso->filename, get_DW_FORM_str (form));
@@ -1708,6 +1709,9 @@ skip_attr_no_dw_form_indirect (unsigned int cu_version, uint32_t form,
     case DW_FORM_data8:
     case DW_FORM_ref_sig8:
       ptr += 8;
+      break;
+    case DW_FORM_data16:
+      ptr += 16;
       break;
     case DW_FORM_sdata:
     case DW_FORM_ref_udata:
@@ -2971,6 +2975,9 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	case DW_FORM_data8:
 	  ptr += 8;
 	  break;
+	case DW_FORM_data16:
+	  ptr += 16;
+	  break;
 	case DW_FORM_ref_sig8:
 	  die->die_no_multifile = 1;
 	  ptr += 8;
@@ -3393,6 +3400,9 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	    case DW_FORM_data8:
 	    case DW_FORM_ref_sig8:
 	      ptr += 8;
+	      break;
+	    case DW_FORM_data16:
+	      ptr += 16;
 	      break;
 	    case DW_FORM_sdata:
 	    case DW_FORM_udata:
@@ -4213,6 +4223,10 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	case DW_FORM_ref_sig8:
 	  ptr1 += 8;
 	  ptr2 += 8;
+	  break;
+	case DW_FORM_data16:
+	  ptr1 += 16;
+	  ptr2 += 16;
 	  break;
 	case DW_FORM_sdata:
 	case DW_FORM_udata:
@@ -5295,6 +5309,9 @@ mark_refs (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die, int mode)
 	    case DW_FORM_ref_sig8:
 	      ptr += 8;
 	      break;
+	    case DW_FORM_data16:
+	      ptr += 16;
+	      break;
 	    case DW_FORM_sdata:
 	    case DW_FORM_udata:
 	      skip_leb128 (ptr);
@@ -6269,6 +6286,9 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		case DW_FORM_ref8:
 		case DW_FORM_ref_sig8:
 		  ptr += 8;
+		  break;
+		case DW_FORM_data16:
+		  ptr += 16;
 		  break;
 		case DW_FORM_sdata:
 		case DW_FORM_udata:
@@ -9941,6 +9961,9 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		case DW_FORM_ref_sig8:
 		  ptr += 8;
 		  break;
+		case DW_FORM_data16:
+		  ptr += 16;
+		  break;
 		case DW_FORM_sdata:
 		case DW_FORM_udata:
 		  skip_leb128 (ptr);
@@ -11480,6 +11503,9 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	      break;
 	    case DW_FORM_ref_sig8:
 	      inptr += 8;
+	      break;
+	    case DW_FORM_data16:
+	      inptr += 16;
 	      break;
 	    case DW_FORM_sdata:
 	    case DW_FORM_udata:
