@@ -1260,8 +1260,10 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	  nattr++;
 	  form = read_uleb128 (p);
 	  if (form == 2
-	      || (form > DW_FORM_flag_present && (form != DW_FORM_ref_sig8
-						  || form != DW_FORM_data16)))
+	      || (form > DW_FORM_flag_present
+		  && (form != DW_FORM_ref_sig8
+		      || form != DW_FORM_data16
+		      || form != DW_FORM_line_strp)))
 	    {
 	      error (0, 0, "%s: Unknown DWARF %s",
 		     dso->filename, get_DW_FORM_str (form));
@@ -1703,6 +1705,7 @@ skip_attr_no_dw_form_indirect (unsigned int cu_version, uint32_t form,
     case DW_FORM_data4:
     case DW_FORM_sec_offset:
     case DW_FORM_strp:
+    case DW_FORM_line_strp:
       ptr += 4;
       break;
     case DW_FORM_ref8:
@@ -1868,6 +1871,14 @@ get_AT_string (dw_die_ref die, enum dwarf_attribute at)
 	if (strp >= debug_sections[DEBUG_STR].size)
 	  return NULL;
 	return (char *) debug_sections[DEBUG_STR].data + strp;
+      }
+    case DW_FORM_line_strp:
+      {
+	unsigned int line_strp = read_32 (ptr);
+	if (line_strp >= debug_sections[DEBUG_LINE_STR].size)
+	  return NULL;
+	else
+	  return (char *) debug_sections[DEBUG_LINE_STR].data + line_strp;
       }
     default:
       return NULL;
@@ -3063,6 +3074,14 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 		}
 	    }
 	  break;
+	case DW_FORM_line_strp:
+	  /* There is no .debug_line_str in the alt file, so we cannot
+	     move this DIE unless we change the string reference.
+	     This is not that bad because DW_FORM_line_strp is often
+	     only used in the CU DIE for file name and comp_dir and we
+	     don't move the CU DIE anyway.  */
+	  die->die_ck_state = CK_BAD;
+	  break;
 	case DW_FORM_string:
 	  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
 	  if (only_hash_name_p && t->attr[i].attr == DW_AT_name)
@@ -3395,6 +3414,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	    case DW_FORM_data4:
 	    case DW_FORM_sec_offset:
 	    case DW_FORM_strp:
+	    case DW_FORM_line_strp:
 	      ptr += 4;
 	      break;
 	    case DW_FORM_data8:
@@ -4261,6 +4281,10 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	      j++;
 	      continue;
 	    }
+	  ptr1 += 4;
+	  ptr2 += 4;
+	  break;
+	case DW_FORM_line_strp:
 	  ptr1 += 4;
 	  ptr2 += 4;
 	  break;
@@ -5303,6 +5327,7 @@ mark_refs (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die, int mode)
 	    case DW_FORM_data4:
 	    case DW_FORM_sec_offset:
 	    case DW_FORM_strp:
+	    case DW_FORM_line_strp:
 	      ptr += 4;
 	      break;
 	    case DW_FORM_data8:
@@ -6316,6 +6341,17 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		    note_strp_offset (read_32 (ptr));
 		  else
 		    ptr += 4;
+		  break;
+		case DW_FORM_line_strp:
+		  if (t->attr[i].attr == DW_AT_name
+		      && (die->die_tag == DW_TAG_namespace
+			  || die->die_tag == DW_TAG_module)
+		      && !die->die_root
+		      && (die->die_parent->die_root
+			  || die->die_parent->die_named_namespace))
+		    die->die_named_namespace = 1;
+		  /* Don't note strp, different string table.  */
+		  ptr += 4;
 		  break;
 		case DW_FORM_string:
 		  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
@@ -9983,6 +10019,11 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		  else
 		    ptr += 4;
 		  break;
+		case DW_FORM_line_strp:
+		  /* Since we don't register the line_strp we cannot
+		     change the form in the case of multifile.  */
+		  ptr += 4;
+		  break;
 		case DW_FORM_string:
 		  ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
 		  break;
@@ -10128,13 +10169,17 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	  {
 	    enum dwarf_form form;
 	    unsigned char *ptr = get_AT (origin, DW_AT_comp_dir, &form);
-	    assert (ptr && (form == DW_FORM_string || form == DW_FORM_strp));
+	    assert (ptr && (form == DW_FORM_string
+			    || form == DW_FORM_strp
+			    || form == DW_FORM_line_strp));
 	    if (form == DW_FORM_strp)
 	      {
 		if (unlikely (op_multifile || fi_multifile))
 		  form = note_strp_offset2 (read_32 (ptr));
 		die->die_size += 4;
 	      }
+	    else if (form == DW_FORM_line_strp)
+	      die->die_size += 4;
 	    else
 	      die->die_size
 		+= strlen (refcu->cu_comp_dir) + 1;
@@ -10148,13 +10193,17 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	{
 	  enum dwarf_form form;
 	  unsigned char *ptr = get_AT (origin, DW_AT_name, &form);
-	  assert (ptr && (form == DW_FORM_string || form == DW_FORM_strp));
+	  assert (ptr && (form == DW_FORM_string
+			  || form == DW_FORM_strp
+			  || form == DW_FORM_line_strp));
 	  if (form == DW_FORM_strp)
 	    {
 	      if (unlikely (op_multifile || fi_multifile))
 		form = note_strp_offset2 (read_32 (ptr));
 	      die->die_size = 4;
 	    }
+	  else if (form == DW_FORM_line_strp)
+	    die->die_size += 4;
 	  else
 	    die->die_size = strlen ((char *) ptr) + 1;
 	  t->attr[0].attr = DW_AT_name;
@@ -11254,6 +11303,11 @@ write_unit_die (unsigned char *ptr, dw_die_ref die, dw_die_ref origin)
 		    ptr += 4;
 		  }
 	      }
+	    else if (form == DW_FORM_line_strp)
+	      {
+		memcpy (ptr, p, 4);
+		ptr += 4;
+	      }
 	    else
 	      {
 		size_t len = strlen ((char *) p) + 1;
@@ -11523,6 +11577,9 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		}
 	      inptr += 4;
 	      break;
+	    case DW_FORM_line_strp:
+	      inptr += 4;
+	      break;
 	    case DW_FORM_string:
 	      inptr = (unsigned char *) strchr ((char *)inptr, '\0') + 1;
 	      break;
@@ -11702,6 +11759,11 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		  memcpy (ptr, p, 4);
 		  ptr += 4;
 		}
+	    }
+	  else if (form == DW_FORM_line_strp)
+	    {
+	      memcpy (ptr, p, 4);
+	      ptr += 4;
 	    }
 	  else
 	    {
