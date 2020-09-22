@@ -399,6 +399,25 @@ typedef struct
     }					\
   while (0)
 
+#define write_sleb128(ptr, val)					\
+  do								\
+    {								\
+      int64_t valv = (val);					\
+      bool more;						\
+      do							\
+	{							\
+	  unsigned char c = valv & 0x7f;			\
+	  valv >>= 7;						\
+	  more = ((valv != 0 || (c & 0x40) != 0)                \
+		  && (valv != -1 || (c & 0x40) == 0));          \
+	  if (more)						\
+	    c |= 0x80;						\
+	  *ptr++ = c;						\
+	}							\
+      while (more);						\
+    }								\
+  while (0)
+
 /* Macro to skip a uleb128 or sleb128 number and update ptr to the end of the
    number.  */
 #define skip_leb128(ptr) \
@@ -898,6 +917,8 @@ struct abbrev_tag
   bool children;
   /* True if any typed DWARF opcodes refer to this.  */
   bool op_type_referenced;
+  /* The values of DW_FORM_implicit_const attribute forms.  */
+  int64_t *values;
   /* Attribute/form pairs.  */
   struct abbrev_attr attr[0];
 };
@@ -1204,6 +1225,34 @@ pool_destroy (void)
   (struct name *) pool_alloc_1 (offsetof (struct align_##name, s), size)
 #endif
 
+static struct abbrev_tag *
+pool_clone_abbrev (struct abbrev_tag *t)
+{
+  struct abbrev_tag *newt;
+  size_t newt_size;
+  unsigned nvalue = 0;
+  if (t->values != NULL)
+    {
+      unsigned i;
+      for (i = 0; i < t->nattr; i++)
+	if (t->attr[i].form == DW_FORM_implicit_const)
+	  nvalue = i + 1;
+    }
+  newt_size = (sizeof (*newt)
+	       + t->nattr * sizeof (struct abbrev_attr)
+	       + nvalue * sizeof (int64_t));
+  newt = pool_alloc (abbrev_tag, newt_size);
+  memcpy (newt, t, newt_size - (nvalue * sizeof (int64_t)));
+  if (nvalue == 0)
+    newt->values = NULL;
+  else
+    {
+      newt->values = (int64_t *) &newt->attr[newt->nattr];
+      memcpy (newt->values, t->values, nvalue * sizeof (int64_t));
+    }
+  return newt;
+}
+
 /* Hash function in first abbrev hash table as well as cu->cu_new_abbrev
    htab.  */
 static hashval_t
@@ -1239,7 +1288,9 @@ abbrev_eq2 (const void *p, const void *q)
     return 0;
   for (i = 0; i < t1->nattr; i++)
     if (t1->attr[i].attr != t2->attr[i].attr
-	|| t1->attr[i].form != t2->attr[i].form)
+	|| t1->attr[i].form != t2->attr[i].form
+	|| (t1->attr[i].form == DW_FORM_implicit_const
+	    && t1->values[i] != t2->values[i]))
       return 0;
   return 1;
 }
@@ -1257,6 +1308,8 @@ compute_abbrev_hash (struct abbrev_tag *t)
     {
       t->hash = iterative_hash_object (t->attr[i].attr, t->hash);
       t->hash = iterative_hash_object (t->attr[i].form, t->hash);
+      if (t->attr[i].form == DW_FORM_implicit_const)
+	t->hash = iterative_hash_object (t->values[i], t->hash);
     }
 }
 
@@ -1278,6 +1331,7 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 
   while ((attr = read_uleb128 (ptr)) != 0)
     {
+      int highest_implicit_value_ndx = -1;
       unsigned int nattr = 0;
       unsigned char *p = ptr;
 
@@ -1287,7 +1341,12 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	{
 	  nattr++;
 	  form = read_uleb128 (p);
-	  if (form == 2
+	  if (form == DW_FORM_implicit_const)
+	    {
+	      skip_leb128 (p);
+	      highest_implicit_value_ndx = nattr - 1;
+	    }
+	  else if (form == 2
 	      || (form > DW_FORM_flag_present
 		  && !(form == DW_FORM_ref_sig8
 		       || form == DW_FORM_data16
@@ -1308,19 +1367,25 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	}
 
       t = pool_alloc (abbrev_tag,
-		      sizeof (*t) + nattr * sizeof (struct abbrev_attr));
+		      sizeof (*t) + nattr * sizeof (struct abbrev_attr)
+		      + sizeof (int64_t) * (highest_implicit_value_ndx + 1));
       t->entry = attr;
       t->hash = attr;
-      t->nattr = 0;
+      t->nattr = nattr;
       t->nusers = 0;
       t->tag = read_uleb128 (ptr);
       t->children = *ptr++ == DW_CHILDREN_yes;
       t->op_type_referenced = false;
+      t->values = (highest_implicit_value_ndx >= 0
+		   ? (int64_t *) &t->attr[nattr] : NULL);
+      nattr = 0;
       while ((attr = read_uleb128 (ptr)) != 0)
 	{
 	  form = read_uleb128 (ptr);
-	  t->attr[t->nattr].attr = attr;
-	  t->attr[t->nattr++].form = form;
+	  if (form == DW_FORM_implicit_const)
+	    t->values[nattr] = read_sleb128 (ptr);
+	  t->attr[nattr].attr = attr;
+	  t->attr[nattr++].form = form;
 	}
       skip_leb128 (ptr);
       if (t->nattr > max_nattr)
@@ -2164,6 +2229,8 @@ get_AT (dw_die_ref die, enum dwarf_attribute at, enum dwarf_form *formp)
       if (t->attr[i].attr == at)
 	{
 	  *formp = form;
+	  if (form == DW_FORM_implicit_const)
+	    return (unsigned char *) &t->values[i];
 	  return ptr;
 	}
 
@@ -2212,6 +2279,8 @@ get_AT_int (dw_die_ref die, enum dwarf_attribute at, bool *present,
     case DW_FORM_ref_udata:
     case DW_FORM_udata:
       return read_uleb128 (ptr);
+    case DW_FORM_implicit_const:
+      return *(uint64_t *)ptr; /* See get_AT.  */
     default:
       *present = false;
       return 0;
@@ -3371,6 +3440,8 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	    case DW_FORM_data8: value = read_64 (ptr); handled = true; break;
 	    case DW_FORM_udata:
 	      value = read_uleb128 (ptr); handled = true; break;
+	    case DW_FORM_implicit_const:
+	      value = t->values[i]; handled = true; break;
 	    default:
 	      error (0, 0, "%s: Unhandled %s for %s",
 		     dso->filename, get_DW_FORM_str (form),
@@ -3505,6 +3576,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  ptr += ptr_size;
 	  break;
 	case DW_FORM_flag_present:
+	case DW_FORM_implicit_const:
 	  break;
 	case DW_FORM_flag:
 	case DW_FORM_data1:
@@ -3937,6 +4009,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	      ptr += ptr_size;
 	      break;
 	    case DW_FORM_flag_present:
+	    case DW_FORM_implicit_const:
 	      break;
 	    case DW_FORM_flag:
 	    case DW_FORM_data1:
@@ -4629,6 +4702,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_data4: value1 = read_32 (ptr1); break;
 	    case DW_FORM_data8: value1 = read_64 (ptr1); break;
 	    case DW_FORM_udata: value1 = read_uleb128 (ptr1); break;
+	    case DW_FORM_implicit_const: value1 = t1->values[i]; break;
 	    default: abort ();
 	    }
 	  switch (form2)
@@ -4638,6 +4712,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_data4: value2 = read_32 (ptr2); break;
 	    case DW_FORM_data8: value2 = read_64 (ptr2); break;
 	    case DW_FORM_udata: value2 = read_uleb128 (ptr2); break;
+	    case DW_FORM_implicit_const: value2 = t2->values[j]; break;
 	    default: abort ();
 	    }
 	  if (ignore_locus)
@@ -4758,6 +4833,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  ptr2 += ptr_size;
 	  break;
 	case DW_FORM_flag_present:
+	case DW_FORM_implicit_const:
 	  break;
 	case DW_FORM_flag:
 	case DW_FORM_data1:
@@ -5850,6 +5926,7 @@ mark_refs (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die, int mode)
 	      ptr += ptr_size;
 	      break;
 	    case DW_FORM_flag_present:
+	    case DW_FORM_implicit_const:
 	      break;
 	    case DW_FORM_flag:
 	    case DW_FORM_data1:
@@ -6802,6 +6879,13 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  ptr += ptr_size;
 		  break;
 		case DW_FORM_flag_present:
+		  break;
+		case DW_FORM_implicit_const:
+		  if (lang_p
+		      && (die->die_tag == DW_TAG_compile_unit
+			  || die->die_tag == DW_TAG_partial_unit)
+		      && t->attr[i].attr == DW_AT_language)
+		    cu->lang = t->values[i];
 		  break;
 		case DW_FORM_data1:
 		  if (lang_p
@@ -9495,6 +9579,24 @@ size_of_uleb128 (uint64_t val)
   return size;
 }
 
+/* Return number of bytes needed to encode VAL using
+   sleb128.  */
+static unsigned int
+size_of_sleb128 (int64_t val)
+{
+  unsigned int size = 0;
+  unsigned char c;
+  do
+    {
+      c = val & 0x7f;
+      val >>= 7;
+      size++;
+    }
+  while ((val != 0 || (c & 0x40) != 0)
+	 && (val != -1 || (c & 0x40) == 0));
+  return size;
+}
+
 /* Hash table mapping original file IDs to new ids.  */
 static htab_t line_htab;
 /* Current new maximum file ID.  */
@@ -10319,6 +10421,8 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	    {
 	      t->attr[i].attr = reft->attr[i].attr;
 	      t->attr[i].form = reft->attr[i].form;
+	      if (t->attr[i].form == DW_FORM_implicit_const)
+		t->values[i] = reft->values[i];
 	    }
 	  t->nattr = reft->nattr;
 	}
@@ -10331,7 +10435,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	      uint32_t form = reft->attr[i].form;
 	      size_t len = 0;
 	      dw_die_ref refd;
-	      uint64_t value;
+	      uint64_t value = 0;
 	      unsigned char *orig_ptr = ptr;
 
 	      while (form == DW_FORM_indirect)
@@ -10348,30 +10452,40 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		    case DW_FORM_data4: value = read_32 (ptr); break;
 		    case DW_FORM_data8: value = read_64 (ptr); break;
 		    case DW_FORM_udata: value = read_uleb128 (ptr); break;
+		    case DW_FORM_implicit_const: break;
 		    default:
 		      error (0, 0, "Unhandled %s for %s",
 			     get_DW_FORM_str (form),
 			     get_DW_AT_str (reft->attr[i].attr));
 		      return 1;
 		    }
-		  value = line_htab_lookup (refcu, value);
-		  if (value <= 0xff)
+		  /* Note that the value is only used for calculating the
+		     DIE size and possibly change form. Doesn't change the
+		     implicit_const from or value.  */
+		  if (form != DW_FORM_implicit_const)
 		    {
-		      form = DW_FORM_data1;
-		      die->die_size++;
-		    }
-		  else if (value <= 0xffff)
-		    {
-		      form = DW_FORM_data2;
-		      die->die_size += 2;
-		    }
-		  else
-		    {
-		      form = DW_FORM_data4;
-		      die->die_size += 4;
+		      value = line_htab_lookup (refcu, value);
+		      if (value <= 0xff)
+			{
+			  form = DW_FORM_data1;
+			  die->die_size++;
+			}
+		      else if (value <= 0xffff)
+			{
+			  form = DW_FORM_data2;
+			  die->die_size += 2;
+			}
+		      else
+			{
+			  form = DW_FORM_data4;
+			  die->die_size += 4;
+			}
 		    }
 		  t->attr[j].attr = reft->attr[i].attr;
-		  t->attr[j++].form = form;
+		  t->attr[j].form = form;
+		  if (form == DW_FORM_implicit_const)
+		    t->values[j] = reft->values[i];
+		  j++;
 		  continue;
 		}
 
@@ -10475,6 +10589,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		    }
 		  break;
 		case DW_FORM_flag_present:
+		case DW_FORM_implicit_const:
 		  break;
 		case DW_FORM_flag:
 		case DW_FORM_data1:
@@ -10657,7 +10772,10 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	      if (form == DW_FORM_block1)
 		ptr += len;
 	      t->attr[j].attr = reft->attr[i].attr;
-	      t->attr[j++].form = reft->attr[i].form;
+	      t->attr[j].form = reft->attr[i].form;
+	      if (reft->attr[i].form == DW_FORM_implicit_const)
+		t->values[j] = reft->values[i];
+	      j++;
 	      die->die_size += ptr - orig_ptr;
 	    }
 	  t->nattr = j;
@@ -10785,11 +10903,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
     }
   else
     {
-      struct abbrev_tag *newt
-	= pool_alloc (abbrev_tag,
-		      sizeof (*newt) + t->nattr * sizeof (struct abbrev_attr));
-      memcpy (newt, t,
-	      sizeof (*newt) + t->nattr * sizeof (struct abbrev_attr));
+      struct abbrev_tag *newt = pool_clone_abbrev (t);
       *slot = newt;
       die->u.p2.die_new_abbrev = newt;
     }
@@ -10882,6 +10996,13 @@ abbrev_cmp (const void *p, const void *q)
 	return -1;
       if (t1->attr[i].form > t2->attr[i].form)
 	return 1;
+      if (t1->attr[i].form == DW_FORM_implicit_const)
+	{
+	  if (t1->values[i] < t2->values[i])
+	    return -1;
+	  if (t1->values[i] > t2->values[i])
+	    return 1;
+	}
     }
   return 0;
 }
@@ -11070,7 +11191,9 @@ compute_abbrevs (DSO *dso)
   t = (struct abbrev_tag *)
       obstack_alloc (&ob2,
 		     sizeof (*t)
-		     + (max_nattr + 4) * sizeof (struct abbrev_attr));
+		     + (max_nattr + 4) * sizeof (struct abbrev_attr)
+		     + (max_nattr + 4) * sizeof (int64_t));
+  t->values = (int64_t *) &t->attr[max_nattr + 4];
   for (cu = first_cu, ncus = 0; cu; cu = cu->cu_next)
     {
       unsigned int intracu, ndies = 0, tagsize = 0, nchildren = 0;
@@ -11327,13 +11450,7 @@ compute_abbrevs (DSO *dso)
 		    {
 		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
-		      newt = pool_alloc (abbrev_tag,
-					 sizeof (*newt)
-					 + arr[k]->nattr
-					   * sizeof (struct abbrev_attr));
-		      memcpy (newt, arr[k],
-			      sizeof (*newt)
-			      + arr[k]->nattr * sizeof (struct abbrev_attr));
+		      newt = pool_clone_abbrev (arr[k]);
 		      *slot = newt;
 		    }
 		}
@@ -11432,13 +11549,7 @@ compute_abbrevs (DSO *dso)
 		    {
 		      struct abbrev_tag *newt;
 		      arr[k]->entry = ++entry;
-		      newt = pool_alloc (abbrev_tag,
-					 sizeof (*newt)
-					 + arr[k]->nattr
-					   * sizeof (struct abbrev_attr));
-		      memcpy (newt, arr[k],
-			      sizeof (*newt)
-			      + arr[k]->nattr * sizeof (struct abbrev_attr));
+		      newt = pool_clone_abbrev (arr[k]);
 		      *slot = newt;
 		    }
 		}
@@ -11481,6 +11592,21 @@ compute_abbrevs (DSO *dso)
 	    {
 	      abbrev_size += size_of_uleb128 (arr[i]->attr[j].attr);
 	      abbrev_size += size_of_uleb128 (arr[i]->attr[j].form);
+	      if (arr[i]->attr[j].form == DW_FORM_implicit_const)
+		{
+		  /* If this is a shared abbrev for a file reference
+		     attribute, update to the new file number (in the
+		     mulifile .debug_line).  Note that this might
+		     change the abbrev size...  */
+		  if (unlikely (wr_multifile || op_multifile)
+		      && (arr[i]->attr[j].attr == DW_AT_decl_file
+			  || arr[i]->attr[j].attr == DW_AT_call_file))
+		    {
+		      if (arr[i]->values[j] < 0)
+			arr[i]->values[j] = -arr[i]->values[j];
+		    }
+		  abbrev_size += size_of_sleb128 (arr[i]->values[j]);
+		}
 	    }
 	  abbrev_size += 2;
 	}
@@ -11571,6 +11697,8 @@ write_abbrev (void)
 	    {
 	      write_uleb128 (ptr, arr[i]->attr[j].attr);
 	      write_uleb128 (ptr, arr[i]->attr[j].form);
+	      if (arr[i]->attr[j].form == DW_FORM_implicit_const)
+		write_sleb128 (ptr, arr[i]->values[j]);
 	    }
 	  *ptr++ = 0;
 	  *ptr++ = 0;
@@ -11932,22 +12060,51 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	      && (reft->attr[i].attr == DW_AT_decl_file
 		  || reft->attr[i].attr == DW_AT_call_file))
 	    {
+	      bool update = false;
 	      switch (form)
 		{
-		case DW_FORM_data1: value = read_8 (inptr); break;
-		case DW_FORM_data2: value = read_16 (inptr); break;
-		case DW_FORM_data4: value = read_32 (inptr); break;
-		case DW_FORM_data8: value = read_64 (inptr); break;
-		case DW_FORM_udata: value = read_uleb128 (inptr); break;
+		case DW_FORM_data1:
+		  value = read_8 (inptr);
+		  update = true;
+		  break;
+		case DW_FORM_data2:
+		  value = read_16 (inptr);
+		  update = true;
+		  break;
+		case DW_FORM_data4:
+		  value = read_32 (inptr);
+		  update = true;
+		  break;
+		case DW_FORM_data8:
+		  value = read_64 (inptr);
+		  update = true;
+		  break;
+		case DW_FORM_udata:
+		  value = read_uleb128 (inptr);
+		  update = true;
+		  break;
+		case DW_FORM_implicit_const:
+		  /* Negative means, already transformed.  */
+		  if (reft->values[i] >= 0)
+		    update = true;
+		  value = reft->values[i];
+		  break;
 		default: abort ();
 		}
-	      value = line_htab_lookup (refcu, value);
-	      switch (t->attr[j].form)
+	      if (update)
 		{
-		case DW_FORM_data1: write_8 (ptr, value); break;
-		case DW_FORM_data2: write_16 (ptr, value); break;
-		case DW_FORM_data4: write_32 (ptr, value); break;
-		default: abort ();
+		  value = line_htab_lookup (refcu, value);
+		  switch (t->attr[j].form)
+		    {
+		    case DW_FORM_data1: write_8 (ptr, value); break;
+		    case DW_FORM_data2: write_16 (ptr, value); break;
+		    case DW_FORM_data4: write_32 (ptr, value); break;
+		    case DW_FORM_udata: write_uleb128 (ptr, value); break;
+		    case DW_FORM_implicit_const:
+		      reft->values[i] = -value; /* Note, negated.  */
+		      break;
+		    default: abort ();
+		    }
 		}
 	      j++;
 	      continue;
@@ -12039,6 +12196,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		}
 	      break;
 	    case DW_FORM_flag_present:
+	    case DW_FORM_implicit_const:
 	      break;
 	    case DW_FORM_flag:
 	    case DW_FORM_data1:
@@ -12375,7 +12533,9 @@ recompute_abbrevs (dw_cu_ref cu, unsigned int cu_size)
   t = (struct abbrev_tag *)
       obstack_alloc (&ob2,
 		     sizeof (*t)
-		     + (max_nattr + 4) * sizeof (struct abbrev_attr));
+		     + (max_nattr + 4) * sizeof (struct abbrev_attr)
+		     + (max_nattr + 4) * sizeof (int64_t));
+  t->values = (int64_t *) &t->attr[max_nattr + 4];
 
   build_abbrevs_for_die (cu->u1.cu_new_abbrev_owner
 			 ? cu->u1.cu_new_abbrev_owner->cu_new_abbrev
