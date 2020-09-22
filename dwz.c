@@ -5605,6 +5605,7 @@ try_debug_info (DSO *dso)
       unsigned int culen;
       int cu_version;
 
+      /* Note header is one bigger with DWARF version 5.  */
       if (ptr + (kind == DEBUG_TYPES ? 23 : 11) > endsec)
 	{
 	  error (0, 0, "%s: %s CU header too small", dso->filename,
@@ -5682,6 +5683,13 @@ try_debug_info (DSO *dso)
 
       if (cu_version == 5)
 	{
+	  /* Above we only checked for the smaller version 4 header size.  */
+	  if (ptr + 4 > endsec)
+	    {
+	      error (0, 0, "%s: %s CU version 5 header too small",
+		     dso->filename, debug_sections[kind].name);
+	      goto fail;
+	    }
 	  value = read_32 (ptr);
 	  if (value >= debug_sections[DEBUG_ABBREV].size)
 	    {
@@ -5867,6 +5875,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
       unsigned int debug_line_off;
       unsigned int type_offset = 0;
 
+      /* Note header is one bigger with DWARF version 5.  */
       if (ptr + (kind == DEBUG_TYPES ? 23 : 11) > endsec)
 	{
 	  error (0, 0, "%s: %s CU header too small", dso->filename,
@@ -5945,6 +5954,13 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 
       if (cu_version == 5)
 	{
+	  /* Above we only checked for the smaller version 4 header size.  */
+	  if (ptr + 4 > endsec)
+	    {
+	      error (0, 0, "%s: %s CU version 5 header too small",
+		     dso->filename, debug_sections[kind].name);
+	      goto fail;
+	    }
 	  value = read_32 (ptr);
 	  if (value >= debug_sections[DEBUG_ABBREV].size)
 	    {
@@ -7209,6 +7225,8 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	   /* CU Header: address_size (ubyte).
 	      1 byte.  */
 	   + 1
+	   /* DWARF5 CU header: unit_type (ubyte).  */
+	   + (die_cu (arr[i])->cu_version >= 5 ? 1 : 0)
 	   /* CU Root DIE: abbreviation code (unsigned LEB128).
 	      1 or more bytes.  Optimistically assume 1.  */
 	   + 1
@@ -8052,8 +8070,8 @@ create_import_tree (void)
      that would need to be added, and if some new DW_TAG_partial_unit
      CUs are going to be created as a result of this routine, that size
      too.  DW_TAG_imported_unit has size 5 (for DWARF3+) or 1 + ptr_size
-     (DWARF2), DW_TAG_partial_unit has size 13 (11 CU header + 1 byte
-     abbrev number + 1 byte child end).  */
+     (DWARF2), DW_TAG_partial_unit has size 13/14 (11 CU header + 1 byte
+     abbrev number + 1 byte child end + 1 byte for DWARF5 unit_type).  */
   unsigned int size = 0;
   /* Size of DW_TAG_imported_unit if the same everywhere, otherwise
      (mixing DWARF2 and DWARF3+ with ptr_size != 4) 0.  */
@@ -8306,14 +8324,18 @@ create_import_tree (void)
 		    continue;
 		  if (npu == NULL)
 		    {
+		      unsigned int header_size;
 		      pusrc[srccount] = e3->icu;
+		      header_size = (pusrc[srccount]->cu->cu_version >= 5
+				     ? 14 : 13); /* DWARF5 unit_type byte.  */
 		      cost += edge_cost;
 		      if (!edge_cost)
 			cost += pusrc[srccount]->cu->cu_version == 2
 				? 1 + ptr_size : 5;
 		      srccount++;
 		      if (ignore_size || ((dstcount - 1) * cost
-					  > 13 + dstcount * new_edge_cost))
+					  > (header_size
+					     + dstcount * new_edge_cost)))
 			{
 			  unsigned int j;
 
@@ -10451,7 +10473,8 @@ compute_abbrevs (DSO *dso)
       dw_die_ref *intracuarr, *intracuvec;
       enum dwarf_form intracuform = DW_FORM_ref4;
       dw_die_ref child, *lastotr, child_next, *last;
-      unsigned int headersz = cu->cu_kind == CU_TYPES ? 23 : 11;
+      unsigned int headersz = (cu->cu_kind == CU_TYPES
+			       ? 23 : (cu->cu_version >= 5 ? 12 : 11));
 
       if (unlikely (fi_multifile) && cu->cu_die->die_remove)
 	continue;
@@ -10627,7 +10650,7 @@ compute_abbrevs (DSO *dso)
 	collapse_children (cu, cu->cu_die);
     }
   if (wr_multifile)
-    total_size += 11;
+    total_size += 11; /* See the end of write_info.  */
   obstack_free (&ob2, (void *) t);
   cuarr = (dw_cu_ref *) obstack_alloc (&ob2, ncus * sizeof (dw_cu_ref));
   for (cu = first_cu, i = 0; cu; cu = cu->cu_next)
@@ -11721,7 +11744,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 static void
 recompute_abbrevs (dw_cu_ref cu, unsigned int cu_size)
 {
-  unsigned int headersz = cu->cu_kind == CU_TYPES ? 23 : 11;
+  unsigned int headersz = (cu->cu_kind == CU_TYPES
+			   ? 23 : (cu->cu_version >= 5 ? 12 : 11));
   struct abbrev_tag *t;
   unsigned int ndies = 0, intracusize, off, i;
   dw_die_ref *intracuarr, *intracuvec;
@@ -11826,8 +11850,15 @@ write_info (unsigned int *die_count)
       /* Write CU header.  */
       write_32 (ptr, next_off - cu->cu_new_offset - 4);
       write_16 (ptr, cu->cu_version);
+      if (cu->cu_version >= 5)
+	{
+	  *ptr++ = (cu->cu_die->die_tag == DW_TAG_compile_unit
+		    ? DW_UT_compile : DW_UT_partial);
+	  write_8 (ptr, ptr_size);
+	}
       write_32 (ptr, cu->u2.cu_new_abbrev_offset);
-      write_8 (ptr, ptr_size);
+      if (cu->cu_version < 5)
+	write_8 (ptr, ptr_size);
       ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL, die_count);
       assert (info + (next_off - (wr_multifile ? multi_info_off : 0)) == ptr);
       if (unlikely (low_mem) && cu->cu_kind != CU_PU)
