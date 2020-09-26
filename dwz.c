@@ -2340,50 +2340,123 @@ read_exprloc_low_mem_phase1 (DSO *dso, dw_die_ref die, unsigned char *ptr,
 
 /* Add dummy DIEs for loclist at OFFSET.  */
 static int
-read_loclist_low_mem_phase1 (DSO *dso, dw_die_ref die, GElf_Addr offset)
+read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
+			     GElf_Addr offset)
 {
   unsigned char *ptr, *endsec;
   GElf_Addr low, high;
-  size_t len;
+  size_t len = 0;
+  int sec;
 
-  ptr = debug_sections[DEBUG_LOC].data;
+  sec = cu->cu_version < 5 ? DEBUG_LOC : DEBUG_LOCLISTS;
+  ptr = debug_sections[sec].data;
   if (ptr == NULL)
     {
-      error (0, 0, "%s: loclistptr attribute, yet no .debug_loc section",
-	     dso->filename);
+      error (0, 0, "%s: loclistptr attribute, yet no %s section",
+	     dso->filename, debug_sections[sec].name);
       return 1;
     }
-  if (offset >= debug_sections[DEBUG_LOC].size)
+  if (offset >= debug_sections[sec].size)
     {
       error (0, 0,
-	     "%s: loclistptr offset %Ld outside of .debug_loc section",
-	     dso->filename, (long long) offset);
+	     "%s: loclistptr offset %Ld outside of %s section",
+	     dso->filename, (long long) offset, debug_sections[sec].name);
       return 1;
     }
-  endsec = ptr + debug_sections[DEBUG_LOC].size;
+  endsec = ptr + debug_sections[sec].size;
   ptr += offset;
   while (ptr < endsec)
     {
-      low = read_size (ptr, ptr_size);
-      high = read_size (ptr + ptr_size, ptr_size);
-      ptr += 2 * ptr_size;
-      if (low == 0 && high == 0)
-	break;
+      if (sec == DEBUG_LOC)
+	{
+	  low = read_size (ptr, ptr_size);
+	  high = read_size (ptr + ptr_size, ptr_size);
+	  ptr += 2 * ptr_size;
+	  if (low == 0 && high == 0)
+	    break;
 
-      if (low == ~ (GElf_Addr) 0 || (ptr_size == 4 && low == 0xffffffff))
-	continue;
+	  if (low == ~ (GElf_Addr) 0 || (ptr_size == 4 && low == 0xffffffff))
+	    continue;
 
-      len = read_16 (ptr);
+	  len = read_16 (ptr);
+	}
+      else
+	{
+	  uint8_t lle = *ptr++;
+	  switch (lle)
+	    {
+	    case DW_LLE_end_of_list:
+	      return 0;
+
+	    case DW_LLE_base_addressx:
+	      skip_leb128 (ptr);
+	      continue;
+
+	    case DW_LLE_startx_endx:
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_startx_length:
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_offset_pair:
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_default_location:
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_base_address:
+	      ptr += ptr_size;
+	      continue;
+
+	    case DW_LLE_start_end:
+	      ptr += 2 * ptr_size;
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_start_length:
+	      ptr += ptr_size;
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_GNU_view_pair:
+	      if (cu->cu_version != 5)
+		error (0, 0,
+		       "%s: DW_LLE_GNU_view_pair used with DWARF version %u\n",
+		       dso->filename, cu->cu_version);
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      continue;
+
+	    default:
+	      error (0, 0,
+		     "%s: unhandled location list entry 0x%x in %s section",
+		     dso->filename, lle, debug_sections[sec].name);
+	      return 1;
+	    }
+	}
+
       if (unlikely (!(ptr + len <= endsec)))
 	{
 	  error (0, 0,
-		 "%s: locexpr length 0x%Lx exceeds .debug_loc section",
-		 dso->filename, (long long) len);
+		 "%s: locexpr length 0x%Lx exceeds %s section",
+		 dso->filename, (long long) len, debug_sections[sec].name);
 	  return 1;
 	}
 
-      if (read_exprloc_low_mem_phase1 (dso, die, ptr, len))
-	return 1;
+      if (len > 0)
+	if (read_exprloc_low_mem_phase1 (dso, die, ptr, len))
+	  return 1;
 
       ptr += len;
     }
@@ -2458,13 +2531,13 @@ add_locexpr_dummy_dies (DSO *dso, dw_cu_ref cu, dw_die_ref die,
       if ((cu->cu_version < 4 && form == DW_FORM_data4)
 	  || form == DW_FORM_sec_offset)
 	{
-	  if (read_loclist_low_mem_phase1 (dso, die, do_read_32 (ptr)))
+	  if (read_loclist_low_mem_phase1 (dso, cu, die, do_read_32 (ptr)))
 	    return 1;
 	  break;
 	}
       else if (cu->cu_version < 4 && form == DW_FORM_data8)
 	{
-	  if (read_loclist_low_mem_phase1 (dso, die, do_read_64 (ptr)))
+	  if (read_loclist_low_mem_phase1 (dso, cu, die, do_read_64 (ptr)))
 	    return 1;
 	  break;
 	}
@@ -2492,10 +2565,12 @@ struct debug_loc_adjust
 };
 ALIGN_STRUCT (debug_loc_adjust)
 
-/* Hash table and obstack for recording .debug_loc adjustment ranges.  */
+/* Hash table and obstack for recording .debug_loc and .debug_loclists
+   adjustment ranges.  */
 static htab_t loc_htab;
+static htab_t loclists_htab;
 
-/* Hash function for loc_htab.  */
+/* Hash function for loc[lists]_htab.  */
 static hashval_t
 loc_hash (const void *p)
 {
@@ -2504,7 +2579,7 @@ loc_hash (const void *p)
   return a->end_offset;
 }
 
-/* Equality function for loc_htab.  */
+/* Equality function for loc[lists]_htab.  */
 static int
 loc_eq (const void *p, const void *q)
 {
@@ -2518,47 +2593,118 @@ loc_eq (const void *p, const void *q)
    DIE.  Call read_exprloc on each of the DWARF expressions
    contained in it.  */
 static int
-read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
+read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
 {
   unsigned char *ptr, *endsec;
   GElf_Addr low, high;
   size_t len;
+  int sec;
   bool need_adjust = false;
 
   die->die_ck_state = CK_BAD;
-  ptr = debug_sections[DEBUG_LOC].data;
+  sec = cu->cu_version < 5 ? DEBUG_LOC : DEBUG_LOCLISTS;
+  ptr = debug_sections[sec].data;
   if (ptr == NULL)
     {
-      error (0, 0, "%s: loclistptr attribute, yet no .debug_loc section",
-	     dso->filename);
+      error (0, 0, "%s: loclistptr attribute, yet no %s section",
+	     dso->filename, debug_sections[sec].name);
       return 1;
     }
-  if (offset >= debug_sections[DEBUG_LOC].size)
+  if (offset >= debug_sections[sec].size)
     {
       error (0, 0,
-	     "%s: loclistptr offset %Ld outside of .debug_loc section",
-	     dso->filename, (long long) offset);
+	     "%s: loclistptr offset %Ld outside of %s section",
+	     dso->filename, (long long) offset, debug_sections[sec].name);
       return 1;
     }
-  endsec = ptr + debug_sections[DEBUG_LOC].size;
+  endsec = ptr + debug_sections[sec].size;
   ptr += offset;
   while (ptr < endsec)
     {
-      low = read_size (ptr, ptr_size);
-      high = read_size (ptr + ptr_size, ptr_size);
-      ptr += 2 * ptr_size;
-      if (low == 0 && high == 0)
-	break;
+      if (cu->cu_version < 5)
+	{
+	  low = read_size (ptr, ptr_size);
+	  high = read_size (ptr + ptr_size, ptr_size);
+	  ptr += 2 * ptr_size;
+	  if (low == 0 && high == 0)
+	    break;
 
-      if (low == ~ (GElf_Addr) 0 || (ptr_size == 4 && low == 0xffffffff))
-	continue;
+	  if (low == ~ (GElf_Addr) 0 || (ptr_size == 4 && low == 0xffffffff))
+	    continue;
 
-      len = read_16 (ptr);
+	  len = read_16 (ptr);
+	}
+      else
+	{
+	  uint8_t lle = *ptr++;
+	  switch (lle)
+	    {
+	    case DW_LLE_end_of_list:
+	      return 0;
+
+	    case DW_LLE_base_addressx:
+	      skip_leb128 (ptr);
+	      continue;
+
+	    case DW_LLE_startx_endx:
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_startx_length:
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_offset_pair:
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_default_location:
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_base_address:
+	      ptr += ptr_size;
+	      continue;
+
+	    case DW_LLE_start_end:
+	      ptr += 2 * ptr_size;
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_start_length:
+	      ptr += ptr_size;
+	      skip_leb128 (ptr);
+	      len = read_uleb128 (ptr);
+	      break;
+
+	    case DW_LLE_GNU_view_pair:
+	      if (cu->cu_version != 5)
+		error (0, 0,
+		       "%s: DW_LLE_GNU_view_pair used with DWARF version %u\n",
+		       dso->filename, cu->cu_version);
+	      skip_leb128 (ptr);
+	      skip_leb128 (ptr);
+	      continue;
+
+	    default:
+	      error (0, 0,
+		     "%s: unhandled location list entry 0x%x in %s section",
+		     dso->filename, lle, debug_sections[sec].name);
+	      return 1;
+	    }
+	}
+
       if (unlikely (!(ptr + len <= endsec)))
 	{
 	  error (0, 0,
-		 "%s: locexpr length 0x%Lx exceeds .debug_loc section",
-		 dso->filename, (long long) len);
+		 "%s: locexpr length 0x%Lx exceeds %s section",
+		 dso->filename, (long long) len, debug_sections[sec].name);
 	  return 1;
 	}
 
@@ -2574,15 +2720,30 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
       void **slot;
 
       adj.start_offset = offset;
-      adj.end_offset = ptr - debug_sections[DEBUG_LOC].data;
-      adj.cu = die_cu (die);
-      if (loc_htab == NULL)
+      adj.end_offset = ptr - debug_sections[sec].data;
+      adj.cu = cu;
+      if (sec == DEBUG_LOC)
 	{
-	  loc_htab = htab_try_create (50, loc_hash, loc_eq, NULL);
 	  if (loc_htab == NULL)
-	    dwz_oom ();
+	    {
+	      loc_htab = htab_try_create (50, loc_hash, loc_eq, NULL);
+	      if (loc_htab == NULL)
+		dwz_oom ();
+	    }
+	  slot = htab_find_slot_with_hash (loc_htab, &adj, adj.end_offset,
+					   INSERT);
 	}
-      slot = htab_find_slot_with_hash (loc_htab, &adj, adj.end_offset, INSERT);
+      else
+	{
+	  if (loclists_htab == NULL)
+	    {
+	      loclists_htab = htab_try_create (50, loc_hash, loc_eq, NULL);
+	      if (loclists_htab == NULL)
+		dwz_oom ();
+	    }
+	  slot = htab_find_slot_with_hash (loclists_htab, &adj, adj.end_offset,
+					   INSERT);
+	}
       if (slot == NULL)
 	dwz_oom ();
       if (*slot == NULL)
@@ -2593,8 +2754,8 @@ read_loclist (DSO *dso, dw_die_ref die, GElf_Addr offset)
 	}
       else if (((struct debug_loc_adjust *)*slot)->cu != adj.cu)
 	{
-	  error (0, 0, "%s: can't adjust .debug_loc section because multiple "
-		       "CUs refer to it", dso->filename);
+	  error (0, 0, "%s: can't adjust %s section because multiple "
+		 "CUs refer to it", dso->filename, debug_sections[sec].name);
 	  return 1;
 	}
       else if (((struct debug_loc_adjust *)*slot)->start_offset > offset)
@@ -2814,14 +2975,14 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  if ((cu->cu_version < 4 && form == DW_FORM_data4)
 	      || form == DW_FORM_sec_offset)
 	    {
-	      if (read_loclist (dso, die, read_32 (ptr)))
+	      if (read_loclist (dso, cu, die, read_32 (ptr)))
 		return 1;
 	      ptr = old_ptr;
 	      break;
 	    }
 	  else if (cu->cu_version < 4 && form == DW_FORM_data8)
 	    {
-	      if (read_loclist (dso, die, read_64 (ptr)))
+	      if (read_loclist (dso, cu, die, read_64 (ptr)))
 		return 1;
 	      ptr = old_ptr;
 	      break;
@@ -12000,6 +12161,92 @@ adjust_loclist (void **slot, void *data)
   return 1;
 }
 
+/* Adjust .debug_loclists range determined by *SLOT, called through
+   htab_traverse.  */
+static int
+adjust_loclists (void **slot, void *data)
+{
+  struct debug_loc_adjust *adj = (struct debug_loc_adjust *) *slot;
+  unsigned char *ptr, *endsec;
+  size_t len = 0;
+
+  (void)data;
+
+  ptr = debug_sections[DEBUG_LOCLISTS].new_data + adj->start_offset;
+  endsec = ptr + debug_sections[DEBUG_LOCLISTS].size;
+
+  while (ptr < endsec)
+    {
+      uint8_t lle = *ptr++;
+      switch (lle)
+	{
+	case DW_LLE_end_of_list:
+	  return 1;
+
+	case DW_LLE_base_addressx:
+	  skip_leb128 (ptr);
+	  continue;
+
+	case DW_LLE_startx_endx:
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
+	  len = read_uleb128 (ptr);
+	  break;
+
+	case DW_LLE_startx_length:
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
+	  len = read_uleb128 (ptr);
+	  break;
+
+	case DW_LLE_offset_pair:
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
+	  len = read_uleb128 (ptr);
+	  break;
+
+	case DW_LLE_default_location:
+	  len = read_uleb128 (ptr);
+	  break;
+
+	case DW_LLE_base_address:
+	  ptr += ptr_size;
+	  continue;
+
+	case DW_LLE_start_end:
+	  ptr += 2 * ptr_size;
+	  len = read_uleb128 (ptr);
+	  break;
+
+	case DW_LLE_start_length:
+	  ptr += ptr_size;
+	  skip_leb128 (ptr);
+	  len = read_uleb128 (ptr);
+	  break;
+
+	case DW_LLE_GNU_view_pair:
+	  /* Note we cannot check CU version here, but we'll get a
+	     warning on the original parsing if CU version is not 5.*/
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
+	  continue;
+
+	default:
+	  error (0, 0, "unhandled location list entry 0x%x", lle);
+	  return 1;
+	}
+
+      assert (ptr + len <= endsec);
+
+      adjust_exprloc (adj->cu, adj->cu->cu_die, adj->cu, adj->cu->cu_die,
+		      ptr, len);
+
+      ptr += len;
+    }
+
+  return 1;
+}
+
 /* Create new .debug_loc section in malloced memory if .debug_loc
    needs to be adjusted.  */
 static void
@@ -12014,6 +12261,23 @@ write_loc (void)
   memcpy (loc, debug_sections[DEBUG_LOC].data, debug_sections[DEBUG_LOC].size);
   debug_sections[DEBUG_LOC].new_data = loc;
   htab_traverse (loc_htab, adjust_loclist, NULL);
+}
+
+/* Create new .debug_loclists section in malloced memory if .debug_loclists
+   needs to be adjusted.  */
+static void
+write_loclists (void)
+{
+  unsigned char *loc;
+  if (loclists_htab == NULL)
+    return;
+  loc = malloc (debug_sections[DEBUG_LOCLISTS].size);
+  if (loc == NULL)
+    dwz_oom ();
+  memcpy (loc, debug_sections[DEBUG_LOCLISTS].data,
+	  debug_sections[DEBUG_LOCLISTS].size);
+  debug_sections[DEBUG_LOCLISTS].new_data = loc;
+  htab_traverse (loclists_htab, adjust_loclists, NULL);
 }
 
 /* Create new .debug_types section in malloced memory.  */
@@ -13311,6 +13575,9 @@ cleanup (void)
   if (loc_htab != NULL)
     htab_delete (loc_htab);
   loc_htab = NULL;
+  if (loclists_htab != NULL)
+    htab_delete (loclists_htab);
+  loclists_htab = NULL;
   if (dup_htab != NULL)
     htab_delete (dup_htab);
   dup_htab = NULL;
@@ -14312,6 +14579,12 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	      fprintf (stderr, "write_loc\n");
 	    }
 	  write_loc ();
+	  if (unlikely (progress_p))
+	    {
+	      report_progress ();
+	      fprintf (stderr, "write_loclists\n");
+	    }
+	  write_loclists ();
 	  if (unlikely (progress_p))
 	    {
 	      report_progress ();
