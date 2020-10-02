@@ -1261,9 +1261,9 @@ read_abbrev (DSO *dso, unsigned char *ptr)
 	  form = read_uleb128 (p);
 	  if (form == 2
 	      || (form > DW_FORM_flag_present
-		  && (form != DW_FORM_ref_sig8
-		      || form != DW_FORM_data16
-		      || form != DW_FORM_line_strp)))
+		  && !(form == DW_FORM_ref_sig8
+		       || form == DW_FORM_data16
+		       || form == DW_FORM_line_strp)))
 	    {
 	      error (0, 0, "%s: Unknown DWARF %s",
 		     dso->filename, get_DW_FORM_str (form));
