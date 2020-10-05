@@ -670,7 +670,7 @@ get_DW_AT_str (unsigned int at)
   return buf;
 }
 
-/* Retrun a DW_UT_* name.  */
+/* Return a DW_UT_* name.  */
 static const char *
 get_DW_UT_str (unsigned int ut)
 {
@@ -689,6 +689,28 @@ get_DW_UT_str (unsigned int ut)
   if (name)
     return name;
   sprintf (buf, "DW_UT_%u", ut);
+  return buf;
+}
+
+/* Retrun a DW_LNCT_* name.  */
+static const char *
+get_DW_LNCT_str (unsigned int lnct)
+{
+  const char *name;
+  static char buf[9 + 3 * sizeof (int)];
+  switch (lnct)
+    {
+    case DW_LNCT_path: name = "DW_LNCT_path"; break;
+    case DW_LNCT_directory_index: name = "DW_LNCT_directory_index"; break;
+    case DW_LNCT_timestamp: name = "DW_LNCT_timestamp"; break;
+    case DW_LNCT_size: name = "DW_LNCT_size"; break;
+    case DW_LNCT_MD5: name = "DW_LNCT_MD5"; break;
+
+    default: name = 0; break;
+    }
+  if (name)
+    return name;
+  sprintf (buf, "DW_LNCT_%u", lnct);
   return buf;
 }
 
@@ -1316,6 +1338,86 @@ read_abbrev (DSO *dso, unsigned char *ptr)
   return h;
 }
 
+/* For a die attribute with form FORM starting at PTR, with the die in CU,
+   return the pointer after the attribute, assuming FORM is not
+   dw_form_indirect.  */
+static inline unsigned char * FORCE_INLINE
+skip_attr_no_dw_form_indirect (unsigned int cu_version, uint32_t form,
+			       unsigned char *ptr)
+{
+  size_t len = 0;
+
+  switch (form)
+    {
+    case DW_FORM_ref_addr:
+      ptr += cu_version == 2 ? ptr_size : 4;
+      break;
+    case DW_FORM_addr:
+      ptr += ptr_size;
+      break;
+    case DW_FORM_flag_present:
+    case DW_FORM_implicit_const:
+      break;
+    case DW_FORM_ref1:
+    case DW_FORM_flag:
+    case DW_FORM_data1:
+      ++ptr;
+      break;
+    case DW_FORM_ref2:
+    case DW_FORM_data2:
+      ptr += 2;
+      break;
+    case DW_FORM_ref4:
+    case DW_FORM_data4:
+    case DW_FORM_sec_offset:
+    case DW_FORM_strp:
+    case DW_FORM_line_strp:
+      ptr += 4;
+      break;
+    case DW_FORM_ref8:
+    case DW_FORM_data8:
+    case DW_FORM_ref_sig8:
+      ptr += 8;
+      break;
+    case DW_FORM_data16:
+      ptr += 16;
+      break;
+    case DW_FORM_sdata:
+    case DW_FORM_ref_udata:
+    case DW_FORM_udata:
+      skip_leb128 (ptr);
+      break;
+    case DW_FORM_string:
+      ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
+      break;
+    case DW_FORM_indirect:
+      abort ();
+    case DW_FORM_block1:
+      len = *ptr++;
+      break;
+    case DW_FORM_block2:
+      len = read_16 (ptr);
+      form = DW_FORM_block1;
+      break;
+    case DW_FORM_block4:
+      len = read_32 (ptr);
+      form = DW_FORM_block1;
+      break;
+    case DW_FORM_block:
+    case DW_FORM_exprloc:
+      len = read_uleb128 (ptr);
+      form = DW_FORM_block1;
+      break;
+    default:
+      abort ();
+    }
+
+  if (form == DW_FORM_block1)
+    ptr += len;
+
+  return ptr;
+}
+
 /* Read the directory and file table from .debug_line offset OFF,
    record it in CU.  */
 static int
@@ -1327,7 +1429,16 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
   unsigned char *endcu, *endprol;
   unsigned char opcode_base;
   unsigned int culen;
-  uint32_t value, dirt_cnt, file_cnt;
+  uint32_t value, version, ndirs, nfiles, dirt_cnt, file_cnt;
+  /* DWARF5 has a dynamic table of elements in possible different
+     forms.  But we are only interested in the known elements (path,
+     dir index, time, size and possibly later md5).  */
+  unsigned char n, nelems = 0;
+  int path_ndx = -1;
+  int dir_ndx = -1;
+  int time_ndx = -1;
+  int size_ndx = -1;
+  uint16_t elems[256];
 
   if (off >= debug_sections[DEBUG_LINE].size - 4)
     {
@@ -1355,11 +1466,36 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
     }
 
   value = read_16 (ptr);
-  if (value < 2 || value > 4)
+  if (value < 2 || value > 5)
     {
       error (0, 0, "%s: DWARF version %d in .debug_line unhandled",
 	     dso->filename, value);
       return 1;
+    }
+  version = value;
+
+  if (version >= 5)
+    {
+      int addr_size, seg_size;
+      if (ptr + 2 > endcu)
+	{
+	  error (0, 0, "%s: .debug_line header too short", dso->filename);
+	  return 1;
+	}
+      addr_size = *ptr++;
+      seg_size = *ptr++;
+      if (addr_size != ptr_size)
+	{
+	  error (0, 0, "%s: .debug_line address size differs from CU ptr size",
+		 dso->filename);
+	  return 1;
+	}
+      if (seg_size != 0)
+	{
+	  error (0, 0, "%s: .debug_line non-zero segment selector size",
+		 dso->filename);
+	  return 1;
+	}
     }
 
   endprol = ptr + 4;
@@ -1371,73 +1507,381 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
       return 1;
     }
 
-  opcode_base = ptr[4 + (value >= 4)];
-  ptr = dir = ptr + 4 + (value >= 4) + opcode_base;
+  opcode_base = ptr[4 + (version >= 4)];
+  ptr = dir = ptr + 4 + (version >= 4) + opcode_base;
 
   /* dir table: */
-  value = 1;
-  while (*ptr != 0)
+  if (version < 5)
     {
-      ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
-      ++value;
+      value = 1;
+      while (*ptr != 0)
+	{
+	  ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
+	  ++value;
+	}
+      ndirs = value;
+    }
+  else
+    {
+      nelems = *ptr++;
+      for (n = 0; n < nelems; n++)
+	{
+	  uint16_t lnct = read_uleb128 (ptr);
+	  uint16_t form = read_uleb128 (ptr);
+	  if (lnct == DW_LNCT_path)
+	    {
+	      if (path_ndx != -1)
+		{
+		  error (0, 0, "%s: .debug_line duplicate dir path elements",
+			 dso->filename);
+		  return 1;
+		}
+	      path_ndx = n;
+	    }
+	  else
+	    {
+	      error (0, 0, "%s: .debug_line unhandled dir element %s",
+		     dso->filename, get_DW_LNCT_str (lnct));
+	      return 1;
+	    }
+
+	  if (form != DW_FORM_string
+	      && form != DW_FORM_strp
+	      && form != DW_FORM_line_strp)
+	    {
+	      error (0, 0, "%s: .debug_line unhandled form %s for dir path",
+		     dso->filename, get_DW_FORM_str (form));
+	      return 1;
+	    }
+
+	  elems[n] = form;
+	}
+
+      ndirs = read_uleb128 (ptr);
     }
 
-  dirt = (unsigned char **) alloca (value * sizeof (unsigned char *));
-  dirt[0] = NULL;
-  dirt_cnt = 1;
-  ptr = dir;
-  while (*ptr != 0)
+  dirt = (unsigned char **) alloca (ndirs * sizeof (unsigned char *));
+  if (version < 5)
     {
-      dirt[dirt_cnt++] = ptr;
-      ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
+      dirt[0] = NULL;
+      dirt_cnt = 1;
+      ptr = dir;
+      while (*ptr != 0)
+	{
+	  dirt[dirt_cnt++] = ptr;
+	  ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
+	}
+      ptr++;
     }
-  ptr++;
+  else
+    {
+      for (dirt_cnt = 0; dirt_cnt < ndirs; dirt_cnt++)
+	{
+	  for (n = 0; n < nelems; n++)
+	    {
+	      uint32_t form = elems[n];
+	      if (n == path_ndx)
+		{
+		  unsigned char *d;
+		  switch (form)
+		    {
+		    case DW_FORM_string:
+		      d = (unsigned char *) ptr;
+		      break;
+		    case DW_FORM_strp:
+		      {
+			unsigned int strp = do_read_32 (ptr);
+			if (strp >= debug_sections[DEBUG_STR].size)
+			  d = NULL;
+			else
+			  d = ((unsigned char *)
+			       debug_sections[DEBUG_STR].data
+			       + strp);
+		      }
+		      break;
+		    case DW_FORM_line_strp:
+		      {
+			unsigned int line_strp = do_read_32 (ptr);
+			if (line_strp >= debug_sections[DEBUG_LINE_STR].size)
+			  d = NULL;
+			else
+			  d = ((unsigned char *)
+			       debug_sections[DEBUG_LINE_STR].data
+			       + line_strp);
+		      }
+		      break;
+		    default:
+		      d = NULL;
+		      break;
+		    }
+
+		  if (d == NULL)
+		    {
+		      error (0, 0, "%s: .debug_line bad dir path",
+			     dso->filename);
+		      return 1;
+		    }
+
+		  /* Note we do this even for the zero entry, which is
+		     marked as NULL for pre-DWARF5 line tables.  This
+		     is important for when we merge file entries
+		     together for a multifile because the zero dir
+		     entry could differ.  It is should be equivalent
+		     to the CU DIE comp_dir attribute, but we don't
+		     track that all CUs referring to the (same) line
+		     table share identical an DW_AT_comp_dir value.  */
+		  dirt[dirt_cnt] = d;
+		}
+	      ptr = skip_attr_no_dw_form_indirect (cu->cu_version, form, ptr);
+	    }
+	}
+    }
 
   /* file table: */
   file = ptr;
-  file_cnt = 0;
-  while (*ptr != 0)
+  if (version < 5)
     {
-      ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
-      value = read_uleb128 (ptr);
-
-      if (value >= dirt_cnt)
+      file_cnt = 0;
+      while (*ptr != 0)
 	{
-	  error (0, 0, "%s: Wrong directory table index %u",
-		 dso->filename, value);
-	  return 1;
+	  ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
+	  value = read_uleb128 (ptr);
+
+	  if (value >= dirt_cnt)
+	    {
+	      error (0, 0, "%s: Wrong directory table index %u",
+		     dso->filename, value);
+	      return 1;
+	    }
+
+	  skip_leb128 (ptr);
+	  skip_leb128 (ptr);
+	  file_cnt++;
+	}
+      nfiles = file_cnt;
+    }
+  else
+    {
+      nelems = *ptr++;
+      path_ndx = -1;
+      for (n = 0; n < nelems; n++)
+	{
+	  uint16_t lnct = read_uleb128 (ptr);
+	  uint16_t form = read_uleb128 (ptr);
+	  switch (lnct)
+	    {
+	    case DW_LNCT_path:
+	      if (path_ndx != -1)
+		{
+		  error (0, 0,
+			 "%s: .debug_line duplicate file path elements",
+			 dso->filename);
+		  return 1;
+		}
+	      path_ndx = n;
+
+	      /* Currently we only handle two string form which always
+		 stay... */
+	      if (form != DW_FORM_string && form != DW_FORM_line_strp)
+		{
+		  error (0, 0,
+			 "%s: .debug_line unhandled form %s for file path",
+			 dso->filename, get_DW_FORM_str (form));
+		  return 1;
+		}
+	      break;
+
+	    case DW_LNCT_directory_index:
+	      if (dir_ndx != -1)
+		{
+		  error (0, 0,
+			 "%s: .debug_line duplicate file dir elements",
+			 dso->filename);
+		  return 1;
+		}
+	      dir_ndx = n;
+
+	      if (form != DW_FORM_data1
+		  && form != DW_FORM_data2
+		  && form != DW_FORM_udata)
+		{
+		  error (0, 0,
+			 "%s: .debug_line unhandled form %s for dir index",
+			 dso->filename, get_DW_FORM_str (form));
+		  return 1;
+		}
+	      break;
+
+	    case DW_LNCT_timestamp:
+	      if (time_ndx != -1)
+		{
+		  error (0, 0,
+			 "%s: .debug_line duplicate file time elements",
+			 dso->filename);
+		  return 1;
+		}
+	      time_ndx = n;
+
+	      if (form != DW_FORM_udata
+		  && form != DW_FORM_data4
+		  && form != DW_FORM_data8)
+		{
+		  error (0, 0,
+			 "%s: .debug_line unhandled form %s for file time",
+			 dso->filename, get_DW_FORM_str (form));
+		  return 1;
+		}
+	      break;
+
+	    case DW_LNCT_size:
+	      if (size_ndx != -1)
+		{
+		  error (0, 0,
+			 "%s: .debug_line duplicate file size elements",
+			 dso->filename);
+		  return 1;
+		}
+	      size_ndx = n;
+
+	      if (form != DW_FORM_udata
+		  && form != DW_FORM_data1
+		  && form != DW_FORM_data2
+		  && form != DW_FORM_data4
+		  && form != DW_FORM_data8)
+		{
+		  error (0, 0,
+			 "%s: .debug_line unhandled form %s for file size",
+			 dso->filename, get_DW_FORM_str (form));
+		  return 1;
+		}
+	      break;
+
+	    default:
+	      error (0, 0, "%s: .debug_line unhandled file element %s",
+		     dso->filename, get_DW_LNCT_str (lnct));
+	      return 1;
+	    }
+	  elems[n] = form;
 	}
 
-      skip_leb128 (ptr);
-      skip_leb128 (ptr);
-      file_cnt++;
+      nfiles = read_uleb128 (ptr);
+      nfiles--; /* We will skip the first (zero) entry.  */
     }
 
-  cu->cu_nfiles = file_cnt;
-  cu->cu_files = pool_alloc (dw_file, file_cnt * sizeof (struct dw_file));
-  memset (cu->cu_files, 0, file_cnt * sizeof (struct dw_file));
+  cu->cu_nfiles = nfiles;
+  cu->cu_files = pool_alloc (dw_file, nfiles * sizeof (struct dw_file));
+  memset (cu->cu_files, 0, nfiles * sizeof (struct dw_file));
 
-  ptr = file;
-  file_cnt = 0;
-  while (*ptr != 0)
+  if (version < 5)
+    ptr = file;
+
+  for (file_cnt = 0; file_cnt < nfiles; file_cnt++)
     {
-      unsigned char *end;
-      cu->cu_files[file_cnt].file = (char *) ptr;
-      ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
-      end = ptr;
-      value = read_uleb128 (ptr);
+      char *f = NULL;
+      char *end = NULL;
+      uint32_t d = 0;
+      uint64_t time = 0;
+      uint64_t size = 0;
+      if (version < 5)
+	{
+	  f = (char *) ptr;
+	  ptr = (unsigned char *) strchr ((char *)ptr, 0) + 1;
+	  end = (char *) ptr;
+	  d = read_uleb128 (ptr);
+	  time = read_uleb128 (ptr);
+	  size = read_uleb128 (ptr);
+	}
+      else
+	{
+	  /* Skip zero entry.  */
+	  if (file_cnt == 0)
+	    for (n = 0; n < nelems; n++)
+	      ptr = skip_attr_no_dw_form_indirect (cu->cu_version,
+						   elems[n], ptr);
 
-      if (value >= dirt_cnt)
+	  for (n = 0; n < nelems; n++)
+	    {
+	      uint32_t form = elems[n];
+	      if (n == path_ndx)
+		{
+		  switch (form)
+		    {
+		    case DW_FORM_string:
+		      f = (char *) ptr;
+		      end = strchr ((char *)ptr, 0) + 1;;
+		      break;
+		    case DW_FORM_strp:
+		      {
+			unsigned int strp = do_read_32 (ptr);
+			if (strp >= debug_sections[DEBUG_STR].size)
+			  f = NULL;
+			else
+			  {
+			    f = ((char *) debug_sections[DEBUG_STR].data
+				 + strp);
+			    end = f + strlen (f) + 1;
+			  }
+		      }
+		      break;
+		    case DW_FORM_line_strp:
+		      {
+			unsigned int line_strp = do_read_32 (ptr);
+			if (line_strp >= debug_sections[DEBUG_LINE_STR].size)
+			  f = NULL;
+			else
+			  {
+			    f = ((char *) debug_sections[DEBUG_LINE_STR].data
+				 + line_strp);
+			    end = f + strlen (f) + 1;
+			  }
+		      }
+		      break;
+		    default:
+		      f = NULL;
+		      break;
+		    }
+
+		  if (f == NULL)
+		    {
+		      error (0, 0, "%s: .debug_line bad file path",
+			     dso->filename);
+		      return 1;
+		    }
+		}
+	      else if (n == dir_ndx)
+		{
+		  switch (form)
+		    {
+		    case DW_FORM_data1:
+		      d = *ptr;
+		      break;
+		    case DW_FORM_data2:
+		      d = do_read_16 (ptr);
+		      break;
+		    case DW_FORM_udata:
+		      {
+			unsigned char *p = ptr;
+			d = read_uleb128 (p);
+		      }
+		      break;
+		    }
+		}
+	      ptr = skip_attr_no_dw_form_indirect (cu->cu_version, form, ptr);
+	    }
+	}
+
+      cu->cu_files[file_cnt].file = f;
+      if (d >= dirt_cnt)
 	{
 	  error (0, 0, "%s: Wrong directory table index %u",
 		 dso->filename, value);
 	  return 1;
 	}
 
-      cu->cu_files[file_cnt].dir = (char *) dirt[value];
-      cu->cu_files[file_cnt].time = read_uleb128 (ptr);
-      cu->cu_files[file_cnt].size = read_uleb128 (ptr);
-      size_t file_len = (char *) end - cu->cu_files[file_cnt].file;
+      cu->cu_files[file_cnt].dir = (char *) dirt[d];
+      cu->cu_files[file_cnt].time = time;
+      cu->cu_files[file_cnt].size = size;
+      size_t file_len = (char *) end - f;
       size_t strlen_file = file_len - 1;
       bool file_has_slash = false;
       if (cu->cu_files[file_cnt].file[0] != '/'
@@ -1467,7 +1911,6 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
 	   && cu->cu_files[file_cnt].file[0] == '<'
 	   && cu->cu_files[file_cnt].file[strlen_file - 1] == '>'
 	   && strchr (cu->cu_files[file_cnt].file, '/') == NULL);
-      file_cnt++;
     }
 
   return 0;
@@ -1671,85 +2114,6 @@ off_htab_lookup (dw_cu_ref cu, unsigned int die_offset)
     return (dw_die_ref) htab_find_with_hash (types_off_htab, &die,
 					     off_hash (&die));
   return (dw_die_ref) htab_find_with_hash (off_htab, &die, off_hash (&die));
-}
-
-/* For a die attribute with form FORM starting at PTR, with the die in CU,
-   return the pointer after the attribute, assuming FORM is not
-   dw_form_indirect.  */
-static inline unsigned char * FORCE_INLINE
-skip_attr_no_dw_form_indirect (unsigned int cu_version, uint32_t form,
-			       unsigned char *ptr)
-{
-  size_t len = 0;
-
-  switch (form)
-    {
-    case DW_FORM_ref_addr:
-      ptr += cu_version == 2 ? ptr_size : 4;
-      break;
-    case DW_FORM_addr:
-      ptr += ptr_size;
-      break;
-    case DW_FORM_flag_present:
-      break;
-    case DW_FORM_ref1:
-    case DW_FORM_flag:
-    case DW_FORM_data1:
-      ++ptr;
-      break;
-    case DW_FORM_ref2:
-    case DW_FORM_data2:
-      ptr += 2;
-      break;
-    case DW_FORM_ref4:
-    case DW_FORM_data4:
-    case DW_FORM_sec_offset:
-    case DW_FORM_strp:
-    case DW_FORM_line_strp:
-      ptr += 4;
-      break;
-    case DW_FORM_ref8:
-    case DW_FORM_data8:
-    case DW_FORM_ref_sig8:
-      ptr += 8;
-      break;
-    case DW_FORM_data16:
-      ptr += 16;
-      break;
-    case DW_FORM_sdata:
-    case DW_FORM_ref_udata:
-    case DW_FORM_udata:
-      skip_leb128 (ptr);
-      break;
-    case DW_FORM_string:
-      ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
-      break;
-    case DW_FORM_indirect:
-      abort ();
-    case DW_FORM_block1:
-      len = *ptr++;
-      break;
-    case DW_FORM_block2:
-      len = read_16 (ptr);
-      form = DW_FORM_block1;
-      break;
-    case DW_FORM_block4:
-      len = read_32 (ptr);
-      form = DW_FORM_block1;
-      break;
-    case DW_FORM_block:
-    case DW_FORM_exprloc:
-      len = read_uleb128 (ptr);
-      form = DW_FORM_block1;
-      break;
-    default:
-      abort ();
-    }
-
-  if (form == DW_FORM_block1)
-    ptr += len;
-
-  return ptr;
 }
 
 /* For a die attribute ATTR starting at PTR, with the die in CU, return the
@@ -2432,7 +2796,7 @@ read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 	    case DW_LLE_GNU_view_pair:
 	      if (cu->cu_version != 5)
 		error (0, 0,
-		       "%s: DW_LLE_GNU_view_pair used with DWARF version %u\n",
+		       "%s: DW_LLE_GNU_view_pair used with DWARF version %u",
 		       dso->filename, cu->cu_version);
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
@@ -2686,7 +3050,7 @@ read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
 	    case DW_LLE_GNU_view_pair:
 	      if (cu->cu_version != 5)
 		error (0, 0,
-		       "%s: DW_LLE_GNU_view_pair used with DWARF version %u\n",
+		       "%s: DW_LLE_GNU_view_pair used with DWARF version %u",
 		       dso->filename, cu->cu_version);
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
@@ -13506,7 +13870,7 @@ write_dso (DSO *dso, const char *file, struct stat *st, bool save_to_temp)
 
   if (elf_end (elf) < 0)
     {
-      error (0, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno ()));
+      error (0, 0, "elf_end failed: %s", elf_errmsg (elf_errno ()));
       unlink (file);
       elf_end (elf);
       close (fd);
@@ -13542,7 +13906,7 @@ write_dso (DSO *dso, const char *file, struct stat *st, bool save_to_temp)
       unlink (buf);
       if (link (dso->filename, buf) != 0)
 	{
-	  error (0, errno, "Failed to link file: %s\n", dso->filename);
+	  error (0, errno, "Failed to link file: %s", dso->filename);
 	  return 1;
 	}
     }
@@ -14633,7 +14997,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 
   if (elf_end (dso->elf) < 0)
     {
-      error (0, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno ()));
+      error (0, 0, "elf_end failed: %s", elf_errmsg (elf_errno ()));
       ret = 1;
     }
   close (fd);
@@ -15015,7 +15379,7 @@ optimize_multifile (unsigned int *die_count)
 
   if (elf_end (elf) < 0)
     {
-      error (0, 0, "elf_end failed: %s\n", elf_errmsg (elf_errno ()));
+      error (0, 0, "elf_end failed: %s", elf_errmsg (elf_errno ()));
       goto fail;
     }
 
@@ -15589,7 +15953,7 @@ main (int argc, char *argv[])
   const char *file;
 
   if (elf_version (EV_CURRENT) == EV_NONE)
-    error (1, 0, "library out of date\n");
+    error (1, 0, "library out of date");
 
   while (1)
     {
