@@ -5,7 +5,7 @@ cp 1 2
 
 dwz -m 3 1 2
 
-readelf -w 1 > READELF 2>/dev/null
+readelf -wi 1 > READELF 2>/dev/null
 
 offsets=$(grep '(DW_TAG_partial_unit' READELF \
 	      | awk '{print $1}' \
