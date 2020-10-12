@@ -465,6 +465,12 @@ typedef struct
    with a single pointer size are handled.  */
 static int ptr_size;
 
+/* Lowest debug_line version we have seen.  When writing out the multi
+   file .debug_line we'll only use a DWARF5 version when there is no
+   lower line table seen (since the debug_line dir and file table is
+   shared between all CUs).  */
+static unsigned int lowest_line_version = 5;
+
 /* Utility functions and macros for reading/writing values in
    given ELF endianity, which might be different from host endianity.
    No specific alignment is expected.  */
@@ -1473,6 +1479,9 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
       return 1;
     }
   version = value;
+
+  if (version < lowest_line_version)
+    lowest_line_version = version;
 
   if (version >= 5)
     {
@@ -14240,18 +14249,34 @@ write_multifile_strp (void)
   return ret;
 }
 
-/* Helper to record all strp_entry entries from strp_htab.
+/* Hold some statistics on the line entries so we know whether to emit
+   time and/or sizes.  Used by list_line_entries used by
+   write_multifile_line.  */
+struct line_stats
+{
+  struct line_entry ***end;
+  bool has_time;
+  bool has_size;
+};
+
+/* Helper to find the end of the line_htab entries and other stats.
    Called through htab_traverse.  */
 static int
 list_line_entries (void **slot, void *data)
 {
-  struct line_entry ***end = (struct line_entry ***) data;
-  **end = (struct line_entry *) *slot;
+  struct line_stats *stats = (struct line_stats *) data;
+  struct line_entry *entry = (struct line_entry *) *slot;
+  struct line_entry ***end = stats->end;
+  **end = entry;
   (*end)++;
+  if (entry->file->time != 0)
+    stats->has_time = true;
+  if (entry->file->size != 0)
+    stats->has_size = true;
   return 1;
 }
 
-/* Helper function for write_multifile_strp to sort strp_entry
+/* Helper function for write_multifile_strp to sort line_entry
    by increasing new_id.  */
 static int
 line_id_cmp (const void *p, const void *q)
@@ -14274,13 +14299,15 @@ static int
 write_multifile_line (void)
 {
   unsigned int filecnt = 0, dircnt = 0, filetbllen = 0, dirtbllen = 0;
-  unsigned int len, i, j;
+  unsigned int header_len, len, i, j;
   unsigned char *line, *ptr;
   struct line_entry **filearr = NULL;
+  struct line_stats line_stats;
   unsigned int *diridx = NULL, *dirarr = NULL;
   unsigned char buf[17];
   int ret = 0;
 
+  line_stats.has_time = line_stats.has_size = false;
   if (line_htab)
     {
       struct line_entry **end;
@@ -14288,7 +14315,8 @@ write_multifile_line (void)
       filearr = (struct line_entry **)
 		obstack_alloc (&ob, filecnt * sizeof (*filearr));
       end = filearr;
-      htab_traverse (line_htab, list_line_entries, (void *) &end);
+      line_stats.end = &end;
+      htab_traverse (line_htab, list_line_entries, (void *) &line_stats);
       assert (filearr + filecnt == end);
       diridx = (unsigned int *)
 	       obstack_alloc (&ob, filecnt * sizeof (*diridx));
@@ -14345,13 +14373,45 @@ write_multifile_line (void)
 	    }
 	  filetbllen += strlen (file) + 1;
 	  filetbllen += size_of_uleb128 (diridx[i]);
-	  filetbllen += size_of_uleb128 (filearr[i]->file->time);
-	  filetbllen += size_of_uleb128 (filearr[i]->file->size);
+	  if (lowest_line_version < 5 || line_stats.has_time)
+	    filetbllen += size_of_uleb128 (filearr[i]->file->time);
+	  if (lowest_line_version < 5 || line_stats.has_size)
+	    filetbllen += size_of_uleb128 (filearr[i]->file->size);
 	}
       dirarr = (unsigned int *) obstack_finish (&ob);
     }
 
-  len = 17 + filetbllen + dirtbllen;
+  /* standard .debug_line "header" length (both version 2 and 5):
+     unit_length (4) + version (2) + header_length (4) +
+     min_instr_length (1) + default_is_stmt (1) + line_base (1) +
+     line_range (1) + opcode_base (1) = 15
+
+     version 2 adds 2 bytes, one zero byte to terminate dir and file lists.
+
+     version 5 adds at least 11 bytes, max_ops_per_instr (1) +
+     address_size (1) + segment_size (1) + dir_entry_format_cnt (1) +
+     format_pair (2), file_entry_format_cnt (1) + file_format_pairs
+     (4). Plus dircnt (uleb128) + format_pair (2) if has_time +
+     format_pair (2) if has_size) + filecnt (uleb128).
+
+     version 5 also has 2 extra 6 byte "<dwz>" string entries for dir
+     and file entry zero, plus one for the zero file entry dir idx.
+  */
+  header_len = 15;
+  if (lowest_line_version < 5)
+    header_len += 2;
+  else
+    {
+      header_len += 11;
+      header_len += size_of_uleb128 (dircnt + 1);
+      header_len += size_of_uleb128 (filecnt + 1);
+      if (line_stats.has_time)
+	header_len += 2;
+      if (line_stats.has_size)
+	header_len += 2;
+      header_len += 2 * 6 + 1;
+    }
+  len = header_len + filetbllen + dirtbllen;
   if (unlikely (op_multifile))
     {
       debug_sections[DEBUG_LINE].new_size = len;
@@ -14369,20 +14429,41 @@ write_multifile_line (void)
 	  return 1;
 	}
 
-      if (len == 17)
+      if (len == header_len)
 	line = buf;
       else
 	line = (unsigned char *) obstack_alloc (&ob, len);
     }
   ptr = line;
   write_32 (ptr, len - 4);	/* Total length.  */
-  write_16 (ptr, 2);		/* DWARF version.  */
-  write_32 (ptr, len - 10);	/* Header length.  */
+  if (lowest_line_version < 5)
+    write_16 (ptr, 2);		/* DWARF version.  */
+  else
+    {
+      write_16 (ptr, 5);	/* DWARF version.  */
+      write_8 (ptr, multi_ptr_size);	/* Address size.  */
+      write_8 (ptr, 0);	       	/* Segment size.  */
+    }
+  write_32 (ptr,		/* Header length.  */
+	    len - (lowest_line_version < 5 ? 10 : 12));
   write_8 (ptr, 1);		/* Minimum insn length.  */
+  if (lowest_line_version >= 5)
+    write_8 (ptr, 1);		/* Maximum ops per instr.  */
   write_8 (ptr, 1);		/* Default is_stmt.  */
   write_8 (ptr, 0);		/* Line base.  */
   write_8 (ptr, 1);		/* Line range.  */
   write_8 (ptr, 1);		/* Opcode base.  */
+
+  if (lowest_line_version >= 5)
+    {
+      write_8 (ptr, 1);		/* Dir entry format count.  */
+      write_uleb128 (ptr, DW_LNCT_path);
+      write_uleb128 (ptr, DW_FORM_string);
+      write_uleb128 (ptr, dircnt + 1); /* Dir cnt.  */
+      memcpy (ptr, "<dwz>", 6);	/* Zero entry empty dir path.  */
+      ptr += 6;
+    }
+
   for (i = 0; i < dircnt; i++)
     {
       unsigned int l;
@@ -14404,7 +14485,36 @@ write_multifile_line (void)
 	}
       ptr += l;
     }
-  write_8 (ptr, 0);		/* Terminate dir table.  */
+  if (lowest_line_version < 5)
+    write_8 (ptr, 0);		/* Terminate dir table.  */
+  else
+    {
+      unsigned int format_cnt = 2 + line_stats.has_size + line_stats.has_time;
+      write_8 (ptr, format_cnt);	/* File entry format count.  */
+      write_uleb128 (ptr, DW_LNCT_path);
+      write_uleb128 (ptr, DW_FORM_string);
+      write_uleb128 (ptr, DW_LNCT_directory_index);
+      write_uleb128 (ptr, DW_FORM_udata);
+      if (line_stats.has_time)
+	{
+	  write_uleb128 (ptr, DW_LNCT_timestamp);
+	  write_uleb128 (ptr, DW_FORM_udata);
+	}
+      if (line_stats.has_size)
+	{
+	  write_uleb128 (ptr, DW_LNCT_size);
+	  write_uleb128 (ptr, DW_FORM_udata);
+	}
+      write_uleb128 (ptr, filecnt + 1); /* File names cnt.  */
+      memcpy (ptr, "<dwz>", 6);		/* Zero entry empty file path.  */
+      ptr += 6;
+      write_8 (ptr, 0);	       		/* Zero entry zero diridx.  */
+      if (line_stats.has_time)
+	write_8 (ptr, 0);
+      if (line_stats.has_size)
+	write_8 (ptr, 0);
+    }
+
   for (i = 0; i < filecnt; i++)
     {
       const char *file = filearr[i]->file->file;
@@ -14415,10 +14525,13 @@ write_multifile_line (void)
       memcpy (ptr, file, l);
       ptr += l;
       write_uleb128 (ptr, diridx[i]);
-      write_uleb128 (ptr, filearr[i]->file->time);
-      write_uleb128 (ptr, filearr[i]->file->size);
+      if (lowest_line_version < 5 || line_stats.has_time)
+	write_uleb128 (ptr, filearr[i]->file->time);
+      if (lowest_line_version < 5 || line_stats.has_size)
+	write_uleb128 (ptr, filearr[i]->file->size);
     }
-  write_8 (ptr, 0);		/* Terminate file table.  */
+  if (lowest_line_version < 5)
+    write_8 (ptr, 0);		/* Terminate file table.  */
   assert (ptr == line + len);
 
   if (likely (!op_multifile))
