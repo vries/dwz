@@ -14304,7 +14304,7 @@ write_multifile_line (void)
   struct line_entry **filearr = NULL;
   struct line_stats line_stats;
   unsigned int *diridx = NULL, *dirarr = NULL;
-  unsigned char buf[17];
+  unsigned char buf[45]; /* Max header_len, see below.  */
   int ret = 0;
 
   line_stats.has_time = line_stats.has_size = false;
@@ -14430,7 +14430,10 @@ write_multifile_line (void)
 	}
 
       if (len == header_len)
-	line = buf;
+	{
+	  line = buf;
+	  assert (sizeof (buf) >= header_len);
+	}
       else
 	line = (unsigned char *) obstack_alloc (&ob, len);
     }
