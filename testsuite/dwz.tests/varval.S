@@ -241,7 +241,7 @@
         .uleb128        0x3f            /* DW_AT_external */
         .uleb128        0x0c            /* DW_FORM_flag */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        6               /* Abbrev start */
@@ -263,7 +263,7 @@
         .uleb128        0x3f            /* DW_AT_external */
         .uleb128        0x0c            /* DW_FORM_flag */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        8               /* Abbrev start */
@@ -289,7 +289,7 @@
         .uleb128        0x3f            /* DW_AT_external */
         .uleb128        0x0c            /* DW_FORM_flag */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        10              /* Abbrev start */
@@ -397,7 +397,7 @@
         .uleb128        0x3f            /* DW_AT_external */
         .uleb128        0x0c            /* DW_FORM_flag */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        20              /* Abbrev start */
@@ -408,7 +408,7 @@
         .uleb128        0x3f            /* DW_AT_external */
         .uleb128        0x0c            /* DW_FORM_flag */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        21              /* Abbrev start */
@@ -434,7 +434,7 @@
         .uleb128        0x49            /* DW_AT_type */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        23              /* Abbrev start */
@@ -445,7 +445,7 @@
         .uleb128        0x49            /* DW_AT_type */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        24              /* Abbrev start */
@@ -454,7 +454,7 @@
         .uleb128        0x31            /* DW_AT_abstract_origin */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        25              /* Abbrev start */
@@ -465,7 +465,7 @@
         .uleb128        0x49            /* DW_AT_type */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        26              /* Abbrev start */
@@ -476,7 +476,7 @@
         .uleb128        0x49            /* DW_AT_type */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        27              /* Abbrev start */
@@ -487,7 +487,7 @@
         .uleb128        0x49            /* DW_AT_type */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        28              /* Abbrev start */
@@ -498,7 +498,7 @@
         .uleb128        0x49            /* DW_AT_type */
         .uleb128        0x13            /* DW_FORM_ref4 */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .uleb128        29              /* Abbrev start */
@@ -507,7 +507,7 @@
         .uleb128        0x03            /* DW_AT_name */
         .uleb128        0x08            /* DW_FORM_string */
         .uleb128        0x02            /* DW_AT_location */
-        .uleb128        0x09            /* SPECIAL_expr */
+        .uleb128        0x18            /* DW_FORM_exprloc */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
         .byte        0x0                /* Terminator */
