@@ -12,7 +12,9 @@ cnt=$(readelf -wi 1 \
 	    | grep '(DW_TAG_partial_unit' \
 	    | wc -l)
 
-[ $cnt -eq 0 ]
+if [ $cnt -ne 0 ]; then
+    exit 77
+fi
 
 cp $execs/min 1
 
