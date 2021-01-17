@@ -2807,6 +2807,7 @@ read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
     }
   endsec = ptr + debug_sections[sec].size;
   ptr += offset;
+again:
   while (ptr < endsec)
     {
       if (sec == DEBUG_LOC)
@@ -2828,11 +2829,11 @@ read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 	  switch (lle)
 	    {
 	    case DW_LLE_end_of_list:
-	      return 0;
+	      goto done;
 
 	    case DW_LLE_base_addressx:
 	      skip_leb128 (ptr);
-	      continue;
+	      goto again;
 
 	    case DW_LLE_startx_endx:
 	      skip_leb128 (ptr);
@@ -2858,7 +2859,7 @@ read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 
 	    case DW_LLE_base_address:
 	      ptr += ptr_size;
-	      continue;
+	      goto again;
 
 	    case DW_LLE_start_end:
 	      ptr += 2 * ptr_size;
@@ -2878,7 +2879,7 @@ read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 		       dso->filename, cu->cu_version);
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
-	      continue;
+	      goto again;
 
 	    default:
 	      error (0, 0,
@@ -2903,6 +2904,7 @@ read_loclist_low_mem_phase1 (DSO *dso, dw_cu_ref cu, dw_die_ref die,
       ptr += len;
     }
 
+done:
   return 0;
 }
 
@@ -3061,6 +3063,7 @@ read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
     }
   endsec = ptr + debug_sections[sec].size;
   ptr += offset;
+again:
   while (ptr < endsec)
     {
       if (cu->cu_version < 5)
@@ -3082,11 +3085,11 @@ read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
 	  switch (lle)
 	    {
 	    case DW_LLE_end_of_list:
-	      return 0;
+	      goto done;
 
 	    case DW_LLE_base_addressx:
 	      skip_leb128 (ptr);
-	      continue;
+	      goto again;
 
 	    case DW_LLE_startx_endx:
 	      skip_leb128 (ptr);
@@ -3112,7 +3115,7 @@ read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
 
 	    case DW_LLE_base_address:
 	      ptr += ptr_size;
-	      continue;
+	      goto again;
 
 	    case DW_LLE_start_end:
 	      ptr += 2 * ptr_size;
@@ -3132,7 +3135,7 @@ read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
 		       dso->filename, cu->cu_version);
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
-	      continue;
+	      goto again;
 
 	    default:
 	      error (0, 0,
@@ -3156,6 +3159,7 @@ read_loclist (DSO *dso, dw_cu_ref cu, dw_die_ref die, GElf_Addr offset)
       ptr += len;
     }
 
+done:
   if (need_adjust)
     {
       struct debug_loc_adjust adj, *a;
@@ -12708,17 +12712,18 @@ adjust_loclists (void **slot, void *data)
   ptr = debug_sections[DEBUG_LOCLISTS].new_data + adj->start_offset;
   endsec = ptr + debug_sections[DEBUG_LOCLISTS].size;
 
+again:
   while (ptr < endsec)
     {
       uint8_t lle = *ptr++;
       switch (lle)
 	{
 	case DW_LLE_end_of_list:
-	  return 1;
+	  goto done;
 
 	case DW_LLE_base_addressx:
 	  skip_leb128 (ptr);
-	  continue;
+	  goto again;
 
 	case DW_LLE_startx_endx:
 	  skip_leb128 (ptr);
@@ -12744,7 +12749,7 @@ adjust_loclists (void **slot, void *data)
 
 	case DW_LLE_base_address:
 	  ptr += ptr_size;
-	  continue;
+	  goto again;
 
 	case DW_LLE_start_end:
 	  ptr += 2 * ptr_size;
@@ -12762,7 +12767,7 @@ adjust_loclists (void **slot, void *data)
 	     warning on the original parsing if CU version is not 5.*/
 	  skip_leb128 (ptr);
 	  skip_leb128 (ptr);
-	  continue;
+	  goto again;
 
 	default:
 	  error (0, 0, "unhandled location list entry 0x%x", lle);
@@ -12777,6 +12782,7 @@ adjust_loclists (void **slot, void *data)
       ptr += len;
     }
 
+done:
   return 1;
 }
 
