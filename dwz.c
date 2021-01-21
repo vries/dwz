@@ -3580,7 +3580,14 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  ptr += ptr_size;
 	  break;
 	case DW_FORM_flag_present:
+	  break;
 	case DW_FORM_implicit_const:
+	  if (!handled && die->die_ck_state != CK_BAD)
+	    {
+	      handled = true;
+	      die->u.p1.die_hash
+		= iterative_hash_object (t->values[i], die->u.p1.die_hash);
+	    }
 	  break;
 	case DW_FORM_flag:
 	case DW_FORM_data1:
@@ -4837,7 +4844,10 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	  ptr2 += ptr_size;
 	  break;
 	case DW_FORM_flag_present:
+	  break;
 	case DW_FORM_implicit_const:
+	  if ((!ignore_locus || old_ptr1) && t1->values[i] != t2->values[j])
+	    FAIL;
 	  break;
 	case DW_FORM_flag:
 	case DW_FORM_data1:
@@ -10456,19 +10466,18 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		    case DW_FORM_data4: value = read_32 (ptr); break;
 		    case DW_FORM_data8: value = read_64 (ptr); break;
 		    case DW_FORM_udata: value = read_uleb128 (ptr); break;
-		    case DW_FORM_implicit_const: break;
+		    case DW_FORM_implicit_const:
+		      value = reft->values[i];
+		      break;
 		    default:
 		      error (0, 0, "Unhandled %s for %s",
 			     get_DW_FORM_str (form),
 			     get_DW_AT_str (reft->attr[i].attr));
 		      return 1;
 		    }
-		  /* Note that the value is only used for calculating the
-		     DIE size and possibly change form. Doesn't change the
-		     implicit_const from or value.  */
+		  value = line_htab_lookup (refcu, value);
 		  if (form != DW_FORM_implicit_const)
 		    {
-		      value = line_htab_lookup (refcu, value);
 		      if (value <= 0xff)
 			{
 			  form = DW_FORM_data1;
@@ -10479,16 +10488,21 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 			  form = DW_FORM_data2;
 			  die->die_size += 2;
 			}
-		      else
+		      else if (value <= 0xffffffff)
 			{
 			  form = DW_FORM_data4;
 			  die->die_size += 4;
+			}
+		      else
+			{
+			  form = DW_FORM_data8;
+			  die->die_size += 8;
 			}
 		    }
 		  t->attr[j].attr = reft->attr[i].attr;
 		  t->attr[j].form = form;
 		  if (form == DW_FORM_implicit_const)
-		    t->values[j] = reft->values[i];
+		    t->values[j] = value;
 		  j++;
 		  continue;
 		}
@@ -12064,51 +12078,39 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	      && (reft->attr[i].attr == DW_AT_decl_file
 		  || reft->attr[i].attr == DW_AT_call_file))
 	    {
-	      bool update = false;
 	      switch (form)
 		{
 		case DW_FORM_data1:
 		  value = read_8 (inptr);
-		  update = true;
 		  break;
 		case DW_FORM_data2:
 		  value = read_16 (inptr);
-		  update = true;
 		  break;
 		case DW_FORM_data4:
 		  value = read_32 (inptr);
-		  update = true;
 		  break;
 		case DW_FORM_data8:
 		  value = read_64 (inptr);
-		  update = true;
 		  break;
 		case DW_FORM_udata:
 		  value = read_uleb128 (inptr);
-		  update = true;
 		  break;
 		case DW_FORM_implicit_const:
-		  /* Negative means, already transformed.  */
-		  if (reft->values[i] >= 0)
-		    update = true;
-		  value = reft->values[i];
-		  break;
+		  /* DW_FORM_implicit_const should have been updated
+		     already when computing abbrevs.  */
+		  j++;
+		  continue;
 		default: abort ();
 		}
-	      if (update)
+	      value = line_htab_lookup (refcu, value);
+	      switch (t->attr[j].form)
 		{
-		  value = line_htab_lookup (refcu, value);
-		  switch (t->attr[j].form)
-		    {
-		    case DW_FORM_data1: write_8 (ptr, value); break;
-		    case DW_FORM_data2: write_16 (ptr, value); break;
-		    case DW_FORM_data4: write_32 (ptr, value); break;
-		    case DW_FORM_udata: write_uleb128 (ptr, value); break;
-		    case DW_FORM_implicit_const:
-		      reft->values[i] = -value; /* Note, negated.  */
-		      break;
-		    default: abort ();
-		    }
+		  case DW_FORM_data1: write_8 (ptr, value); break;
+		  case DW_FORM_data2: write_16 (ptr, value); break;
+		  case DW_FORM_data4: write_32 (ptr, value); break;
+		  case DW_FORM_data8: write_64 (ptr, value); break;
+		  case DW_FORM_udata: write_uleb128 (ptr, value); break;
+		  default: abort ();
 		}
 	      j++;
 	      continue;
@@ -15824,7 +15826,7 @@ read_multifile (int fd, unsigned int die_count)
   return ret;
 }
 
-/* Clear all die_nextdup fields among in toplevel children
+/* Clear all die_nextdup fields among toplevel children
    of DIE.  */
 static void
 alt_clear_dups (dw_die_ref die)
