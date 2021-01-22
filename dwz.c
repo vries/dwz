@@ -1839,7 +1839,8 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
 	}
 
       nfiles = read_uleb128 (ptr);
-      nfiles--; /* We will skip the first (zero) entry.  */
+      if (nfiles > 0)
+       nfiles--; /* We will skip the first (zero) entry.  */
     }
 
   cu->cu_nfiles = nfiles;
