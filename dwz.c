@@ -2414,8 +2414,10 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ref = off_htab_lookup (cu, cu->cu_offset + addr);
 	  if (ref == NULL)
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
-		     dso->filename, get_DW_OP_str (op));
+	      error (0, 0, "%s: Couldn't find DIE at [%" PRIx64 "] "
+		     "referenced by %s from DIE at [%x]",
+		     dso->filename, cu->cu_offset + addr,
+		     get_DW_OP_str (op), die->die_offset);
 	      return 1;
 	    }
 	  if (op == DW_OP_call2)
@@ -2465,8 +2467,9 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ref = off_htab_lookup (NULL, addr);
 	  if (ref == NULL || (unlikely (low_mem) && ref->die_tag == 0))
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
-		     dso->filename, get_DW_OP_str (op));
+	      error (0, 0, "%s: Couldn't find DIE at [%" PRIx64 "] "
+		     "referenced by %s from DIE at [%x]",
+		     dso->filename, addr, get_DW_OP_str (op), die->die_offset);
 	      return 1;
 	    }
 	  ref->die_no_multifile = 1;
@@ -2551,8 +2554,10 @@ read_exprloc (DSO *dso, dw_die_ref die, unsigned char *ptr, size_t len,
 	  ref = off_htab_lookup (cu, cu->cu_offset + addr);
 	  if (ref == NULL)
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by %s",
-		     dso->filename, get_DW_OP_str (op));
+	      error (0, 0, "%s: Couldn't find DIE at [%" PRIx64 "] "
+			   "referenced by %s from DIE at [%x]",
+		     dso->filename, cu->cu_offset + addr,
+		     get_DW_OP_str (op), die->die_offset);
 	      return 1;
 	    }
 	  if (unlikely (low_mem))
@@ -3537,8 +3542,10 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	      ref = off_htab_lookup (cu, value);
 	      if (ref == NULL)
 		{
-		  error (0, 0, "%s: Couldn't find DIE referenced by %s",
-			 dso->filename, get_DW_AT_str (t->attr[i].attr));
+		  error (0, 0, "%s: Couldn't find DIE at [%" PRIx64 "] "
+			       "referenced by %s from DIE at [%x]",
+			 dso->filename, value,
+			 get_DW_AT_str (t->attr[i].attr), die->die_offset);
 		  return 1;
 		}
 	      if (unlikely (op_multifile) && ref->die_collapsed_child)
@@ -3635,8 +3642,10 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 		= off_htab_lookup (cu, cu->cu_offset + value);
 	      if (ref == NULL)
 		{
-		  error (0, 0, "%s: Couldn't find DIE referenced by %s",
-			 dso->filename, get_DW_AT_str (t->attr[i].attr));
+		  error (0, 0, "%s: Couldn't find DIE at [%" PRIx64 "] "
+			 "referenced by %s from DIE at [%x]",
+			 dso->filename, cu->cu_offset + value,
+			 get_DW_AT_str (t->attr[i].attr), die->die_offset);
 		  return 1;
 		}
 	      if (die->die_ck_state != CK_BAD)
@@ -7146,8 +7155,10 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	  dw_die_ref ref = off_htab_lookup (cu, cu->cu_offset + type_offset);
 	  if (ref == NULL)
 	    {
-	      error (0, 0, "%s: Couldn't find DIE referenced by type_offset",
-		     dso->filename);
+	      error (0, 0, "%s: Couldn't find DIE at [%x] "
+		     "referenced by type_offset from cu DIE at [%x]",
+		     dso->filename, cu->cu_offset + type_offset,
+		     cu->cu_die->die_offset);
 	      goto fail;
 	    }
 	  if (unlikely (low_mem))
