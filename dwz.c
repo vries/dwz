@@ -12868,7 +12868,7 @@ write_types (void)
       memcpy (ptr, inptr - 8, 8);
       ptr += 8;
       ref = off_htab_lookup (cu, cu->cu_offset + read_32 (inptr));
-      assert (ref && ref->die_dup == NULL);
+      assert (ref && die_safe_dup(ref) == NULL);
       write_32 (ptr, ref->u.p2.die_new_offset);
       ptr = write_die (ptr, cu, cu->cu_die, NULL, NULL, NULL);
       assert (types + next_off == ptr);
