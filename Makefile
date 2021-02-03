@@ -44,10 +44,10 @@ hello-gnu-pubnames:
 
 dw2-skip-prologue:
 	$(CC) $(TEST_SRC)/dw2-skip-prologue.S $(TEST_SRC)/dw2-skip-prologue.c \
-	  -DINLINED -DPTRBITS=64 -o $@
+	  -DINLINED -DPTRBITS=64 -o $@ || touch $@
 
 py-section-script:
-	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g
+	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
 
 DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 
@@ -74,14 +74,14 @@ start-gold:
 
 implptr-64bit-d2o4a8r8t0:
 	$(CC) $(TEST_SRC)/implptr-64bit-d2o4a8r8t0.S $(TEST_SRC)/main.c \
-	  -o $@ -g
+	  -o $@ -g || touch $@
 
 hello-gold-gdb-index:
 	$(CC) $(TEST_SRC)/hello.c -g -fuse-ld=gold -Wl,--gdb-index -o $@ \
 	    || touch $@
 
 varval:
-	$(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@
+	$(CC) $(TEST_SRC)/varval.c $(TEST_SRC)/varval.S -g -o $@ || touch $@
 
 POINTER_SIZE:=$(shell $(CC) $(TEST_SRC)/pointer-size.c -o pointer-size; \
 	./pointer-size; \
