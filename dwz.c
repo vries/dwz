@@ -699,18 +699,8 @@ get_DW_AT_str (unsigned int at)
 static const char *
 get_DW_UT_str (unsigned int ut)
 {
-  const char *name;
+  const char *name = get_DW_UT_name (ut);
   static char buf[7 + 3 * sizeof (int)];
-  switch (ut)
-    {
-    case DW_UT_compile: name = "DW_UT_compile"; break;
-    case DW_UT_type: name = "DW_UT_type"; break;
-    case DW_UT_partial: name = "DW_UT_partial"; break;
-    case DW_UT_skeleton: name = "DW_UT_skeleton"; break;
-    case DW_UT_split_compile: name = "DW_UT_split_compile"; break;
-    case DW_UT_split_type: name = "DW_UT_split_type"; break;
-    default: name = 0; break;
-    }
   if (name)
     return name;
   sprintf (buf, "DW_UT_%u", ut);
