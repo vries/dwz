@@ -24,11 +24,16 @@ foreach test $tests {
 	lappend required_execs "py-section-script"
     }
     if { $basename == "pr24341.sh" } {
-	# The exec min is used for the regression test for pr24341, but it only
-	# functions as such if the DWARF only contains the CUs of the test-case
-	# itself.
-	set matches [exec readelf -wi min | grep DW_AT_name | grep -c / ]
+	if { [catch {exec readelf -wi min | grep DW_AT_name | grep -c / } matches] } {
+	    # Some error occurred in the supported test, f.i. DWARF in min
+	    # unsupported by readelf.
+	    unsupported "$test"
+	    continue
+	}
 	if { $matches != 2 } {
+	    # The exec min is used for the regression test for pr24341, but it
+	    # only functions as such if the DWARF only contains the CUs of the
+	    # test-case itself.
 	    unsupported "$test"
 	    continue
 	}
