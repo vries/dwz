@@ -9844,7 +9844,8 @@ read_macro (DSO *dso)
 	}
 
       version = read_16 (ptr);
-      if (version != 4)
+      bool supported_version_p = version >= 4 && version <= 5;
+      if (!supported_version_p)
 	{
 	  error (0, 0, "%s: Unhandled .debug_macro version %d", dso->filename,
 		 version);
