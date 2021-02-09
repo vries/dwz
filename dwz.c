@@ -6584,9 +6584,11 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	{
 	  value = read_8 (ptr);
 	  if (value != DW_UT_compile && value != DW_UT_partial)
-	    error (0, 0, "%s: DWARF CU type %s unhandled", dso->filename,
-		   get_DW_UT_str (value));
-
+	    {
+	      error (0, 0, "%s: DWARF CU type %s unhandled", dso->filename,
+		     get_DW_UT_str (value));
+	      goto fail;
+	    }
 	}
       else
 	{
