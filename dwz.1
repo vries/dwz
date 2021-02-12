@@ -1,4 +1,4 @@
-.TH dwz 1 "15 June 2012"
+.TH dwz 1 "15 Feb 2021"
 .SH NAME
 dwz \- DWARF optimization and duplicate removal tool
 .SH SYNOPSIS
@@ -15,9 +15,26 @@ compilation units (CUs) for duplicated information and using
 \fIDW_TAG_imported_unit\fR
 to import it into each CU that needs it.
 
-The tool handles DWARF 32-bit format debugging sections of versions
-2, 3 and 4 and GNU extensions on top of those, though using DWARF 4
-or worst case DWARF 3 is strongly recommended.
+The tool handles DWARF 32-bit format debugging sections of versions 2,
+3, 4, most of version 5 and GNU extensions on top of those.  It is
+strongly recommended to use at least DWARF 3, but using DWARF 4 or
+higher will work much better.
+
+While most of DWARF 5 is supported dwz doesn't yet generate spec
+compliant DWARF Supplementary Object Files (DWARF 5, section
+7.3.6). Instead of a \fI.debug_sup\fR section it will generate a
+\fI.gnu_debugaltlink\fR section. And it will use the
+\fIDW_FORM_GNU_strp_alt\fR and \fIDW_FORM_GNU_reg_alt\fR, instead of
+\fIDW_FORM_strp_sup\fR and \fIDW_FORM_ref_sup\fR to keep compatibility
+with existing DWARF consumers.
+
+DWARF 4 \fI.debug_types\fR are supported, but DWARF 5 \fIDW_UT_type\fR
+units are not. Likewise \fI.gdb_index\fR is supported, but the DWARF 5
+\fI.debug_names\fR is not. Also some forms and sections that are only
+emitted by GCC when generating Split DWARF, \fIDW_FORM_strx\fR and
+\fI.debug_str_offsets\fR, \fIDW_FORM_addrx\fR and \fI.debug_addr\fR,
+\fIDW_FORM_rnglistx\fR and \fIDW_FORM_loclistsx\fR, are not supported
+yet.
 
 The tool has two main modes of operation, without the
 \fI-m\fR option it attempts to optimize DWARF debugging information in each
@@ -155,6 +172,14 @@ is equivalent to \fIdwz a.out\fR command.
 .SH SEE ALSO
 .BR http://dwarfstd.org/doc/DWARF4.pdf
 ,
+.BR http://dwarfstd.org/doc/DWARF5.pdf
+,
 .BR gdb (1).
 .SH AUTHORS
-Jakub Jelinek <jakub@redhat.com>.
+Jakub Jelinek <jakub@redhat.com>,
+Tom de Vries <tdevries@suse.de>,
+Mark Wielaard <mark@klomp.org>
+.SH BUGS
+Use the Bugzilla link of the project web page or our mailing list.
+.nh
+.BR https://sourceware.org/dwz/ ", " <dwz@sourceware.org> .
