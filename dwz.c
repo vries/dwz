@@ -2912,7 +2912,7 @@ add_locexpr_dummy_dies (DSO *dso, dw_cu_ref cu, dw_die_ref die,
 			unsigned char *ptr, uint32_t form, unsigned int attr,
 			size_t len)
 {
-  if (form == DW_FORM_block1)
+  if (form == DW_FORM_block1 && cu->cu_version < 4)
     {
       /* Old DWARF uses blocks instead of exprlocs.  */
       switch (attr)
@@ -3778,7 +3778,7 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  abort ();
 	}
 
-      if (form == DW_FORM_block1)
+      if (form == DW_FORM_block1 && cu->cu_version < 4)
 	{
 	  /* Old DWARF uses blocks instead of exprlocs.  */
 	  switch (t->attr[i].attr)
@@ -3825,7 +3825,6 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	    default:
 	      break;
 	    }
-	  ptr += len;
 	}
       else if (form == DW_FORM_exprloc)
 	{
@@ -3838,8 +3837,8 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  if (read_exprloc (dso, die, ptr, len, NULL))
 	    return 1;
 	  handled = true;
-	  ptr += len;
 	}
+      ptr += len; /* Skip expr/blocks.  */
       if (!handled && die->die_ck_state != CK_BAD)
 	{
 	  s = t->attr[i].attr;
@@ -6960,6 +6959,32 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		    }
 		}
 
+	      /* Get length of expr/blocks first.  Canonicalize all,
+		 except exprloc, to DW_FORM_block1.  */
+	      switch (form)
+		{
+		case DW_FORM_block1:
+		  len = *ptr++;
+		  break;
+		case DW_FORM_block2:
+		  len = read_16 (ptr);
+		  form = DW_FORM_block1;
+		  break;
+		case DW_FORM_block4:
+		  len = read_32 (ptr);
+		  form = DW_FORM_block1;
+		  break;
+		case DW_FORM_block:
+		  len = read_uleb128 (ptr);
+		  form = DW_FORM_block1;
+		  break;
+		case DW_FORM_exprloc:
+		  len = read_uleb128 (ptr);
+		  break;
+		default:
+		  break;
+		}
+
 	      if (unlikely (low_mem_phase1)
 		  && add_locexpr_dummy_dies (dso, cu, die, ptr, form,
 					     t->attr[i].attr, len))
@@ -7084,22 +7109,17 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		  break;
 		case DW_FORM_indirect:
 		  abort ();
+		/* All expr/blocks lengths already handled above.
+		   Just canonicalize exprloc to block1 too.  */
+		case DW_FORM_exprloc:
+		  form = DW_FORM_block1;
+		  break;
 		case DW_FORM_block1:
-		  len = *ptr++;
 		  break;
 		case DW_FORM_block2:
-		  len = read_16 (ptr);
-		  form = DW_FORM_block1;
-		  break;
 		case DW_FORM_block4:
-		  len = read_32 (ptr);
-		  form = DW_FORM_block1;
-		  break;
 		case DW_FORM_block:
-		case DW_FORM_exprloc:
-		  len = read_uleb128 (ptr);
-		  form = DW_FORM_block1;
-		  break;
+		  abort ();
 		default:
 		  error (0, 0, "%s: Unknown DWARF %s",
 			 dso->filename, get_DW_FORM_str (form));
@@ -12468,7 +12488,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	  ptr += inptr - orig_ptr;
 
 	  /* Old DWARF uses blocks instead of exprlocs.  */
-	  if (form == DW_FORM_block1)
+	  if (form == DW_FORM_block1 && cu->cu_version < 4)
 	    switch (reft->attr[i].attr)
 	      {
 	      case DW_AT_frame_base:
