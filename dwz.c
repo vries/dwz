@@ -3510,7 +3510,35 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	case DW_AT_call_line:
 	case DW_AT_call_column:
 	  if (ignore_locus)
-	    handled = true;
+	    {
+	      handled = true;
+	      break;
+	    }
+	  switch (form)
+	    {
+	    case DW_FORM_data1: value = read_8 (ptr); handled = true; break;
+	    case DW_FORM_data2: value = read_16 (ptr); handled = true; break;
+	    case DW_FORM_data4: value = read_32 (ptr); handled = true; break;
+	    case DW_FORM_data8: value = read_64 (ptr); handled = true; break;
+	    case DW_FORM_udata:
+	      value = read_uleb128 (ptr); handled = true; break;
+	    case DW_FORM_implicit_const:
+	      value = t->values[i]; handled = true; break;
+	    default:
+	      error (0, 0, "%s: Unhandled %s for %s",
+		     dso->filename, get_DW_FORM_str (form),
+		     get_DW_AT_str (t->attr[i].attr));
+	      return 1;
+	    }
+	  if (handled)
+	    {
+	      ptr = old_ptr;
+	      s = t->attr[i].attr;
+	      die->u.p1.die_hash
+		= iterative_hash_object (s, die->u.p1.die_hash);
+	      die->u.p1.die_hash
+		= iterative_hash_object (value, die->u.p1.die_hash);
+	    }
 	  break;
 	default:
 	  break;
@@ -4797,8 +4825,35 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	case DW_AT_call_line:
 	case DW_AT_call_column:
 	  if (ignore_locus)
-	    old_ptr1 = NULL;
-	  break;
+	    {
+	      old_ptr1 = NULL;
+	      break;
+	    }
+	  switch (form1)
+	    {
+	    case DW_FORM_data1: value1 = read_8 (ptr1); break;
+	    case DW_FORM_data2: value1 = read_16 (ptr1); break;
+	    case DW_FORM_data4: value1 = read_32 (ptr1); break;
+	    case DW_FORM_data8: value1 = read_64 (ptr1); break;
+	    case DW_FORM_udata: value1 = read_uleb128 (ptr1); break;
+	    case DW_FORM_implicit_const: value1 = t1->values[i]; break;
+	    default: abort ();
+	    }
+	  switch (form2)
+	    {
+	    case DW_FORM_data1: value2 = read_8 (ptr2); break;
+	    case DW_FORM_data2: value2 = read_16 (ptr2); break;
+	    case DW_FORM_data4: value2 = read_32 (ptr2); break;
+	    case DW_FORM_data8: value2 = read_64 (ptr2); break;
+	    case DW_FORM_udata: value2 = read_uleb128 (ptr2); break;
+	    case DW_FORM_implicit_const: value2 = t2->values[j]; break;
+	    default: abort ();
+	    }
+	  if (value1 != value2)
+	    FAIL;
+	  i++;
+	  j++;
+	  continue;
 	default:
 	  break;
 	}
