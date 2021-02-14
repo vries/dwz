@@ -3240,6 +3240,9 @@ set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
   switch (cu->lang)
     {
     case DW_LANG_C_plus_plus:
+    case DW_LANG_C_plus_plus_03:
+    case DW_LANG_C_plus_plus_11:
+    case DW_LANG_C_plus_plus_14:
       /* c++ defines one-definition-rule.  */
       if (die->die_tag == DW_TAG_structure_type
 	  || die->die_tag == DW_TAG_class_type
@@ -7745,6 +7748,9 @@ partition_lang (dw_die_ref die)
   switch (lang)
     {
     case DW_LANG_C_plus_plus:
+    case DW_LANG_C_plus_plus_03:
+    case DW_LANG_C_plus_plus_11:
+    case DW_LANG_C_plus_plus_14:
       break;
     default:
       return 0;
