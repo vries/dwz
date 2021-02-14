@@ -11677,20 +11677,7 @@ compute_abbrevs (DSO *dso)
 	      abbrev_size += size_of_uleb128 (arr[i]->attr[j].attr);
 	      abbrev_size += size_of_uleb128 (arr[i]->attr[j].form);
 	      if (arr[i]->attr[j].form == DW_FORM_implicit_const)
-		{
-		  /* If this is a shared abbrev for a file reference
-		     attribute, update to the new file number (in the
-		     mulifile .debug_line).  Note that this might
-		     change the abbrev size...  */
-		  if (unlikely (wr_multifile || op_multifile)
-		      && (arr[i]->attr[j].attr == DW_AT_decl_file
-			  || arr[i]->attr[j].attr == DW_AT_call_file))
-		    {
-		      if (arr[i]->values[j] < 0)
-			arr[i]->values[j] = -arr[i]->values[j];
-		    }
-		  abbrev_size += size_of_sleb128 (arr[i]->values[j]);
-		}
+		abbrev_size += size_of_sleb128 (arr[i]->values[j]);
 	    }
 	  abbrev_size += 2;
 	}
