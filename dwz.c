@@ -3614,6 +3614,9 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  if (!handled && die->die_ck_state != CK_BAD)
 	    {
 	      handled = true;
+	      s = t->attr[i].attr;
+	      die->u.p1.die_hash
+		= iterative_hash_object (s, die->u.p1.die_hash);
 	      die->u.p1.die_hash
 		= iterative_hash_object (t->values[i], die->u.p1.die_hash);
 	    }
