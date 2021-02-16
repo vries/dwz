@@ -128,8 +128,8 @@ odr-loc:
 
 
 def-decl:
-	$(CXX) $(TEST_SRC)/decl.c $(TEST_SRC)/def.c $(TEST_SRC)/def2.c -I$(TEST_SRC) \
-	  -o $@ -g
+	$(CXX) $(TEST_SRC)/decl.cc $(TEST_SRC)/def.cc $(TEST_SRC)/def2.cc \
+	  -I$(TEST_SRC) -o $@ -g
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
