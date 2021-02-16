@@ -13,8 +13,10 @@ namespace ns {
 
 #if NAMESPACE
 KIND ns::aaa var1;
+KIND ns::ccc var3;
 #else
 KIND aaa var1;
+KIND ccc var3;
 #endif
 
 int

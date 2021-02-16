@@ -11,3 +11,4 @@ struct aaa
 };
 
 struct aaa var2;
+struct bbb var4;

@@ -10,6 +10,7 @@ struct aaa
 };
 
 struct aaa var1;
+struct ccc var3;
 
 int
 main (void)

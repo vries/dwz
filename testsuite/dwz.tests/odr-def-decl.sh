@@ -7,13 +7,13 @@ cp $execs/def-decl 1
 verify-dwarf.sh 1
 
 cnt=$(readelf -wi 1 | grep -c "DW_AT_name.*:.*ao_ref" || true)
-[ $cnt -eq 4 ]
+[ $cnt -eq 5 ]
 
 $execs/dwz-for-test --odr 1 --devel-ignore-size
 
 verify-dwarf.sh 1
 
 cnt=$(readelf -wi 1 | grep -c "DW_AT_name.*:.*ao_ref" || true)
-[ $cnt -eq 3 ]
+[ $cnt -eq 2 ]
 
 rm -f 1
