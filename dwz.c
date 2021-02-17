@@ -4021,6 +4021,8 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	}
   if (i == -1U)
     {
+      bool only_hash_name_p
+	= odr && top_die && die_odr_state (cu, top_die) != ODR_NONE;
       ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
       skip_leb128 (ptr);
       for (i = 0; i < t->nattr; ++i)
@@ -4134,7 +4136,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 		  if (second_hash != NULL && second_idx == NULL)
 		    *second_hash
 		      = iterative_hash_object (val, *second_hash);
-		  else
+		  else if (!only_hash_name_p)
 		    top_die->u.p1.die_ref_hash
 		      = iterative_hash_object (val,
 					       top_die->u.p1.die_ref_hash);
@@ -4150,7 +4152,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 		      = iterative_hash_object (reft->u.p1.die_ref_hash,
 					       *second_hash);
 		}
-	      else
+	      else if (!only_hash_name_p)
 		top_die->u.p1.die_ref_hash
 		  = iterative_hash_object (reft->u.p1.die_ref_hash,
 					   top_die->u.p1.die_ref_hash);
@@ -4243,6 +4245,23 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 		arr[i]->die_ck_state = CK_BAD;
 	      obstack_blank_fast (&ob, -(int) (count * sizeof (void *)));
 	      return 0;
+	    }
+	  if (odr)
+	    {
+	      bool found = false;
+	      for (i = 0; i < count && !found; i++)
+		if (die_odr_state (cu, arr[i]) != ODR_NONE)
+		  found = true;
+	      if (found)
+		{
+		  for (i = 0; i < count; i++)
+		    {
+		      arr[i]->die_ref_hash_computed = 1;
+		      arr[i]->die_ref_seen = 0;
+		    }
+		  obstack_blank_fast (&ob, -(int) (count * sizeof (void *)));
+		  return 0;
+		}
 	    }
 	  /* Find the DIE in the array with the smallest u.p1.die_hash.  */
 	  for (i = 0, minidx = -1U, bad = true; i < count; i++)
