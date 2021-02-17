@@ -3972,7 +3972,6 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   unsigned int i, ret = 0;
   unsigned char *ptr;
   dw_die_ref child;
-  bool only_hash_name_p;
 
   if (top_die == die)
     {
@@ -4003,7 +4002,6 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   else
     assert (top_die == NULL || die->die_ck_state == CK_KNOWN);
   t = die->die_abbrev;
-  only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
   for (i = 0; i < t->nattr; ++i)
     if (t->attr[i].attr != DW_AT_sibling)
       switch (t->attr[i].form)
@@ -4187,24 +4185,25 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	}
     }
 
-  if (!only_hash_name_p
-      && (top_die == NULL || top_die->die_ck_state != CK_BAD))
-    for (child = die->die_child; child; child = child->die_sib)
-      {
-	unsigned int r
-	  = checksum_ref_die (cu,
-			      top_die ? top_die
-			      : child->die_named_namespace
-			      ? NULL : child, child,
-			      second_idx, second_hash);
-	if (top_die == NULL)
-	  assert (r == 0 && obstack_object_size (&ob) == 0);
+  if (top_die == NULL || top_die->die_ck_state != CK_BAD)
+    {
+      for (child = die->die_child; child; child = child->die_sib)
+	{
+	  unsigned int r
+	    = checksum_ref_die (cu,
+				top_die ? top_die
+				: child->die_named_namespace
+				? NULL : child, child,
+				second_idx, second_hash);
+	  if (top_die == NULL)
+	    assert (r == 0 && obstack_object_size (&ob) == 0);
 
-	if (ret == 0 || (r && r < ret))
-	  ret = r;
-	if (top_die && top_die->die_ck_state == CK_BAD)
-	  break;
-      }
+	  if (ret == 0 || (r && r < ret))
+	    ret = r;
+	  if (top_die && top_die->die_ck_state == CK_BAD)
+	    break;
+	}
+     }
 
   if (top_die == die)
     {
