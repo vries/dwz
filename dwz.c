@@ -4365,6 +4365,171 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
   return ret;
 }
 
+static void
+check_prop (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
+{
+  struct abbrev_tag *t;
+  unsigned int i;
+  unsigned char *ptr;
+  dw_die_ref child;
+
+  t = die->die_abbrev;
+  for (i = 0; i < t->nattr; ++i)
+    if (t->attr[i].attr != DW_AT_sibling)
+      switch (t->attr[i].form)
+	{
+	case DW_FORM_ref_addr:
+	  if (unlikely (op_multifile || rd_multifile || fi_multifile))
+	    i = -2U;
+	  break;
+	case DW_FORM_ref_udata:
+	case DW_FORM_ref1:
+	case DW_FORM_ref2:
+	case DW_FORM_ref4:
+	case DW_FORM_ref8:
+	case DW_FORM_indirect:
+	  i = -2U;
+	  break;
+	}
+  if (i == -1U)
+    {
+      ptr = debug_sections[DEBUG_INFO].data + die->die_offset;
+      skip_leb128 (ptr);
+      for (i = 0; i < t->nattr; ++i)
+	{
+	  uint32_t form = t->attr[i].form;
+	  size_t len = 0;
+	  uint64_t value;
+	  dw_die_ref ref, reft;
+
+	  while (form == DW_FORM_indirect)
+	    form = read_uleb128 (ptr);
+
+	  switch (form)
+	    {
+	    case DW_FORM_ref_addr:
+	      if (unlikely (op_multifile || rd_multifile || fi_multifile))
+		{
+		  value = read_size (ptr, cu->cu_version == 2 ? ptr_size : 4);
+		  ptr += cu->cu_version == 2 ? ptr_size : 4;
+		  assert (t->attr[i].attr != DW_AT_sibling);
+		  if (top_die == NULL)
+		    break;
+		  ref = off_htab_lookup (cu, value);
+		  goto finish_ref;
+		}
+	      ptr += cu->cu_version == 2 ? ptr_size : 4;
+	      break;
+	    case DW_FORM_addr:
+	      ptr += ptr_size;
+	      break;
+	    case DW_FORM_flag_present:
+	    case DW_FORM_implicit_const:
+	      break;
+	    case DW_FORM_flag:
+	    case DW_FORM_data1:
+	      ++ptr;
+	      break;
+	    case DW_FORM_data2:
+	      ptr += 2;
+	      break;
+	    case DW_FORM_data4:
+	    case DW_FORM_sec_offset:
+	    case DW_FORM_strp:
+	    case DW_FORM_line_strp:
+	      ptr += 4;
+	      break;
+	    case DW_FORM_data8:
+	    case DW_FORM_ref_sig8:
+	      ptr += 8;
+	      break;
+	    case DW_FORM_data16:
+	      ptr += 16;
+	      break;
+	    case DW_FORM_sdata:
+	    case DW_FORM_udata:
+	      skip_leb128 (ptr);
+	      break;
+	    case DW_FORM_ref_udata:
+	    case DW_FORM_ref1:
+	    case DW_FORM_ref2:
+	    case DW_FORM_ref4:
+	    case DW_FORM_ref8:
+	      switch (form)
+		{
+		case DW_FORM_ref_udata: value = read_uleb128 (ptr); break;
+		case DW_FORM_ref1: value = read_8 (ptr); break;
+		case DW_FORM_ref2: value = read_16 (ptr); break;
+		case DW_FORM_ref4: value = read_32 (ptr); break;
+		case DW_FORM_ref8: value = read_64 (ptr); break;
+		default: abort ();
+		}
+	      if (t->attr[i].attr == DW_AT_sibling || top_die == NULL)
+		break;
+	      ref = off_htab_lookup (cu, cu->cu_offset + value);
+	      if (ref->u.p1.die_enter >= top_die->u.p1.die_enter
+		  && ref->u.p1.die_exit <= top_die->u.p1.die_exit)
+		break;
+	    finish_ref:
+	      reft = ref;
+	      while (!reft->die_root
+		     && reft->die_parent->die_tag != DW_TAG_compile_unit
+		     && reft->die_parent->die_tag != DW_TAG_partial_unit
+		     && !reft->die_parent->die_named_namespace)
+		reft = reft->die_parent;
+	      
+	      if (reft->die_ck_state != CK_KNOWN)
+		assert (top_die->die_ck_state != CK_KNOWN);
+#if 0
+	      if (reft->die_no_multifile)
+		assert (top_die->die_no_multifile);
+#endif
+	      break;
+	    case DW_FORM_string:
+	      ptr = (unsigned char *) strchr ((char *)ptr, '\0') + 1;
+	      break;
+	    case DW_FORM_indirect:
+	      abort ();
+	    case DW_FORM_block1:
+	      len = *ptr++;
+	      break;
+	    case DW_FORM_block2:
+	      len = read_16 (ptr);
+	      form = DW_FORM_block1;
+	      break;
+	    case DW_FORM_block4:
+	      len = read_32 (ptr);
+	      form = DW_FORM_block1;
+	      break;
+	    case DW_FORM_block:
+	    case DW_FORM_exprloc:
+	      len = read_uleb128 (ptr);
+	      form = DW_FORM_block1;
+	      break;
+	    default:
+	      abort ();
+	    }
+
+	  if (form == DW_FORM_block1)
+	    ptr += len;
+	}
+    }
+
+  for (child = die->die_child; child; child = child->die_sib)
+    {
+      if (top_die != NULL)
+	check_prop (cu, top_die, child);
+      else
+	{
+	  if (child->die_root
+	      || child->die_named_namespace)
+	    check_prop (cu, NULL, child);
+	  else
+	    check_prop (cu, child, child);
+	}
+    }
+}
+
 /* Hash function for dup_htab.  u.p1.die_ref_hash should have u.p1.die_hash
    iteratively hashed into it already.  */
 static hashval_t
@@ -6739,6 +6904,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 
 	      for (cu = cuf; cu; cu = cu->cu_next)
 		checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
+	      for (cu = cuf; cu; cu = cu->cu_next)
+		check_prop (cu, NULL, cu->cu_die);
 
 	      if (dump_dies_p)
 		for (cu = cuf; cu; cu = cu->cu_next)
@@ -7217,6 +7384,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	  if (checksum_die (dso, cu, NULL, cu->cu_die))
 	    goto fail;
 	  checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
+	  check_prop (cu, NULL, cu->cu_die);
 
 	  if (dump_dies_p)
 	    dump_dies (0, cu->cu_die);
@@ -7289,6 +7457,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 
       for (cu = first_cu; cu; cu = cu->cu_next)
 	checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
+      for (cu = first_cu; cu; cu = cu->cu_next)
+	check_prop (cu, NULL, cu->cu_die);
 
       if (dump_dies_p)
 	for (cu = first_cu; cu; cu = cu->cu_next)
