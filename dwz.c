@@ -5452,11 +5452,13 @@ dump_die_with_indent (int indent, dw_die_ref die)
   else
     {
       const char *name = get_name (die);
-      fprintf (stderr, "%*s %x %c %x %x %s %s", indent, "", die->die_offset,
+      fprintf (stderr, "%*s %x %c %x", indent, "", die->die_offset,
 	       die->die_ck_state == CK_KNOWN ? 'O' : 'X',
-	       (unsigned) die->u.p1.die_hash,
-	       (unsigned) die->u.p1.die_ref_hash, name ? name : "",
-	       get_DW_TAG_name (die->die_tag) + 7);
+	       (unsigned) die->u.p1.die_hash);
+      if (odr && die->die_odr_state != ODR_NONE)
+	  fprintf (stderr, "(%x)", (unsigned) die->u.p1.die_hash2);
+      fprintf (stderr, " %x %s %s", (unsigned) die->u.p1.die_ref_hash,
+	       name ? name : "", get_DW_TAG_name (die->die_tag) + 7);
       dump_type (die);
     }
   fprintf (stderr, "\n");
