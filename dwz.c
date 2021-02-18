@@ -6593,6 +6593,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
   if (likely (!fi_multifile && kind != DEBUG_TYPES))
     {
       dup_htab = htab_try_create (100000, die_hash, die_eq, NULL);
+      if (tracing)
+	htab_report (dup_htab, "dup_htab allocation");
       if (dup_htab == NULL)
 	dwz_oom ();
     }
@@ -7315,6 +7317,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
     }
   if (tracing)
     htab_report (off_htab, "off_htab post-parsing");
+  if (tracing)
+    htab_report (dup_htab, "dup_htab post-parsing");
   if (stats_p)
     stats->die_count = ndies;
   if (die_count)
