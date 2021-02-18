@@ -7393,6 +7393,7 @@ partition_cmp (const void *p, const void *q)
 static void
 partition_found_dups (dw_die_ref die, struct obstack *vec)
 {
+  assert (die->die_ck_state == CK_KNOWN);
   obstack_ptr_grow (vec, die);
   if (unlikely (verify_dups_p))
     verify_dups (die, true);
