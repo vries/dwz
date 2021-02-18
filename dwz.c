@@ -188,6 +188,7 @@ static struct obstack alt_ob, alt_ob2;
 static int tracing;
 static int ignore_size;
 static int ignore_locus;
+static int dump_checksum_p;
 static int dump_dies_p;
 static int dump_dups_p;
 static int dump_pus_p;
@@ -198,6 +199,7 @@ static int stats_p;
 #define tracing 0
 #define ignore_size 0
 #define ignore_locus 0
+#define dump_checksum_p 0
 #define dump_dies_p 0
 #define dump_dups_p 0
 #define dump_pus_p 0
@@ -3360,8 +3362,17 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
   skip_leb128 (ptr);
   s = die->die_tag;
   die->u.p1.die_hash = iterative_hash_object (s, die->u.p1.die_hash);
+  if (dump_checksum_p)
+    fprintf (stderr, "DIE %x, hash: %x, tag\n", die->die_offset,
+	     die->u.p1.die_hash);
   if (uni_lang_p && die == top_die)
-    die->u.p1.die_hash = iterative_hash_object (cu->lang, die->u.p1.die_hash);
+    {
+      die->u.p1.die_hash
+	= iterative_hash_object (cu->lang, die->u.p1.die_hash);
+      if (dump_checksum_p)
+	fprintf (stderr, "DIE %x, hash: %x, lang\n", die->die_offset,
+		 die->u.p1.die_hash);
+    }
   only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
   die_hash2 = 0;
   if (only_hash_name_p)
@@ -3836,9 +3847,13 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	  die->u.p1.die_hash
 	    = iterative_hash (old_ptr, ptr - old_ptr, die->u.p1.die_hash);
 	}
+
+      if (dump_checksum_p)
+	fprintf (stderr, "DIE %x, hash: %x, attr (%d)\n", die->die_offset,
+		 die->u.p1.die_hash, i);
     }
 
-  for (child = die->die_child; child; child = child->die_sib)
+  for (child = die->die_child, i = 0; child; child = child->die_sib, ++i)
     if (checksum_die (dso, cu,
 		      top_die ? top_die
 			      : child->die_named_namespace
@@ -3851,6 +3866,9 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	    die->u.p1.die_hash
 	      = iterative_hash_object (child->u.p1.die_hash,
 				       die->u.p1.die_hash);
+	    if (dump_checksum_p)
+	      fprintf (stderr, "DIE %x, hash: %x, child (%i)\n",
+		       die->die_offset, die->u.p1.die_hash, i);
 	    die->die_no_multifile
 	      |= child->die_no_multifile;
 	  }
@@ -3859,6 +3877,10 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
       }
   if (die->die_ck_state == CK_BEING_COMPUTED)
     die->die_ck_state = CK_KNOWN;
+
+  if (dump_checksum_p)
+    fprintf (stderr, "DIE %x, hash: %x, final\n", die->die_offset,
+	     die->u.p1.die_hash);
 
   if (only_hash_name_p)
     {
@@ -15986,6 +16008,8 @@ static struct option dwz_options[] =
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-force",	 no_argument,	    &force_p, 1 },
   { "devel-save-temps",  no_argument,	    &save_temps, 1 },
+  { "devel-dump-checksum",
+			 no_argument,	    &dump_checksum_p, 1 },
   { "devel-dump-dies",  no_argument,	    &dump_dies_p, 1 },
   { "devel-dump-dups",  no_argument,	    &dump_dups_p, 1 },
   { "devel-dump-pus",  no_argument,	    &dump_pus_p, 1 },
@@ -16249,6 +16273,7 @@ usage (void)
        "  --devel-ignore-locus\n"
        "  --devel-force\n"
        "  --devel-save-temps\n"
+       "  --devel-dump-checksum\n"
        "  --devel-dump-dies\n"
        "  --devel-dump-dups\n"
        "  --devel-dump-pus\n"
