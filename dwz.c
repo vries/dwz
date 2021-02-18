@@ -4255,10 +4255,11 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 	      if (found)
 		{
 		  for (i = 0; i < count; i++)
-		    {
-		      arr[i]->die_ref_hash_computed = 1;
-		      arr[i]->die_ref_seen = 0;
-		    }
+		    if (die_odr_state (cu, arr[i]) != ODR_NONE)
+		      {
+			arr[i]->die_ref_hash_computed = 1;
+			assert (arr[i]->u.p1.die_ref_hash == arr[i]->u.p1.die_hash);
+		      }
 		  obstack_blank_fast (&ob, -(int) (count * sizeof (void *)));
 		  return 0;
 		}

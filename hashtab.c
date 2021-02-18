@@ -397,6 +397,10 @@ htab_find_slot_with_hash (htab, element, hash, insert)
     return &htab->entries[index];
 
   hash2 = 1 + hash % (size - 2);
+#if 0
+  unsigned int start = htab->collisions;
+  #define NR_COLLISIONS 10
+#endif
   for (;;)
     {
       htab->collisions++;
@@ -413,8 +417,24 @@ htab_find_slot_with_hash (htab, element, hash, insert)
 	    first_deleted_slot = &htab->entries[index];
 	}
       else if ((*htab->eq_f) (entry, element))
-	return &htab->entries[index];
+	{
+#if 0
+	  {
+	    unsigned int c = htab->collisions - start;
+	    if (c >= NR_COLLISIONS)
+	      printf ("c-eq: %u\n", c);
+	  }
+#endif
+	  return &htab->entries[index];
+	}
     }
+#if 0
+  {
+    unsigned int c = htab->collisions - start;
+    if (c >= NR_COLLISIONS)
+      printf ("c-ne: %u\n", c);
+  }
+#endif
 
  empty_entry:
   if (insert == NO_INSERT)
