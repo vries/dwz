@@ -12175,7 +12175,26 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	  while (form == DW_FORM_indirect)
 	    form = read_uleb128 (inptr);
 
-	  if (unlikely (wr_multifile || op_multifile)
+	  bool file_zero_p = false;
+	  if (odr
+	      && (reft->attr[i].attr == DW_AT_decl_file
+		  || reft->attr[i].attr == DW_AT_call_file))
+	    {
+	      dw_die_ref td = die;
+	      while (td->die_toplevel == 0)
+		td = td->die_parent;
+
+	      dw_die_ref d1 = td->die_nextdup;
+	      if (d1)
+		{
+		  dw_die_ref d2 = d1->die_nextdup;
+		  if (d2
+		      && d1->die_offset > d2->die_offset)
+		    file_zero_p = true;
+		}
+	    }
+
+	  if (unlikely (wr_multifile || op_multifile || file_zero_p)
 	      && (reft->attr[i].attr == DW_AT_decl_file
 		  || reft->attr[i].attr == DW_AT_call_file))
 	    {
@@ -12203,7 +12222,10 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		  continue;
 		default: abort ();
 		}
-	      value = line_htab_lookup (refcu, value);
+	      if (file_zero_p)
+		value = 0;
+	      else
+		value = line_htab_lookup (refcu, value);
 	      switch (t->attr[j].form)
 		{
 		  case DW_FORM_data1: write_8 (ptr, value); break;
