@@ -22,11 +22,12 @@ higher will work much better.
 
 While most of DWARF 5 is supported dwz doesn't yet generate spec
 compliant DWARF Supplementary Object Files (DWARF 5, section
-7.3.6). Instead of a \fI.debug_sup\fR section it will generate a
-\fI.gnu_debugaltlink\fR section. And it will use the
-\fIDW_FORM_GNU_strp_alt\fR and \fIDW_FORM_GNU_reg_alt\fR, instead of
-\fIDW_FORM_strp_sup\fR and \fIDW_FORM_ref_sup\fR to keep compatibility
-with existing DWARF consumers.
+7.3.6) unless the \fI--dwarf-5\fR option is used. Instead of a
+\fI.debug_sup\fR section it will generate by default a \fI.gnu_debugaltlink\fR
+section. And it will use the \fIDW_FORM_GNU_strp_alt\fR and
+\fIDW_FORM_GNU_reg_alt\fR, instead of \fIDW_FORM_strp_sup\fR
+and \fIDW_FORM_ref_sup\fR to keep compatibility with existing DWARF
+consumers.
 
 DWARF 4 \fI.debug_types\fR are supported, but DWARF 5 \fIDW_UT_type\fR
 units are not. Likewise \fI.gdb_index\fR is supported, but the DWARF 5
