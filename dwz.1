@@ -105,6 +105,11 @@ containing more than
 \fICOUNT\fR DIEs at all.  The default is 50 million DIEs.  Specifying none as
 argument disables the limit.
 .TP
+.B \-5 \-\-dwarf\-5
+Emit standard DWARF 5 Supplementary Object Files with \fI.debug_sup\fR and
+corresponding forms, instead of the GNU extension \fI.gnu_debugaltlink\fR
+and corresponding forms.
+.TP
 .B \-\-odr / \-\-no-odr
 Enable/disable One-Definition-Rule optimization for C++ compilation units.
 This optimization causes struct/union/class DIEs with the same name to be

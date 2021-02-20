@@ -753,6 +753,7 @@ enum debug_section_kind
   DEBUG_RANGES,
   DEBUG_RNGLISTS,
   DEBUG_LINE_STR,
+  DEBUG_SUP,
   DEBUG_GDB_SCRIPTS,
   GDB_INDEX,
   GNU_DEBUGALTLINK,
@@ -789,6 +790,7 @@ static struct
     { ".debug_ranges", NULL, NULL, 0, 0, 0 },
     { ".debug_rnglists", NULL, NULL, 0, 0, 0 },
     { ".debug_line_str", NULL, NULL, 0, 0, 0 },
+    { ".debug_sup", NULL, NULL, 0, 0, 0 },
     { ".debug_gdb_scripts", NULL, NULL, 0, 0, 0 },
     { ".gdb_index", NULL, NULL, 0, 0, 0 },
     { ".gnu_debugaltlink", NULL, NULL, 0, 0, 0 },
@@ -866,16 +868,21 @@ enum multifile_mode_kind
 static const char *multifile;
 
 /* Argument of -M option, i.e. preferred name that should be stored
-   into the .gnu_debugaltlink section.  */
+   into the .gnu_debugaltlink or .debug_sup section.  */
 static const char *multifile_name;
 
-/* True if -r option is present, i.e. .gnu_debugaltlink section
+/* True if -r option is present, i.e. .gnu_debugaltlink or .debug_sup section
    should contain a filename relative to the directory in which
    the particular file is present.  */
 static bool multifile_relative;
 
 /* SHA1 checksum (build-id) of the common file.  */
 static unsigned char multifile_sha1[0x14];
+
+/* True if DWARF 5 .debug_sup and DW_FORM_ref_sup4 / DW_FORM_strp_sup
+   should be used instead of the GNU extensions .gnu_debugaltlink
+   and DW_FORM_GNU_ref_alt / DW_FORM_GNU_strp_alt etc.  */
+static bool dwarf_5;
 
 /* True if -q option has been passed.  */
 static bool quiet;
@@ -5732,8 +5739,8 @@ lookup_strp_offset (unsigned int off)
 
 /* Note .debug_str offset during write_macro or compute_abbrevs,
    return either DW_FORM_strp if the string will be in the local
-   .debug_str section, or DW_FORM_GNU_strp_alt if it will be in
-   the shared .debug_str section.  */
+   .debug_str section, or DW_FORM_strp_sup / DW_FORM_GNU_strp_alt if it
+   will be in the shared .debug_str section.  */
 static enum dwarf_form
 note_strp_offset2 (unsigned int off)
 {
@@ -5751,7 +5758,7 @@ note_strp_offset2 (unsigned int off)
 	  len = strlen ((char *) p);
 	  hash = iterative_hash (p, len, 0);
 	  if (htab_find_with_hash (alt_strp_htab, p, hash))
-	    return DW_FORM_GNU_strp_alt;
+	    return dwarf_5 ? DW_FORM_strp_sup : DW_FORM_GNU_strp_alt;
 	}
       return DW_FORM_strp;
     }
@@ -9867,13 +9874,13 @@ macro_eq (const void *p, const void *q)
 
       switch (op)
 	{
-	case DW_MACRO_GNU_define:
-	case DW_MACRO_GNU_undef:
+	case DW_MACRO_define:
+	case DW_MACRO_undef:
 	  skip_leb128 (p1);
 	  p1 = (unsigned char *) strchr ((char *) p1, '\0') + 1;
 	  break;
-	case DW_MACRO_GNU_define_indirect:
-	case DW_MACRO_GNU_undef_indirect:
+	case DW_MACRO_define_strp:
+	case DW_MACRO_undef_strp:
 	  skip_leb128 (p1);
 	  if (memcmp (s1, p2, p1 - s1) != 0)
 	    return 0;
@@ -9986,21 +9993,21 @@ read_macro (DSO *dso)
 
 	  switch (op)
 	    {
-	    case DW_MACRO_GNU_define:
-	    case DW_MACRO_GNU_undef:
+	    case DW_MACRO_define:
+	    case DW_MACRO_undef:
 	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
-	    case DW_MACRO_GNU_start_file:
+	    case DW_MACRO_start_file:
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
 	      can_share = false;
 	      break;
-	    case DW_MACRO_GNU_end_file:
+	    case DW_MACRO_end_file:
 	      can_share = false;
 	      break;
-	    case DW_MACRO_GNU_define_indirect:
-	    case DW_MACRO_GNU_undef_indirect:
+	    case DW_MACRO_define_strp:
+	    case DW_MACRO_undef_strp:
 	      skip_leb128 (ptr);
 	      strp = read_32 (ptr);
 	      note_strp_offset (strp);
@@ -10016,7 +10023,7 @@ read_macro (DSO *dso)
 		  s = ptr;
 		}
 	      break;
-	    case DW_MACRO_GNU_transparent_include:
+	    case DW_MACRO_import:
 	      ptr += 4;
 	      can_share = false;
 	      break;
@@ -10102,25 +10109,25 @@ read_macro (DSO *dso)
 
 	  switch (op)
 	    {
-	    case DW_MACRO_GNU_define:
-	    case DW_MACRO_GNU_undef:
+	    case DW_MACRO_define:
+	    case DW_MACRO_undef:
 	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
-	    case DW_MACRO_GNU_start_file:
+	    case DW_MACRO_start_file:
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
 	      can_share = false;
 	      break;
-	    case DW_MACRO_GNU_end_file:
+	    case DW_MACRO_end_file:
 	      can_share = false;
 	      break;
-	    case DW_MACRO_GNU_define_indirect:
-	    case DW_MACRO_GNU_undef_indirect:
+	    case DW_MACRO_define_strp:
+	    case DW_MACRO_undef_strp:
 	      skip_leb128 (ptr);
 	      ptr += 4;
 	      break;
-	    case DW_MACRO_GNU_transparent_include:
+	    case DW_MACRO_import:
 	      ptr += 4;
 	      can_share = false;
 	      break;
@@ -10140,13 +10147,13 @@ read_macro (DSO *dso)
 
 	      switch (op)
 		{
-		case DW_MACRO_GNU_define:
-		case DW_MACRO_GNU_undef:
+		case DW_MACRO_define:
+		case DW_MACRO_undef:
 		  skip_leb128 (ptr);
 		  ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 		  break;
-		case DW_MACRO_GNU_define_indirect:
-		case DW_MACRO_GNU_undef_indirect:
+		case DW_MACRO_define_strp:
+		case DW_MACRO_undef_strp:
 		  skip_leb128 (ptr);
 		  memcpy (dst, start, ptr - start);
 		  dst += ptr - start;
@@ -10190,13 +10197,13 @@ optimize_write_macro (void **slot, void *data)
 
       switch (op)
 	{
-	case DW_MACRO_GNU_define:
-	case DW_MACRO_GNU_undef:
+	case DW_MACRO_define:
+	case DW_MACRO_undef:
 	  skip_leb128 (p);
 	  p = (unsigned char *) strchr ((char *) p, '\0') + 1;
 	  break;
-	case DW_MACRO_GNU_define_indirect:
-	case DW_MACRO_GNU_undef_indirect:
+	case DW_MACRO_define_strp:
+	case DW_MACRO_undef_strp:
 	  skip_leb128 (p);
 	  memcpy (*pp, s, p - s);
 	  *pp += p - s;
@@ -10257,13 +10264,13 @@ handle_macro (void)
 
 	  switch (op)
 	    {
-	    case DW_MACRO_GNU_define:
-	    case DW_MACRO_GNU_undef:
+	    case DW_MACRO_define:
+	    case DW_MACRO_undef:
 	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
-	    case DW_MACRO_GNU_define_indirect:
-	    case DW_MACRO_GNU_undef_indirect:
+	    case DW_MACRO_define_strp:
+	    case DW_MACRO_undef_strp:
 	      skip_leb128 (ptr);
 	      hash = iterative_hash (s, ptr - s, hash);
 	      p = debug_sections[DEBUG_STR].data + read_32 (ptr);
@@ -10373,38 +10380,43 @@ write_macro (void)
 
 	  switch (op)
 	    {
-	    case DW_MACRO_GNU_define:
-	    case DW_MACRO_GNU_undef:
+	    case DW_MACRO_define:
+	    case DW_MACRO_undef:
 	      skip_leb128 (ptr);
 	      ptr = (unsigned char *) strchr ((char *) ptr, '\0') + 1;
 	      break;
-	    case DW_MACRO_GNU_start_file:
+	    case DW_MACRO_start_file:
 	      skip_leb128 (ptr);
 	      skip_leb128 (ptr);
 	      break;
-	    case DW_MACRO_GNU_end_file:
+	    case DW_MACRO_end_file:
 	      break;
-	    case DW_MACRO_GNU_define_indirect:
-	    case DW_MACRO_GNU_undef_indirect:
+	    case DW_MACRO_define_strp:
+	    case DW_MACRO_undef_strp:
 	      memcpy (dst, s, ptr - 1 - s);
 	      dst += ptr - 1 - s;
 	      s = ptr - 1;
 	      skip_leb128 (ptr);
 	      strp = read_32 (ptr);
-	      if (note_strp_offset2 (strp) == DW_FORM_GNU_strp_alt)
+	      switch (note_strp_offset2 (strp))
 		{
-		  *dst = op == DW_MACRO_GNU_define_indirect
-			 ? DW_MACRO_GNU_define_indirect_alt
-			 : DW_MACRO_GNU_undef_indirect_alt;
+		case DW_FORM_GNU_strp_alt:
+		case DW_FORM_strp_sup:
+		  *dst = op == DW_MACRO_define_strp
+			 ? DW_MACRO_define_sup
+			 : DW_MACRO_undef_sup;
 		  dst++;
 		  s++;
+		  break;
+		default:
+		  break;
 		}
 	      memcpy (dst, s, ptr - 4 - s);
 	      dst += ptr - 4 - s;
 	      write_32 (dst, lookup_strp_offset (strp));
 	      s = ptr;
 	      break;
-	    case DW_MACRO_GNU_transparent_include:
+	    case DW_MACRO_import:
 	      memcpy (dst, s, ptr - 1 - s);
 	      dst += ptr - 1 - s;
 	      me.ptr = debug_sections[DEBUG_MACRO].data + read_32 (ptr);
@@ -10413,9 +10425,9 @@ write_macro (void)
 				       me.ptr
 				       - debug_sections[DEBUG_MACRO].data);
 	      if (m->len)
-		*dst = DW_MACRO_GNU_transparent_include_alt;
+		*dst = DW_MACRO_import_sup;
 	      else
-		*dst = DW_MACRO_GNU_transparent_include;
+		*dst = DW_MACRO_import;
 	      dst++;
 	      write_32 (dst, m->hash);
 	      s = ptr;
@@ -10672,7 +10684,8 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 			  && die_cu (refdt->die_dup)->cu_kind == CU_ALT)
 			{
 			  t->attr[j].attr = reft->attr[i].attr;
-			  t->attr[j++].form = DW_FORM_GNU_ref_alt;
+			  t->attr[j++].form
+			    = dwarf_5 ? DW_FORM_ref_sup4 : DW_FORM_GNU_ref_alt;
 			  die->die_size += 4;
 			  continue;
 			}
@@ -10875,14 +10888,16 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 			  if (cu == die_cu (refd))
 			    form = DW_FORM_ref4;
 			  else if (die_cu (refd)->cu_kind == CU_ALT)
-			    form = DW_FORM_GNU_ref_alt;
+			    form = (dwarf_5
+				    ? DW_FORM_ref_sup4 : DW_FORM_GNU_ref_alt);
 			  else
 			    form = DW_FORM_ref_addr;
 			}
 		    }
 		  if (form == DW_FORM_ref_addr)
 		    die->die_size += cu->cu_version == 2 ? ptr_size : 4;
-		  else if (form == DW_FORM_GNU_ref_alt)
+		  else if (form == DW_FORM_GNU_ref_alt
+			   || form == DW_FORM_ref_sup4)
 		    die->die_size += 4;
 		  else
 		    {
@@ -11008,7 +11023,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 	t->nattr = 1;
 	if (die_cu (die->die_nextdup)->cu_kind == CU_ALT)
 	  {
-	    t->attr[0].form = DW_FORM_GNU_ref_alt;
+	    t->attr[0].form = dwarf_5 ? DW_FORM_ref_sup4 : DW_FORM_GNU_ref_alt;
 	    die->die_size = 4;
 	  }
 	else
@@ -12070,7 +12085,8 @@ write_unit_die (unsigned char *ptr, dw_die_ref die, dw_die_ref origin)
 	    assert (p);
 	    assert (form == attr->form
 		    || (form == DW_FORM_strp
-			&& attr->form == DW_FORM_GNU_strp_alt));
+			&& (attr->form == DW_FORM_GNU_strp_alt
+			    || attr->form == DW_FORM_strp_sup)));
 	    if (form == DW_FORM_strp)
 	      {
 		if (unlikely (wr_multifile || op_multifile || fi_multifile))
@@ -12240,7 +12256,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	    case DW_FORM_ref_addr:
 	      {
 		dw_die_ref refd, refdt;
-		if (t->attr[j].form != DW_FORM_GNU_ref_alt)
+		if (t->attr[j].form != DW_FORM_GNU_ref_alt
+		    && t->attr[j].form != DW_FORM_ref_sup4)
 		  {
 		    memcpy (ptr, orig_ptr, inptr - orig_ptr);
 		    ptr += inptr - orig_ptr;
@@ -12259,7 +12276,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		if (refdt->die_dup && !refdt->die_op_type_referenced)
 		  {
 		    refd = die_find_dup (refdt, refdt->die_dup, refd);
-		    if (t->attr[j].form == DW_FORM_GNU_ref_alt)
+		    if (t->attr[j].form == DW_FORM_GNU_ref_alt
+			|| t->attr[j].form == DW_FORM_ref_sup4)
 		      {
 			assert (die_cu (refd)->cu_kind == CU_ALT);
 			write_32 (ptr, refd->die_offset);
@@ -12268,7 +12286,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		      }
 		  }
 		assert (refd->u.p2.die_new_offset
-			&& t->attr[j].form != DW_FORM_GNU_ref_alt);
+			&& t->attr[j].form != DW_FORM_GNU_ref_alt
+			&& t->attr[j].form != DW_FORM_ref_sup4);
 		value = die_cu (refd)->cu_new_offset
 			+ refd->u.p2.die_new_offset;
 		write_size (ptr, cu->cu_version == 2 ? ptr_size : 4,
@@ -12440,7 +12459,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		    }
 		  else if (refdt->die_dup)
 		    refd = die_find_dup (refdt, refdt->die_dup, refd);
-		  if (t->attr[j].form == DW_FORM_GNU_ref_alt)
+		  if (t->attr[j].form == DW_FORM_GNU_ref_alt
+		      || t->attr[j].form == DW_FORM_ref_sup4)
 		    {
 		      value = refd->die_offset;
 		      assert (die_cu (refd)->cu_kind == CU_ALT);
@@ -12471,7 +12491,13 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 			      value);
 		  ptr += cu->cu_version == 2 ? ptr_size : 4;
 		  break;
-		case DW_FORM_GNU_ref_alt: write_32 (ptr, value); break;
+		case DW_FORM_GNU_ref_alt:
+		case DW_FORM_ref_sup4:
+		  write_32 (ptr, value);
+		  break;
+		case DW_FORM_ref_sup8:
+		  write_64 (ptr, value);
+		  break;
 		default:
 		  abort ();
 		}
@@ -12545,7 +12571,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	  unsigned char *p = get_AT (origin, DW_AT_name, &form);
 	  assert (p && (form == t->attr[0].form
 			|| (form == DW_FORM_strp
-			    && t->attr[0].form == DW_FORM_GNU_strp_alt)));
+			    && (t->attr[0].form == DW_FORM_GNU_strp_alt
+				|| t->attr[0].form == DW_FORM_strp_sup))));
 	  if (form == DW_FORM_strp)
 	    {
 	      if (unlikely (wr_multifile || op_multifile || fi_multifile))
@@ -12595,7 +12622,8 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 	}
       case DW_TAG_imported_unit:
 	refcu = die_cu (origin);
-	if (t->attr[0].form == DW_FORM_GNU_ref_alt)
+	if (t->attr[0].form == DW_FORM_GNU_ref_alt
+	    || t->attr[0].form == DW_FORM_ref_sup4)
 	  {
 	    assert (refcu->cu_kind == CU_ALT);
 	    write_32 (ptr, origin->die_offset);
@@ -13503,6 +13531,13 @@ read_dwarf (DSO *dso, bool quieter, unsigned int *die_count)
 	error (0, 0, "%s: .debug_info section not present",
 	       dso->filename);
       return 3;
+    }
+
+  if (debug_sections[DEBUG_SUP].data != NULL && !(dwarf_5 && rd_multifile))
+    {
+      error (0, 0, "%s: .debug_sup section already present",
+	     dso->filename);
+      return 1;
     }
 
   if (debug_sections[GNU_DEBUGALTLINK].data != NULL)
@@ -15249,6 +15284,8 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	    {
 	      size_t len;
 	      const char *name = multifile_name;
+	      enum debug_section_kind sec_kind;
+	      unsigned char *ptr;
 	      if (multifile_name == NULL)
 		{
 		  if (!multifile_relative)
@@ -15308,14 +15345,24 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 		    }
 		}
 	      len = strlen (name) + 1;
-	      debug_sections[GNU_DEBUGALTLINK].new_size = len + 0x14;
-	      debug_sections[GNU_DEBUGALTLINK].new_data
-		= malloc (debug_sections[GNU_DEBUGALTLINK].new_size);
-	      if (debug_sections[GNU_DEBUGALTLINK].new_data == NULL)
+	      sec_kind = dwarf_5 ? DEBUG_SUP : GNU_DEBUGALTLINK;
+	      debug_sections[sec_kind].new_size
+		= len + 0x14 + (dwarf_5 ? 4 : 0);
+	      debug_sections[sec_kind].new_data
+		= malloc (debug_sections[sec_kind].new_size);
+	      if (debug_sections[sec_kind].new_data == NULL)
 		dwz_oom ();
-	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data, name, len);
-	      memcpy (debug_sections[GNU_DEBUGALTLINK].new_data + len,
-		      multifile_sha1, 0x14);
+	      ptr = debug_sections[sec_kind].new_data;
+	      if (dwarf_5)
+		{
+		  write_16 (ptr, 5);
+		  write_8 (ptr, 0);
+		}
+	      memcpy (ptr, name, len);
+	      ptr += len;
+	      if (dwarf_5)
+		write_uleb128 (ptr, 0x14);
+	      memcpy (ptr, multifile_sha1, 0x14);
 	      if (name != multifile_name && name != multifile)
 		free ((void *) name);
 	      write_macro ();
@@ -15419,11 +15466,17 @@ optimize_multifile (unsigned int *die_count)
   Elf_Scn *scn;
   Elf_Data *data;
   char *e_ident;
-  const char shstrtab[]
+  const char shstrtab_gnu[]
     = "\0.shstrtab\0.note.gnu.build-id\0.gdb_index\0"
       ".debug_info\0.debug_abbrev\0.debug_line\0.debug_str\0.debug_macro";
+  const char shstrtab_dwarf5[]
+    = "\0.shstrtab\0.gdb_index\0"
+      ".debug_info\0.debug_abbrev\0.debug_line\0.debug_str\0.debug_macro\0"
+      ".debug_sup";
+  const char *shstrtab;
+  size_t shstrtab_len;
   const char *p;
-  unsigned char note[0x24], *np;
+  unsigned char note[0x24], *np, *supp;
   struct sha1_ctx ctx;
 
   if (multi_ehdr.e_ident[0] == '\0'
@@ -15447,6 +15500,16 @@ optimize_multifile (unsigned int *die_count)
       fprintf (stderr, "optimize_multifile\n");
     }
 
+  if (dwarf_5)
+    {
+      shstrtab = shstrtab_dwarf5;
+      shstrtab_len = sizeof shstrtab_dwarf5;
+    }
+  else
+    {
+      shstrtab = shstrtab_gnu;
+      shstrtab_len = sizeof shstrtab_gnu;
+    }
   debug_sections[DEBUG_INFO].size = multi_info_off;
   debug_sections[DEBUG_INFO].data
     = (multi_info_off
@@ -15611,6 +15674,21 @@ optimize_multifile (unsigned int *die_count)
   write_32 (np, 0x14);
   write_32 (np, NT_GNU_BUILD_ID);
 
+  supp = NULL;
+  if (dwarf_5)
+    {
+      debug_sections[DEBUG_SUP].new_size = 0x14 + 5;
+      debug_sections[DEBUG_SUP].new_data
+	= malloc (debug_sections[DEBUG_SUP].new_size);
+      if (debug_sections[DEBUG_SUP].new_data == NULL)
+	dwz_oom ();
+      supp = debug_sections[DEBUG_SUP].new_data;
+      write_16 (supp, 5);
+      write_8 (supp, 1);
+      write_8 (supp, 0);
+      write_uleb128 (supp, 0x14);
+    }
+
   cleanup ();
   fd = open (multifile, O_RDWR | O_CREAT, 0600);
   vfd = fd;
@@ -15632,8 +15710,13 @@ optimize_multifile (unsigned int *die_count)
   multi_ehdr.e_entry = 0;
   multi_ehdr.e_phoff = 0;
   multi_ehdr.e_phnum = 0;
-  multi_ehdr.e_shoff = multi_ehdr.e_ehsize + 0x24;
-  multi_ehdr.e_shnum = 3;
+  multi_ehdr.e_shoff = multi_ehdr.e_ehsize;
+  multi_ehdr.e_shnum = 2;
+  if (!dwarf_5)
+    {
+      multi_ehdr.e_shoff += 0x24;
+      multi_ehdr.e_shnum++;
+    }
   for (i = 0; debug_sections[i].name; i++)
     if (debug_sections[i].new_size)
       {
@@ -15684,22 +15767,28 @@ optimize_multifile (unsigned int *die_count)
   memcpy (np, "GNU", sizeof ("GNU"));
   memcpy (np + 4, multifile_sha1, 0x14);
 
+  if (dwarf_5)
+    memcpy (supp, multifile_sha1, 0x14);
+
   memset (&shdr, '\0', sizeof (shdr));
-  shdr.sh_type = SHT_NOTE;
   shdr.sh_offset = multi_ehdr.e_ehsize;
-  shdr.sh_addralign = 4;
-  shdr.sh_size = 0x24;
-  scn = elf_newscn (elf);
-  elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
-  shdr.sh_name = (strchr (shstrtab + 1, '\0') + 1) - shstrtab;
-  gelf_update_shdr (scn, &shdr);
-  data = elf_newdata (scn);
-  data->d_buf = (char *) note;
-  data->d_type = ELF_T_BYTE;
-  data->d_version = EV_CURRENT;
-  data->d_size = shdr.sh_size;
-  data->d_off = 0;
-  data->d_align = 1;
+  if (!dwarf_5)
+    {
+      shdr.sh_type = SHT_NOTE;
+      shdr.sh_addralign = 4;
+      shdr.sh_size = 0x24;
+      scn = elf_newscn (elf);
+      elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
+      shdr.sh_name = (strchr (shstrtab + 1, '\0') + 1) - shstrtab;
+      gelf_update_shdr (scn, &shdr);
+      data = elf_newdata (scn);
+      data->d_buf = (char *) note;
+      data->d_type = ELF_T_BYTE;
+      data->d_version = EV_CURRENT;
+      data->d_size = shdr.sh_size;
+      data->d_off = 0;
+      data->d_align = 1;
+    }
 
   shdr.sh_type = SHT_PROGBITS;
   shdr.sh_offset += shdr.sh_size;
@@ -15710,7 +15799,7 @@ optimize_multifile (unsigned int *die_count)
 	continue;
       scn = elf_newscn (elf);
       elf_flagscn (scn, ELF_C_SET, ELF_F_DIRTY);
-      for (p = shstrtab + 1; p < shstrtab + sizeof (shstrtab);
+      for (p = shstrtab + 1; p < shstrtab + shstrtab_len;
 	   p = strchr (p, '\0') + 1)
 	if (strcmp (p, debug_sections[i].name) == 0)
 	  {
@@ -15743,7 +15832,7 @@ optimize_multifile (unsigned int *die_count)
   shdr.sh_name = 1;
   shdr.sh_offset = multi_ehdr.e_shoff
 		   + multi_ehdr.e_shnum * multi_ehdr.e_shentsize;
-  shdr.sh_size = sizeof (shstrtab);
+  shdr.sh_size = shstrtab_len;
   shdr.sh_type = SHT_STRTAB;
   shdr.sh_flags = 0;
   shdr.sh_entsize = 0;
@@ -15770,6 +15859,11 @@ optimize_multifile (unsigned int *die_count)
 
   fchmod (fd, 0644);
 
+  if (dwarf_5)
+    {
+      free (debug_sections[DEBUG_SUP].new_data);
+      debug_sections[DEBUG_SUP].new_data = NULL;
+    }
   munmap (debug_sections[DEBUG_INFO].data, debug_sections[DEBUG_INFO].size);
   munmap (debug_sections[DEBUG_ABBREV].data,
 	  debug_sections[DEBUG_ABBREV].size);
@@ -16022,6 +16116,7 @@ static struct option dwz_options[] =
 			 no_argument,	    &import_opt_p, 1 },
   { "no-import-optimize",
 			 no_argument,	    &import_opt_p, 0 },
+  { "dwarf-5",		 no_argument,	    0, '5' },
 #if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-progress",	 no_argument,	    &progress_p, 1 },
@@ -16110,10 +16205,13 @@ static struct option_help dwz_multi_file_options_help[] =
     "Enable multifile optimization, placing common DIEs in multifile"
     " COMMONFILE." },
   { "M", "multifile-name", "NAME", NULL,
-    "Set .gnu_debugaltlink in files to NAME." },
+    "Set .gnu_debugaltlink or .debug_sup in files to NAME." },
   { "r", "relative", NULL, NULL,
     "Set .gnu_debugaltlink in files to relative path from file directory"
-    " to multifile." }
+    " to multifile." },
+  { "5", "dwarf-5", NULL, NULL,
+    "Emit DWARF 5 standardized supplementary object files instead of"
+    " GNU extension .debug_altlink." }
 };
 
 /* Describe misc command line options.  */
@@ -16346,7 +16444,7 @@ main (int argc, char *argv[])
   while (1)
     {
       int option_index;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5", dwz_options, &option_index);
       if (c == -1)
 	break;
       switch (c)
@@ -16459,6 +16557,10 @@ main (int argc, char *argv[])
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
 	    error (1, 0, "invalid argument -L %s", optarg);
 	  max_die_limit = l;
+	  break;
+
+	case '5':
+	  dwarf_5 = true;
 	  break;
 
 	case 'v':
