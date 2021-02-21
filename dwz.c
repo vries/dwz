@@ -16223,20 +16223,20 @@ static struct option_help dwz_misc_options_help[] =
     "Display this information." }
 };
 
-/* Print LEN spaces to stderr.  */
+/* Print LEN spaces to STREAM.  */
 static void
-do_indent (unsigned int len)
+do_indent (FILE *stream, unsigned int len)
 {
   unsigned int i;
 
   for (i = 0; i < len; i++)
-    fprintf (stderr, " ");
+    fprintf (stream, " ");
 }
 
-/* Print MSG to stderr, indenting to INDENT and wrapping at LIMIT.  Assume
-   starting position is at INDENT.  */
+/* Print MSG to STREAM, indenting to INDENT and wrapping at LIMIT.
+   Assume starting position is at INDENT.  */
 static void
-wrap (unsigned int indent, unsigned int limit, const char *msg)
+wrap (FILE *stream, unsigned int indent, unsigned int limit, const char *msg)
 {
   unsigned int len = indent;
   const char *s = msg;
@@ -16253,13 +16253,13 @@ wrap (unsigned int indent, unsigned int limit, const char *msg)
 
       if (len + 1 /* space */ + word_len > limit)
 	{
-	  fprintf (stderr, "\n");
-	  do_indent (indent);
+	  fprintf (stream, "\n");
+	  do_indent (stream ,indent);
 	  len = indent;
 	}
       else if (len > indent)
 	{
-	  fprintf (stderr, " ");
+	  fprintf (stream, " ");
 	  len += 1;
 	}
 
@@ -16267,10 +16267,10 @@ wrap (unsigned int indent, unsigned int limit, const char *msg)
 	{
 	  const char *i;
 	  for (i = s; i < e; ++i)
-	    fprintf (stderr, "%c", *i);
+	    fprintf (stream, "%c", *i);
 	}
       else
-	fprintf (stderr, "%s", s);
+	fprintf (stream, "%s", s);
       len += word_len;
 
       if (e == NULL)
@@ -16280,10 +16280,10 @@ wrap (unsigned int indent, unsigned int limit, const char *msg)
     }
 }
 
-/* Print OPTIONS_HELP of length H to stderr, indenting to help message to
+/* Print OPTIONS_HELP of length H to STREAM, indenting to help message to
    INDENT an wrapping at LIMIT.  */
 static void
-print_options_help (struct option_help *options_help, unsigned int n,
+print_options_help (FILE *stream, struct option_help *options_help, unsigned int n,
 		    unsigned int indent, unsigned int limit)
 {
   unsigned len;
@@ -16294,29 +16294,29 @@ print_options_help (struct option_help *options_help, unsigned int n,
     {
       len = 0;
 
-      fprintf (stderr, "  ");
+      fprintf (stream, "  ");
       len += 2;
 
       s = options_help[i].short_name;
       if (s)
 	{
-	  fprintf (stderr, "-%s", s);
+	  fprintf (stream, "-%s", s);
 	  len += 2;
 	}
 
       s = options_help[i].long_name;
       if (len == 4)
 	{
-	  fprintf (stderr, ", ");
+	  fprintf (stream, ", ");
 	  len += 2;
 	}
-      fprintf (stderr, "--%s", s);
+      fprintf (stream, "--%s", s);
       len += 2 + strlen (s);
 
       s = options_help[i].argument;
       if (s)
 	{
-	  fprintf (stderr, " %s", s);
+	  fprintf (stream, " %s", s);
 	  len += 1 + strlen (s);
 	}
 
@@ -16325,104 +16325,102 @@ print_options_help (struct option_help *options_help, unsigned int n,
 	{
 	  if (len > indent)
 	    {
-	      fprintf (stderr, "\n");
-	      do_indent (indent);
+	      fprintf (stream, "\n");
+	      do_indent (stream, indent);
 	    }
 	  else
-	    do_indent (indent - len);
+	    do_indent (stream, indent - len);
 	  len = indent;
 
-	  wrap (indent, limit, s);
+	  wrap (stream, indent, limit, s);
 	}
-      fprintf (stderr, "\n");
+      fprintf (stream, "\n");
 
       s = options_help[i].default_value;
       if (s)
 	{
-	  do_indent (indent);
-	  fprintf (stderr, "Default value: %s.\n", s);
+	  do_indent (stream, indent);
+	  fprintf (stream, "Default value: %s.\n", s);
 	}
     }
 }
 
 /* Print usage and exit.  */
 static void
-usage (void)
+usage (const char *progname, int failing)
 {
   unsigned int n;
   unsigned int indent, limit;
-  const char *msg;
+  FILE *stream = failing ? stderr : stdout;
 
-  msg
-    = ("Usage:\n"
-       "  dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
-       "  dwz [common options] -o OUTFILE FILE\n"
-       "  dwz [ -v | -? ]");
-  error (0, 0, "%s", msg);
+  fprintf (stream,
+	   ("Usage:\n"
+	    "  %s [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
+	    "  %s [common options] -o OUTFILE FILE\n"
+	    "  %s [ -v | -? ]\n"),
+	   progname, progname, progname);
 
   indent = 30;
   limit = 80;
-  fprintf (stderr, "Common options:\n");
+  fprintf (stream, "Common options:\n");
   n = (sizeof (dwz_common_options_help)
        / sizeof (dwz_common_options_help[0]));
-  print_options_help (dwz_common_options_help, n, indent, limit);
+  print_options_help (stream, dwz_common_options_help, n, indent, limit);
 
-  fprintf (stderr, "Single-file options:\n");
+  fprintf (stream, "Single-file options:\n");
   n = (sizeof (dwz_single_file_options_help)
        / sizeof (dwz_single_file_options_help[0]));
-  print_options_help (dwz_single_file_options_help, n, indent, limit);
+  print_options_help (stream, dwz_single_file_options_help, n, indent, limit);
 
-  fprintf (stderr, "Multi-file options:\n");
+  fprintf (stream, "Multi-file options:\n");
   n = (sizeof (dwz_multi_file_options_help)
        / sizeof (dwz_multi_file_options_help[0]));
-  print_options_help (dwz_multi_file_options_help, n, indent, limit);
+  print_options_help (stream, dwz_multi_file_options_help, n, indent, limit);
 
-  fprintf (stderr, "Miscellaneous options:\n");
+  fprintf (stream, "Miscellaneous options:\n");
   n = (sizeof (dwz_misc_options_help)
        / sizeof (dwz_misc_options_help[0]));
-  print_options_help (dwz_misc_options_help, n, indent, limit);
+  print_options_help (stream, dwz_misc_options_help, n, indent, limit);
 
 #if DEVEL
-  fprintf (stderr, "Development options:\n");
-  msg
-    = ("  --devel-trace\n"
-       "  --devel-progress\n"
-       "  --devel-stats\n"
-       "  --devel-ignore-size\n"
-       "  --devel-ignore-locus\n"
-       "  --devel-force\n"
-       "  --devel-save-temps\n"
-       "  --devel-dump-checksum\n"
-       "  --devel-dump-dies\n"
-       "  --devel-dump-dups\n"
-       "  --devel-dump-pus\n"
-       "  --devel-unoptimized-multifile\n"
-       "  --devel-verify-dups\n"
-       "  --devel-verify-edges\n"
-       "  --devel-dump-edges\n"
-       "  --devel-partition-dups-opt\n"
-       "  --devel-die-count-method\n"
-       "  --devel-deduplication-mode={none,intra-cu,inter-cu}\n"
-       "  --devel-uni-lang / --devel-no-uni-lang\n"
-       "  --devel-gen-cu / --devel-no-gen-cu\n");
-  fprintf (stderr, "%s", msg);
+  fprintf (stream, "Development options:\n");
+  fprintf (stream, "%s",
+	   ("  --devel-trace\n"
+	    "  --devel-progress\n"
+	    "  --devel-stats\n"
+	    "  --devel-ignore-size\n"
+	    "  --devel-ignore-locus\n"
+	    "  --devel-force\n"
+	    "  --devel-save-temps\n"
+	    "  --devel-dump-checksum\n"
+	    "  --devel-dump-dies\n"
+	    "  --devel-dump-dups\n"
+	    "  --devel-dump-pus\n"
+	    "  --devel-unoptimized-multifile\n"
+	    "  --devel-verify-dups\n"
+	    "  --devel-verify-edges\n"
+	    "  --devel-dump-edges\n"
+	    "  --devel-partition-dups-opt\n"
+	    "  --devel-die-count-method\n"
+	    "  --devel-deduplication-mode={none,intra-cu,inter-cu}\n"
+	    "  --devel-uni-lang / --devel-no-uni-lang\n"
+	    "  --devel-gen-cu / --devel-no-gen-cu\n"));
 #endif
 
-  exit (1);
+  exit (failing);
 }
 
 /* Print version and exit.  */
 static void
 version (void)
 {
-  fprintf (stderr,
-	   "dwz version " DWZ_VERSION "\n"
-	   "Copyright (C) " RH_YEARS " Red Hat, Inc.\n"
-	   "Copyright (C) " FSF_YEARS " Free Software Foundation, Inc.\n"
-	   "Copyright (C) " SUSE_YEARS " SUSE LLC.\n"
-	   "This program is free software; you may redistribute it under the terms of\n"
-	   "the GNU General Public License version 3 or (at your option) any later version.\n"
-	   "This program has absolutely no warranty.\n");
+  printf ("dwz version " DWZ_VERSION "\n"
+	  "Copyright (C) " RH_YEARS " Red Hat, Inc.\n"
+	  "Copyright (C) " FSF_YEARS " Free Software Foundation, Inc.\n"
+	  "Copyright (C) " SUSE_YEARS " SUSE LLC.\n"
+	  "This program is free software; you may redistribute it under the terms of\n"
+	  "the GNU General Public License version 3 or (at your option) any later version.\n"
+	  "This program has absolutely no warranty.\n");
   exit (0);
 }
 
@@ -16443,7 +16441,7 @@ main (int argc, char *argv[])
 
   while (1)
     {
-      int option_index;
+      int option_index = -1;
       int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5", dwz_options, &option_index);
       if (c == -1)
 	break;
@@ -16451,7 +16449,7 @@ main (int argc, char *argv[])
 	{
 	default:
 	case '?':
-	  usage ();
+	  usage (argv[0], option_index == -1);
 	  break;
 
 	case 0:
