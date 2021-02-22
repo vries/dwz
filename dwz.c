@@ -7253,7 +7253,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		{
 		  if (die->die_ck_state != CK_KNOWN)
 		    continue;
-		  if (die_odr_state (die_cu (die), die) != ODR_NONE)
+		  if (die_odr_state (NULL, die) != ODR_NONE)
 		    die->u.p1.die_ref_hash = die->u.p1.die_hash;
 		  else
 		    die->die_ref_hash_computed = 0;
