@@ -32,7 +32,7 @@ TEST_EXECS_x86_64 = py-section-script dw2-skip-prologue \
 TEST_EXECS = hello dwz-for-test min two-typedef start hello-gold-gdb-index \
 	start-gold hello-gnu-pubnames $(TEST_EXECS_DWARF_ASM) \
 	$(TEST_EXECS_$(UNAME)) odr-struct odr-class odr-union odr-struct-ns \
-	odr-class-ns odr-union-ns odr-loc def-decl
+	odr-class-ns odr-union-ns odr-loc def-decl cycle
 
 UNAME:=$(shell uname -p)
 
@@ -130,6 +130,9 @@ odr-loc:
 def-decl:
 	$(CXX) $(TEST_SRC)/decl.cc $(TEST_SRC)/def.cc $(TEST_SRC)/def2.cc \
 	  -I$(TEST_SRC) -o $@ -g
+
+cycle:
+	$(CC) $(TEST_SRC)/cycle.c -o $@ -g
 
 # On some systems we need to set and export DEJAGNU to suppress
 # WARNING: Couldn't find the global config file.
