@@ -8289,21 +8289,38 @@ partition_dups_2 (dw_die_ref *arr, size_t i, size_t j, size_t cnt,
 }
 
 static bool
-partition_dups_1 (dw_die_ref *arr, size_t vec_size,
+partition_dups_1 (dw_die_ref *arr, size_t nr_partitions, size_t *partitions,
 		  dw_cu_ref *first_partial_cu,
 		  dw_cu_ref *last_partial_cu,
 		  bool second_phase)
 {
-  size_t i, j;
+  size_t i, j, cnt;
   bool ret = false;
+  size_t idx = 0;
+  for (idx = 0; idx < nr_partitions * 2; idx += 2)
+    {
+      i = partitions[idx];
+      cnt = partitions[idx+1];
+      j = partitions[idx+2];
+
+      if (arr[i]->die_dup != NULL)
+	continue;
+
+      if (partition_dups_2 (arr, i, j, cnt, first_partial_cu,
+			    last_partial_cu, second_phase))
+	ret = true;
+    }
+
+  return ret;
+}
+
+static void
+calculate_partitions (dw_die_ref *arr, size_t vec_size)
+{
+  size_t i, j;
   for (i = 0; i < vec_size; i = j)
     {
       size_t cnt = 0;
-      if (arr[i]->die_dup != NULL)
-	{
-	  j = i + 1;
-	  continue;
-	}
       for (j = i + 1; j < vec_size; j++)
 	{
 	  size_t this_cnt;
@@ -8311,17 +8328,16 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	    break;
 	  cnt = this_cnt;
 	}
-      if (stats_p && !second_phase)
-	stats->part_cnt++;
       if (cnt == 0)
 	cnt = cnt_ref_cus (arr[i]);
-      if (partition_dups_2 (arr, i, j, cnt, first_partial_cu, last_partial_cu,
-			    second_phase))
-	ret = true;
+      obstack_grow (&ob2, &i, sizeof (size_t));
+      obstack_grow (&ob2, &cnt, sizeof (size_t));
     }
-
-  return ret;
+  obstack_grow (&ob2, &j, sizeof (size_t));
+  size_t zero = 0;
+  obstack_grow (&ob2, &zero, sizeof (size_t));
 }
+
 
 static inline void FORCE_INLINE
 reset_die_ref_seen (void)
@@ -8477,7 +8493,16 @@ partition_dups (void)
 	  report_progress ();
 	  fprintf (stderr, "partition_dups after qsort\n");
 	}
-      if (partition_dups_1 (arr, vec_size, &first_partial_cu,
+
+      size_t *partitions = (size_t *) obstack_base (&ob2);
+      calculate_partitions (arr, vec_size);
+      size_t nr_partitions
+	= (obstack_object_size (&ob2) / sizeof (size_t)) / 2 - 1;
+      partitions = (size_t *) obstack_finish (&ob2);
+      if (stats_p)
+	stats->part_cnt += nr_partitions;
+
+      if (partition_dups_1 (arr, nr_partitions, partitions, &first_partial_cu,
 			    &last_partial_cu, false))
 	{
 	  for (i = 0; i < vec_size; i++)
@@ -8486,7 +8511,7 @@ partition_dups (void)
 	    if (arr[i]->die_dup != NULL)
 	      mark_refs (die_cu (arr[i]), arr[i], arr[i],
 			 MARK_REFS_FOLLOW_DUPS);
-	  partition_dups_1 (arr, vec_size, &first_partial_cu,
+	  partition_dups_1 (arr, nr_partitions, partitions, &first_partial_cu,
 			    &last_partial_cu, true);
 	  for (i = 0; i < vec_size; i++)
 	    arr[i]->die_ref_seen = 0;
