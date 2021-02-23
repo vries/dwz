@@ -5482,7 +5482,8 @@ dump_die_with_indent (int indent, dw_die_ref die)
       fprintf (stderr, "%*s %x %c %x", indent, "", die->die_offset,
 	       die->die_ck_state == CK_KNOWN ? 'O' : 'X',
 	       (unsigned) die->u.p1.die_hash);
-      if (odr && die->die_odr_state != ODR_NONE)
+      if (odr && die->die_odr_state != ODR_NONE
+	   && die->die_odr_state != ODR_UNKNOWN)
 	  fprintf (stderr, "(%x)", (unsigned) die->u.p1.die_hash2);
       fprintf (stderr, " %x %s %s", (unsigned) die->u.p1.die_ref_hash,
 	       name ? name : "", get_DW_TAG_name (die->die_tag) + 7);
