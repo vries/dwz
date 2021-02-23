@@ -3227,6 +3227,7 @@ set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
   bool name_p;
   bool other_p;
 
+  assert (die->die_odr_state == ODR_UNKNOWN);
   die->die_odr_state = ODR_NONE;
 
   if (low_mem)
@@ -3310,12 +3311,9 @@ set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
 
 /* Return the initialized die_odr_state field for DIE with CU.  */
 static unsigned int UNUSED
-die_odr_state (dw_cu_ref cu, dw_die_ref die)
+die_odr_state (dw_die_ref die)
 {
-  if (die->die_odr_state != ODR_UNKNOWN)
-    return die->die_odr_state;
-
-  set_die_odr_state (cu, die);
+  assert (die->die_odr_state != ODR_UNKNOWN);
   return die->die_odr_state;
 }
 
@@ -3380,7 +3378,10 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	fprintf (stderr, "DIE %x, hash: %x, lang\n", die->die_offset,
 		 die->u.p1.die_hash);
     }
-  only_hash_name_p = odr && die_odr_state (die_cu (die), die) != ODR_NONE;
+
+  if (odr && die->die_odr_state == ODR_UNKNOWN)
+    set_die_odr_state (die_cu (die), die);
+  only_hash_name_p = odr && die_odr_state (die) != ODR_NONE;
   die_hash2 = 0;
   if (only_hash_name_p)
     die_hash2 = die->u.p1.die_hash;
@@ -7254,7 +7255,7 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 		{
 		  if (die->die_ck_state != CK_KNOWN)
 		    continue;
-		  if (die_odr_state (NULL, die) != ODR_NONE)
+		  if (die_odr_state (die) != ODR_NONE)
 		    die->u.p1.die_ref_hash = die->u.p1.die_hash;
 		  else
 		    die->die_ref_hash_computed = 0;
@@ -7656,7 +7657,7 @@ split_dups (dw_die_ref die, struct obstack *vec)
   for (i = 0; i < count; i++)
     {
       d = arr[i];
-      if (die_odr_state (NULL, d) != ODR_DECL)
+      if (die_odr_state (d) != ODR_DECL)
 	continue;
       if (!head)
 	head = d;
@@ -7675,14 +7676,14 @@ split_dups (dw_die_ref die, struct obstack *vec)
     {
       d = arr[i];
       if (d->die_dup || d->die_nextdup
-	  || die_odr_state (NULL, d) == ODR_DECL)
+	  || die_odr_state (d) == ODR_DECL)
 	continue;
       tail = d;
       for (j = i + 1; j < count; j++)
 	{
 	  d2 = arr[j];
 	  if (d2->die_dup || d2->die_nextdup
-	      || die_odr_state (NULL, d2) == ODR_DECL)
+	      || die_odr_state (d2) == ODR_DECL)
 	    continue;
 	  die_eq (d, d2);
 	}
@@ -7696,7 +7697,7 @@ split_dups (dw_die_ref die, struct obstack *vec)
       for (i = 0; i < count; i++)
 	{
 	  d = arr[i];
-	  if (die_odr_state (NULL, d) == ODR_DECL
+	  if (die_odr_state (d) == ODR_DECL
 	      || d->die_dup != NULL)
 	    continue;
 	  def = d;
@@ -7774,12 +7775,12 @@ reorder_dups (dw_die_ref die)
   unsigned def_count = 0;
   dw_die_ref d;
 
-  if (die_odr_state (NULL, die) == ODR_NONE)
+  if (die_odr_state (die) == ODR_NONE)
     return die;
 
   for (d = die; d; d = d->die_nextdup)
     {
-      if (die_odr_state (NULL, d) == ODR_DECL)
+      if (die_odr_state (d) == ODR_DECL)
 	decl_count++;
       else
 	def_count++;
@@ -7787,14 +7788,14 @@ reorder_dups (dw_die_ref die)
   if (def_count == 0 || decl_count == 0)
     return die;
 
-  if (die_odr_state (NULL, die) != ODR_DECL)
+  if (die_odr_state (die) != ODR_DECL)
     return die;
 
   dw_die_ref def = NULL;
   dw_die_ref prev = NULL;
   for (d = die; d; prev = d, d = d->die_nextdup)
     {
-      if (die_odr_state (NULL, d) == ODR_DECL)
+      if (die_odr_state (d) == ODR_DECL)
 	continue;
       def = d;
       break;
@@ -8253,7 +8254,7 @@ merged_singleton (dw_die_ref die)
   size_t decl_cnt = 0;
 
   for (d = die; d; d = d->die_nextdup)
-    switch (die_odr_state (NULL, d))
+    switch (die_odr_state (d))
       {
       case ODR_DEF:
 	if (res)
@@ -8313,7 +8314,7 @@ partition_dups (void)
       for (i = 0; i < vec_size; i++)
 	{
 	  dw_die_ref die = arr[i];
-	  if (die_odr_state (NULL, die) == ODR_NONE)
+	  if (die_odr_state (die) == ODR_NONE)
 	    continue;
 	  die = split_dups (die, &ob2);
 	  assert (die != NULL);
@@ -8340,7 +8341,7 @@ partition_dups (void)
 	      && die->die_nextdup == NULL)
 	    mark_singletons (die_cu (die), die, die, &ob2);
 	  else if (odr_mode != ODR_BASIC
-		   && die_odr_state (NULL, die) != ODR_NONE)
+		   && die_odr_state (die) != ODR_NONE)
 	    {
 	      dw_die_ref s = merged_singleton (die);
 	      if (s)
