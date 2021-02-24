@@ -8417,6 +8417,9 @@ partition_dups (void)
 	      if (s)
 		mark_singletons (die_cu (s), s, s, &ob2);
 	    }
+	  else if (cnt_ref_cus (die) == 1)
+	    mark_singletons (die_cu (die), die, die, &ob2);
+
 	  arr = (dw_die_ref *) obstack_base (&ob2);
 	}
 
