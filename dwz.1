@@ -112,11 +112,13 @@ corresponding forms, instead of the GNU extension \fI.gnu_debugaltlink\fR
 and corresponding forms.
 .TP
 .B \-\-odr / \-\-no-odr
+.B Experimental.
 Enable/disable One-Definition-Rule optimization for C++ compilation units.
 This optimization causes struct/union/class DIEs with the same name to be
 considered equal.  This has the effect that DIEs referring to distinct DIEs
 representing the same type (like f.i. pointer type DIEs) are considered equal,
-and may be deduplicated.
+and may be deduplicated.  The status of this optimization is experimental.
+It's disabled in low-mem mode.
 Enabled by default.
 .TP
 .B \-\-odr-mode=<basic|link>
