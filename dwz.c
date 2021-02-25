@@ -8134,13 +8134,6 @@ partition_dups_1 (dw_die_ref *arr, size_t nr_partitions, size_t *partitions,
 		 && (ignore_size || orig_size > new_size));
       if (force)
 	{
-	  if (odr_active_p && odr_mode != ODR_BASIC)
-	    for (k = i; k < j; k++)
-	      {
-		if (second_phase && !arr[k]->die_ref_seen)
-		  continue;
-		arr[k] = reorder_dups (arr[k]);
-	      }
 	  dw_die_ref die, *diep;
 	  dw_cu_ref refcu = die_cu (arr[i]);
 	  dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
@@ -8474,6 +8467,9 @@ partition_dups (void)
       if (stats_p)
 	stats->part_cnt += nr_partitions;
 
+      if (odr_active_p && odr_mode != ODR_BASIC)
+	for (i = 0; i < vec_size; ++i)
+	  arr[i] = reorder_dups (arr[i]);
       if (partition_dups_1 (arr, nr_partitions, partitions, &first_partial_cu,
 			    &last_partial_cu, false))
 	{
