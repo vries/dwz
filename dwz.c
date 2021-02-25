@@ -7401,8 +7401,20 @@ partition_cmp (const void *p, const void *q)
   dw_die_ref die2 = *(dw_die_ref *) q;
   dw_die_ref ref1, ref2;
   dw_cu_ref last_cu1 = NULL, last_cu2 = NULL;
-  for (ref1 = die1, ref2 = die2;;
-       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
+  ref1 = die1;
+  ref2 = die2;
+  if (odr_active_p && odr_mode != ODR_BASIC)
+    {
+      while (ref1 && die_odr_state (ref1) == ODR_DECL)
+	ref1 = ref1->die_nextdup;
+      if (ref1 == NULL)
+	ref1 = die1;
+      while (ref2 && die_odr_state (ref2) == ODR_DECL)
+	ref2 = ref2->die_nextdup;
+      if (ref2 == NULL)
+	ref2 = die2;
+    }
+  for (;; ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
     {
       dw_cu_ref ref1cu = NULL;
       dw_cu_ref ref2cu = NULL;
@@ -7929,8 +7941,20 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	  dw_die_ref ref1, ref2;
 	  dw_cu_ref last_cu1 = NULL, last_cu2 = NULL;
 	  size_t this_cnt = 0;
-	  for (ref1 = arr[i], ref2 = arr[j];;
-	       ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
+	  ref1 = arr[i];
+	  ref2 = arr[j];
+	  if (odr_active_p && odr_mode != ODR_BASIC)
+	    {
+	      while (ref1 && die_odr_state (ref1) == ODR_DECL)
+		ref1 = ref1->die_nextdup;
+	      if (ref1 == NULL)
+		ref1 = arr[i];
+	      while (ref2 && die_odr_state (ref2) == ODR_DECL)
+		ref2 = ref2->die_nextdup;
+	      if (ref2 == NULL)
+		ref2 = arr[j];
+	    }
+	  for (;; ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
 	    {
 	      dw_cu_ref ref1cu = NULL;
 	      dw_cu_ref ref2cu = NULL;
@@ -8092,6 +8116,13 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 		 && (ignore_size || orig_size > new_size));
       if (force)
 	{
+	  if (odr_active_p && odr_mode != ODR_BASIC)
+	    for (k = i; k < j; k++)
+	      {
+		if (second_phase && !arr[k]->die_ref_seen)
+		  continue;
+		arr[k] = reorder_dups (arr[k]);
+	      }
 	  dw_die_ref die, *diep;
 	  dw_cu_ref refcu = die_cu (arr[i]);
 	  dw_cu_ref partial_cu = pool_alloc (dw_cu, sizeof (struct dw_cu));
@@ -8135,8 +8166,6 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	      dw_die_ref child;
 	      if (second_phase && !arr[k]->die_ref_seen)
 		continue;
-	      if (odr_active_p && odr_mode != ODR_BASIC)
-		arr[k] = reorder_dups (arr[k]);
 	      if (dump_pus_p)
 		dump_die (arr[k]);
 	      child = copy_die_tree (die, arr[k]);
@@ -9395,6 +9424,9 @@ create_import_tree (void)
 	      if (maybe_superset && maybe_subset)
 		{
 		  if (unlikely (fi_multifile) && ipu2->idx < npus + ncus)
+		    continue;
+		  if (odr_active_p && odr_mode != ODR_BASIC
+		      && ipu2->idx < npus + ncus)
 		    continue;
 		  /* If IPU and IPU2 have the same set of src nodes, then
 		     (if beneficial, with edge_cost != 0 always), merge
