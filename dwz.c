@@ -7915,6 +7915,76 @@ nr_bytes_for (uint64_t val)
   return n;
 }
 
+/* Return true if duplicate chains REF1 and REF2 have the same set of
+   referrer CUs.  If so, return the number of unique referrer CUs
+   in *CNT.  */
+static inline unsigned int FORCE_INLINE
+same_ref_cus_p (dw_die_ref ref1, dw_die_ref ref2, size_t *cnt)
+{
+  dw_cu_ref last_cu1 = NULL, last_cu2 = NULL;
+
+  *cnt = 0;
+
+  if (odr_active_p && odr_mode != ODR_BASIC)
+    {
+      dw_die_ref orig_ref1 = ref1, orig_ref2 = ref2;
+      while (ref1 && die_odr_state (ref1) == ODR_DECL)
+	ref1 = ref1->die_nextdup;
+      if (ref1 == NULL)
+	ref1 = orig_ref1;
+      while (ref2 && die_odr_state (ref2) == ODR_DECL)
+	ref2 = ref2->die_nextdup;
+      if (ref2 == NULL)
+	ref2 = orig_ref2;
+    }
+  for (;; ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
+    {
+      dw_cu_ref ref1cu = NULL;
+      dw_cu_ref ref2cu = NULL;
+
+      while (ref1 && (ref1cu = die_cu (ref1)) == last_cu1)
+	ref1 = ref1->die_nextdup;
+      while (ref2 && (ref2cu = die_cu (ref2)) == last_cu2)
+	ref2 = ref2->die_nextdup;
+      if (ref1 == NULL || ref2 == NULL)
+	break;
+
+      last_cu1 = ref1cu;
+      last_cu2 = ref2cu;
+
+      if (last_cu1 != last_cu2)
+	break;
+      else
+	(*cnt)++;
+    }
+
+  if (ref1 || ref2)
+    return false;
+
+  return true;
+}
+
+/* Return the number of unique referrer CUs in duplicate chain REF.  */
+static inline size_t FORCE_INLINE
+cnt_ref_cus (dw_die_ref ref)
+{
+  dw_cu_ref last_cu1 = NULL;
+  size_t cnt = 0;
+
+  for (;; ref = ref->die_nextdup)
+    {
+      dw_cu_ref refcu = NULL;
+      while (ref && (refcu = die_cu (ref)) == last_cu1)
+	ref = ref->die_nextdup;
+      if (ref == NULL)
+	break;
+      last_cu1 = refcu;
+      cnt++;
+    }
+
+  return cnt;
+}
+
 /* Helper function of partition_dups_1.  Decide what DIEs matching in
    multiple CUs might be worthwhile to be moved into partial units,
    construct those partial units.  */
@@ -7938,59 +8008,15 @@ partition_dups_1 (dw_die_ref *arr, size_t vec_size,
 	}
       for (j = i + 1; j < vec_size; j++)
 	{
-	  dw_die_ref ref1, ref2;
-	  dw_cu_ref last_cu1 = NULL, last_cu2 = NULL;
-	  size_t this_cnt = 0;
-	  ref1 = arr[i];
-	  ref2 = arr[j];
-	  if (odr_active_p && odr_mode != ODR_BASIC)
-	    {
-	      while (ref1 && die_odr_state (ref1) == ODR_DECL)
-		ref1 = ref1->die_nextdup;
-	      if (ref1 == NULL)
-		ref1 = arr[i];
-	      while (ref2 && die_odr_state (ref2) == ODR_DECL)
-		ref2 = ref2->die_nextdup;
-	      if (ref2 == NULL)
-		ref2 = arr[j];
-	    }
-	  for (;; ref1 = ref1->die_nextdup, ref2 = ref2->die_nextdup)
-	    {
-	      dw_cu_ref ref1cu = NULL;
-	      dw_cu_ref ref2cu = NULL;
-	      while (ref1 && (ref1cu = die_cu (ref1)) == last_cu1)
-		ref1 = ref1->die_nextdup;
-	      while (ref2 && (ref2cu = die_cu (ref2)) == last_cu2)
-		ref2 = ref2->die_nextdup;
-	      if (ref1 == NULL || ref2 == NULL)
-		break;
-	      last_cu1 = ref1cu;
-	      last_cu2 = ref2cu;
-	      if (last_cu1 != last_cu2)
-		break;
-	      else
-		this_cnt++;
-	    }
-	  if (ref1 || ref2)
+	  size_t this_cnt;
+	  if (!same_ref_cus_p (arr[i], arr[j], &this_cnt))
 	    break;
 	  cnt = this_cnt;
 	}
       if (stats_p && !second_phase)
 	stats->part_cnt++;
       if (cnt == 0)
-	{
-	  dw_cu_ref last_cu1 = NULL;
-	  for (ref = arr[i];; ref = ref->die_nextdup)
-	    {
-	      dw_cu_ref refcu = NULL;
-	      while (ref && (refcu = die_cu (ref)) == last_cu1)
-		ref = ref->die_nextdup;
-	      if (ref == NULL)
-		break;
-	      last_cu1 = refcu;
-	      cnt++;
-	    }
-	}
+	cnt = cnt_ref_cus (arr[i]);
       enum dwarf_source_language part_lang
 	= gen_cu_p ? partition_lang (arr[i]) : 0;
       for (k = i; k < j; k++)
