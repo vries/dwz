@@ -95,8 +95,12 @@ $(TEMP_ASM_FILES): %-dw.S: $(TEST_SRC)/../lib/%.exp
 	  export DEJAGNU=$(DEJAGNU); \
 	  runtest --tool=dwz -srcdir $(srcdir)/testsuite/ lib/$*.exp
 
-$(TEST_EXECS_DWARF_ASM): %: %-dw.S
+$(filter-out no-multifile-prop, $(TEST_EXECS_DWARF_ASM)): %: %-dw.S
 	$(CC) $(TEST_SRC)/main.c $< -o $@
+
+# Fails to compile on riscv64: Error: non-constant .uleb128 is not supported.
+no-multifile-prop: %: %-dw.S
+	$(CC) $(TEST_SRC)/main.c $< -o $@ || true
 
 odr-struct:
 	$(CXX) $(TEST_SRC)/odr.cc $(TEST_SRC)/odr-2.cc -I$(TEST_SRC) -o $@ -g \
