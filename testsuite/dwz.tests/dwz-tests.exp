@@ -86,6 +86,9 @@ foreach test $tests {
 	    continue
 	}
     }
+    if { $basename == "pr25109.sh" } {
+	lappend required_execs no-multifile-prop
+    }
 
     set unsupported 0
     foreach required_exec $required_execs {
