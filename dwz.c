@@ -230,7 +230,7 @@ enum die_count_methods
 };
 static enum die_count_methods die_count_method = estimate;
 
-int odr = 0;
+int odr = 1;
 enum odr_mode { ODR_BASIC, ODR_LINK };
 enum odr_mode odr_mode = ODR_LINK;
 int odr_mode_parsed = 0;
@@ -16283,7 +16283,7 @@ static struct option_help dwz_common_options_help[] =
     "Don't optimize files larger than this limit." },
   { NULL, "odr", NULL, NULL,
     NULL },
-  { NULL, "no-odr", NULL, "Disabled",
+  { NULL, "no-odr", NULL, "Enabled",
     "Enable/disable one definition rule optimization." },
   { NULL, "odr-mode", "<basic|link>", "link",
     "Set aggressiveness level of one definition rule optimization." },
