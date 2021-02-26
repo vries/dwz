@@ -3462,8 +3462,35 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	    case DW_FORM_data8: value = read_64 (ptr); handled = true; break;
 	    case DW_FORM_udata:
 	      value = read_uleb128 (ptr); handled = true; break;
+	    case DW_FORM_sdata:
+	      {
+		int64_t svalue = read_sleb128 (ptr);
+		if (svalue >= 0)
+		  {
+		    value = svalue;
+		    handled = true;
+		    break;
+		  }
+		else
+		  {
+		  negative:
+		    error (0, 0, "%s: negative value %" PRId64 " for %s",
+			   dso->filename, svalue,
+			   get_DW_AT_str (t->attr[i].attr));
+		    return 1;
+		  }
+	      }
 	    case DW_FORM_implicit_const:
-	      value = t->values[i]; handled = true; break;
+	      {
+		if (t->values[i] >= 0)
+		  {
+		    value = t->values[i];
+		    handled = true;
+		    break;
+		  }
+		else
+		  goto negative;
+	      }
 	    default:
 	      error (0, 0, "%s: Unhandled %s for %s",
 		     dso->filename, get_DW_FORM_str (form),
@@ -3541,8 +3568,27 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
 	    case DW_FORM_data8: value = read_64 (ptr); handled = true; break;
 	    case DW_FORM_udata:
 	      value = read_uleb128 (ptr); handled = true; break;
+	    case DW_FORM_sdata:
+	      {
+		int64_t svalue = read_sleb128 (ptr);
+		if (svalue >= 0)
+		  {
+		    value = svalue;
+		    handled = true;
+		    break;
+		  }
+		else
+		  goto negative;
+	      }
 	    case DW_FORM_implicit_const:
-	      value = t->values[i]; handled = true; break;
+	      if (t->values[i] >= 0)
+		{
+		  value = t->values[i];
+		  handled = true;
+		  break;
+		}
+	      else
+		goto negative;
 	    default:
 	      error (0, 0, "%s: Unhandled %s for %s",
 		     dso->filename, get_DW_FORM_str (form),
@@ -4775,6 +4821,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_data4: value1 = read_32 (ptr1); break;
 	    case DW_FORM_data8: value1 = read_64 (ptr1); break;
 	    case DW_FORM_udata: value1 = read_uleb128 (ptr1); break;
+	    case DW_FORM_sdata: value1 = read_sleb128 (ptr1); break;
 	    case DW_FORM_implicit_const: value1 = t1->values[i]; break;
 	    default: abort ();
 	    }
@@ -4785,6 +4832,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_data4: value2 = read_32 (ptr2); break;
 	    case DW_FORM_data8: value2 = read_64 (ptr2); break;
 	    case DW_FORM_udata: value2 = read_uleb128 (ptr2); break;
+	    case DW_FORM_sdata: value2 = read_sleb128 (ptr2); break;
 	    case DW_FORM_implicit_const: value2 = t2->values[j]; break;
 	    default: abort ();
 	    }
@@ -4867,6 +4915,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_data4: value1 = read_32 (ptr1); break;
 	    case DW_FORM_data8: value1 = read_64 (ptr1); break;
 	    case DW_FORM_udata: value1 = read_uleb128 (ptr1); break;
+	    case DW_FORM_sdata: value1 = read_sleb128 (ptr1); break;
 	    case DW_FORM_implicit_const: value1 = t1->values[i]; break;
 	    default: abort ();
 	    }
@@ -4877,6 +4926,7 @@ die_eq_1 (dw_cu_ref cu1, dw_cu_ref cu2,
 	    case DW_FORM_data4: value2 = read_32 (ptr2); break;
 	    case DW_FORM_data8: value2 = read_64 (ptr2); break;
 	    case DW_FORM_udata: value2 = read_uleb128 (ptr2); break;
+	    case DW_FORM_sdata: value2 = read_sleb128 (ptr2); break;
 	    case DW_FORM_implicit_const: value2 = t2->values[j]; break;
 	    default: abort ();
 	    }
@@ -10665,6 +10715,7 @@ build_abbrevs_for_die (htab_t h, dw_cu_ref cu, dw_die_ref die,
 		    case DW_FORM_data4: value = read_32 (ptr); break;
 		    case DW_FORM_data8: value = read_64 (ptr); break;
 		    case DW_FORM_udata: value = read_uleb128 (ptr); break;
+		    case DW_FORM_sdata: value = read_sleb128 (ptr); break;
 		    case DW_FORM_implicit_const:
 		      value = reft->values[i];
 		      break;
@@ -12285,6 +12336,9 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		case DW_FORM_udata:
 		  value = read_uleb128 (inptr);
 		  break;
+		case DW_FORM_sdata:
+		  value = read_sleb128 (inptr);
+		  break;
 		case DW_FORM_implicit_const:
 		  /* DW_FORM_implicit_const should have been updated
 		     already when computing abbrevs.  */
@@ -12300,6 +12354,7 @@ write_die (unsigned char *ptr, dw_cu_ref cu, dw_die_ref die,
 		  case DW_FORM_data4: write_32 (ptr, value); break;
 		  case DW_FORM_data8: write_64 (ptr, value); break;
 		  case DW_FORM_udata: write_uleb128 (ptr, value); break;
+		  case DW_FORM_sdata: write_sleb128 (ptr, value); break;
 		  default: abort ();
 		}
 	      j++;

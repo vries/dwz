@@ -26,7 +26,8 @@ clean:
 PWD:=$(shell pwd -P)
 
 TEST_SRC = $(srcdir)/testsuite/dwz.tests
-TEST_EXECS_DWARF_ASM = no-multifile-prop invalid-dw-at-stmt-list-encoding
+TEST_EXECS_DWARF_ASM = no-multifile-prop invalid-dw-at-stmt-list-encoding \
+		       unavailable-dwarf-piece
 TEST_EXECS_x86_64 = py-section-script dw2-skip-prologue \
 	implptr-64bit-d2o4a8r8t0 varval
 TEST_EXECS = hello dwz-for-test min two-typedef start hello-gold-gdb-index \
