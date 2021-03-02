@@ -15434,8 +15434,8 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 	}
       else if (write_aranges (dso))
 	{
-	  cleanup ();
 	failure:
+	  cleanup ();
 	  ret = 1;
 	}
       else
