@@ -14,7 +14,7 @@ datarootdir = $(prefix)/share
 mandir = $(datarootdir)/man
 OBJECTS = dwz.o hashtab.o sha1.o dwarfnames.o
 dwz: $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lelf
+	$(CC) $(LDFLAGS) -o $@ $^ -lelf -lpthread
 install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
 	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1

@@ -42,6 +42,8 @@
 #include "dwarf2.h"
 #include "hashtab.h"
 #include "sha1.h"
+#include <pthread.h>
+
 
 #ifndef SHF_COMPRESSED
  /* Glibc elf.h contains SHF_COMPRESSED starting v2.22.  Libelf libelf.h has
@@ -3317,6 +3319,10 @@ die_odr_state (dw_die_ref die)
   return die->die_odr_state;
 }
 
+static int nthreads = 2;
+static __thread int tick;
+static __thread int thread_id;
+
 /* This function computes u.p1.die_hash and die_ck_state of DIE.
    The field u.p1.die_hash is an iterative hash of:
    - the die_tag,
@@ -3907,27 +3913,34 @@ checksum_die (DSO *dso, dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die)
     }
 
   for (child = die->die_child, i = 0; child; child = child->die_sib, ++i)
-    if (checksum_die (dso, cu,
-		      top_die ? top_die
-			      : child->die_named_namespace
-			      ? NULL : child, child))
-      return 1;
-    else if (die->die_ck_state != CK_BAD)
-      {
-	if (child->die_ck_state == CK_KNOWN)
-	  {
-	    die->u.p1.die_hash
-	      = iterative_hash_object (child->u.p1.die_hash,
-				       die->u.p1.die_hash);
-	    if (dump_checksum_p)
-	      fprintf (stderr, "DIE %x, hash: %x, child (%i)\n",
-		       die->die_offset, die->u.p1.die_hash, i);
-	    die->die_no_multifile
-	      |= child->die_no_multifile;
-	  }
-	else
-	  die->die_ck_state = CK_BAD;
-      }
+    {
+      dw_die_ref child_top_die = top_die ? top_die : child->die_named_namespace	? NULL : child;
+      tick++;
+      if (top_die == NULL && child_top_die != NULL)
+	{
+	  if (tick % nthreads != thread_id)
+	    continue;
+	}
+      printf ("executing tick %d\n", tick);
+      if (checksum_die (dso, cu, child_top_die, child))
+	return 1;
+      else if (die->die_ck_state != CK_BAD)
+	{
+	  if (child->die_ck_state == CK_KNOWN)
+	    {
+	      die->u.p1.die_hash
+		= iterative_hash_object (child->u.p1.die_hash,
+					 die->u.p1.die_hash);
+	      if (dump_checksum_p)
+		fprintf (stderr, "DIE %x, hash: %x, child (%i)\n",
+			 die->die_offset, die->u.p1.die_hash, i);
+	      die->die_no_multifile
+		|= child->die_no_multifile;
+	    }
+	  else
+	    die->die_ck_state = CK_BAD;
+	}
+    }
   if (die->die_ck_state == CK_BEING_COMPUTED)
     die->die_ck_state = CK_KNOWN;
 
@@ -6593,6 +6606,26 @@ read_lang (unsigned char *ptr, enum dwarf_form form,
   return ptr;
 }
 
+struct checksum_die_threaded_args
+{
+  DSO *dso;
+  dw_cu_ref cu;
+  int id;
+  int res;
+};
+
+static void *
+checksum_die_threaded (void *data)
+{
+  struct checksum_die_threaded_args *args
+    = (struct checksum_die_threaded_args *)data;
+  thread_id = args->id;
+  tick = 0;
+  args->res = checksum_die (args->dso, args->cu, NULL, args->cu->cu_die);
+
+  return NULL;
+}
+
 /* First phase of the DWARF compression.  Parse .debug_info section
    (for kind == DEBUG_INFO) or .debug_types section (for kind == DEBUG_TYPES)
    for each CU in it construct internal representation for the CU
@@ -7295,8 +7328,33 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
       if (likely (!op_multifile && !rd_multifile && !fi_multifile)
 	  && likely (kind == DEBUG_INFO))
 	{
+#if 1
+	  pthread_t threads[nthreads];
+	  struct checksum_die_threaded_args args[nthreads];
+	    
+	  for (int i = 0; i < nthreads; ++i)
+	    {
+	      args[i].id = i;
+	      args[i].cu = cu;
+	      args[i].dso = dso;
+	      pthread_create (&threads[i], NULL, checksum_die_threaded, &args[i]);
+	    }
+
+	  for (int i = 0; i < nthreads; ++i)
+	    {
+	      pthread_join (threads[i], NULL);
+	    }
+
+	  for (int i = 0; i < nthreads; ++i)
+	    {
+	      if (args[i].res)
+		goto fail;
+	    }
+#else
 	  if (checksum_die (dso, cu, NULL, cu->cu_die))
 	    goto fail;
+#endif
+	  
 	  checksum_ref_die (cu, NULL, cu->cu_die, NULL, NULL);
 	  if (odr)
 	    {
