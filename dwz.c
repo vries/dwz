@@ -15595,7 +15595,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
   close (fd);
 
   free (dso);
-  if (ret == 0 && !low_mem)
+  if (ret == 0)
     res->res = 0;
   if (ret == 3)
     {
