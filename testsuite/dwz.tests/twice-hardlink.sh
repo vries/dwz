@@ -29,8 +29,3 @@ fi
 cmp 1 1.saved
 
 rm -f 1 1.saved 2 2.saved dwz.err
-
-if [ -f 2.#dwz#.* ]; then
-    echo "PR24275 workaround used" > dwz.info
-    rm -f 2.#dwz#.*
-fi

@@ -15255,6 +15255,10 @@ remove_empty_pus (void)
 /* Helper structure for hardlink discovery.  */
 struct file_result
 {
+  /* -2: Already processed under different name.
+     -1: Ignore.
+      0: Processed, changed.
+      1: Processed, unchanged.  */
   int res;
   dev_t dev;
   ino_t ino;
@@ -15315,7 +15319,7 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 			 file);
 	      close (fd);
 	      res->res = -2;
-	      return 1;
+	      return 0;
 	    }
 	  /* If it changed, try to hardlink it again.  */
 	  if (resa[n].res == 0)
@@ -15572,6 +15576,9 @@ dwz (const char *file, const char *outfile, struct file_result *res,
 
 	  if (write_dso (dso, outfile, &st, save_to_temp))
 	    ret = 1;
+	  else
+	    res->res = 0;
+
 	  if (unlikely (progress_p))
 	    report_progress ();
 	}
@@ -15595,8 +15602,6 @@ dwz (const char *file, const char *outfile, struct file_result *res,
   close (fd);
 
   free (dso);
-  if (ret == 0)
-    res->res = 0;
   if (ret == 3)
     {
       ret = (outfile != NULL) ? 1 : 0;
@@ -16804,10 +16809,10 @@ main (int argc, char *argv[])
 	      thisret = dwz (file, NULL, &resa[i - optind],
 			     hardlinks ? resa : NULL, &argv[optind]);
 	    }
-	  else if (resa[i - optind].res == 0)
-	    successcount++;
 	  else if (thisret == 1)
 	    ret = 1;
+	  else if (resa[i - optind].res >= 0)
+	    successcount++;
 	  if (hardlink
 	      && resa[i - optind].res >= 0
 	      && resa[i - optind].nlink > 1)
@@ -16846,8 +16851,7 @@ main (int argc, char *argv[])
 		  multifile_mode = MULTIFILE_MODE_FI;
 		  /* Don't process again files that couldn't
 		     be processed successfully.  */
-		  if (resa[i - optind].res == -1
-		      || resa[i - optind].res == 1)
+		  if (resa[i - optind].res == -1)
 		    continue;
 		  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 		    alt_clear_dups (cu->cu_die);
