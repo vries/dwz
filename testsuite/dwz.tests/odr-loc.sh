@@ -9,7 +9,7 @@ for name in aaa bbb ccc; do
     [ $cnt -eq 2 ]
 done
 
-$execs/dwz-for-test --odr 1
+$execs/dwz-for-test --odr 1 --devel-ignore-size
 
 verify-dwarf.sh 1
 
