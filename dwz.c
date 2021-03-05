@@ -15150,7 +15150,7 @@ write_multifile (DSO *dso)
 			    debug_sections[DEBUG_MACRO].new_size)
 		     != (ssize_t) debug_sections[DEBUG_MACRO].new_size)
 	      || (strp_htab != NULL && write_multifile_strp ())
-	      || (line_htab != NULL && write_multifile_line ()))
+	      || write_multifile_line ())
 	    {
 	      error (0, 0, "Error writing multi-file temporary files");
 	      ret = 1;
