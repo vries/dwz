@@ -195,6 +195,7 @@ static int dump_pus_p;
 static int verify_dups_p;
 static int verify_edge_freelist;
 static int stats_p;
+static int checksum_cycle_opt = 1;
 #else
 #define tracing 0
 #define ignore_size 0
@@ -205,6 +206,7 @@ static int stats_p;
 #define dump_pus_p 0
 #define verify_dups_p 0
 #define stats_p 0
+#define checksum_cycle_opt 1
 #endif
 static int unoptimized_multifile;
 static int save_temps = 0;
@@ -4380,7 +4382,7 @@ checksum_ref_die (dw_cu_ref cu, dw_die_ref top_die, dw_die_ref die,
 		    }
 		}
 	    }
-	  if (minidx != -1U)
+	  if (checksum_cycle_opt && minidx != -1U)
 	    {
 	      idx = 0;
 	      checksum_ref_die (die_cu (arr[minidx]), arr[minidx],
@@ -16314,6 +16316,10 @@ static struct option dwz_options[] =
 			 no_argument,	    &gen_cu_p, 1 },
   { "devel-no-gen-cu",
 			 no_argument,	    &gen_cu_p, 0 },
+  { "devel-checksum-cycle-opt",
+			 no_argument,	    &checksum_cycle_opt, 1 },
+  { "devel-no-checksum-cycle-opt",
+			 no_argument,	    &checksum_cycle_opt, 0 },
 #endif
   { "odr",		 no_argument,	    &odr, 1 },
   { "no-odr",		 no_argument,	    &odr, 0 },
