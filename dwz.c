@@ -132,6 +132,23 @@
 #define MAX(A, B) ((A) > (B) ? (A) : (B))
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 
+/* Print memory amount M (in kb) in both exact and human readable, like so:
+   1382508 (1.3G).  */
+static void
+print_mem (long m)
+{
+  float h = m;
+  int level = 0;
+  const char *unit[] = { "K", "M", "G"};
+  while (h > 1024 && level <= 2)
+    {
+      h = h / 1024;
+      level++;
+    }
+  fprintf (stderr, "%ld (%.1f%s)\n", m, h, unit[level]);
+}
+
+static int progress_mem_p;
 
 static void
 report_progress (void)
@@ -157,6 +174,40 @@ report_progress (void)
   clock_t sys = current.tms_stime - prev.tms_stime;
   fprintf (stderr, "user: %.2f\n", (float)user / (float)ticks_per_second);
   fprintf (stderr, "sys : %.2f\n", (float)sys / (float)ticks_per_second);
+
+  if (progress_mem_p)
+    {
+      FILE *s = fopen ("/proc/self/status", "r");
+      char *p;
+      bool print_next = false;
+      for (p = NULL; fscanf (s, "%ms", &p) && p != NULL; free (p))
+	{
+	  if (print_next)
+	    {
+	      long mem = strtol (p, NULL, 10);
+	      print_mem (mem);
+	      print_next = false;
+	      continue;
+	    }
+
+	  if (!(p[0] == 'V' && p[1] == 'm'))
+	    continue;
+
+	  if (strcmp (&p[2], "Peak:") == 0)
+	    fprintf (stderr, "VM Peak: ");
+	  else if (strcmp (&p[2], "Size:") == 0)
+	    fprintf (stderr, "VM Current: ");
+	  else if (strcmp (&p[2], "HWM:") == 0)
+	    fprintf (stderr, "RSS Peak: ");
+	  else if (strcmp (&p[2], "RSS:") == 0)
+	    fprintf (stderr, "RSS Current: ");
+	  else
+	    continue;
+
+	  print_next = true;
+	}
+      fclose (s);
+    }
 }
 
 #define obstack_chunk_alloc     malloc
@@ -16287,6 +16338,7 @@ static struct option dwz_options[] =
 #if DEVEL
   { "devel-trace",	 no_argument,	    &tracing, 1 },
   { "devel-progress",	 no_argument,	    &progress_p, 1 },
+  { "devel-progress-mem",no_argument,	    &progress_mem_p, 1 },
   { "devel-ignore-size", no_argument,	    &ignore_size, 1 },
   { "devel-ignore-locus",no_argument,	    &ignore_locus, 1 },
   { "devel-force",	 no_argument,	    &force_p, 1 },
@@ -16558,6 +16610,7 @@ usage (const char *progname, int failing)
   fprintf (stream, "%s",
 	   ("  --devel-trace\n"
 	    "  --devel-progress\n"
+	    "  --devel-progress-mem\n"
 	    "  --devel-stats\n"
 	    "  --devel-ignore-size\n"
 	    "  --devel-ignore-locus\n"
@@ -16737,6 +16790,9 @@ main (int argc, char *argv[])
 	  break;
 	}
     }
+
+  if (progress_mem_p)
+    progress_p = 1;
 
   /* Specifying a low-mem die-limit that is larger than or equal to the
      max die-limit has the effect of disabling low-mem mode.  Make this
