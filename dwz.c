@@ -15325,7 +15325,7 @@ struct file_result
    over FILE.  */
 static int
 dwz (const char *file, const char *outfile, struct file_result *res,
-     struct file_result *resa, char **files)
+     struct file_result *resa, const char **files)
 {
   DSO *dso;
   int ret = 0, fd;
@@ -16648,25 +16648,18 @@ version (void)
   exit (0);
 }
 
-int
-main (int argc, char *argv[])
+/* Parse command line arguments in ARGV.  */
+static void
+parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 {
-  const char *outfile = NULL;
-  int ret = 0;
-  int i;
   unsigned long l;
   char *end;
-  struct file_result res;
-  bool hardlink = false;
-  const char *file;
-
-  if (elf_version (EV_CURRENT) == EV_NONE)
-    error (1, 0, "library out of date");
 
   while (1)
     {
       int option_index = -1;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5", dwz_options, &option_index);
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5", dwz_options,
+			   &option_index);
       if (c == -1)
 	break;
       switch (c)
@@ -16734,7 +16727,7 @@ main (int argc, char *argv[])
 	  break;
 
 	case 'o':
-	  outfile = optarg;
+	  *outfile = optarg;
 	  break;
 
 	case 'm':
@@ -16746,7 +16739,7 @@ main (int argc, char *argv[])
 	  break;
 
 	case 'h':
-	  hardlink = true;
+	  *hardlink = true;
 	  break;
 
 	case 'M':
@@ -16803,138 +16796,193 @@ main (int argc, char *argv[])
 
   if (multifile_relative && multifile_name)
     error (1, 0, "-M and -r options can't be specified together");
+}
+
+/* Dwarf-compress FILE.  If OUTFILE, write to result to OUTFILE, otherwise
+   modify FILE.  */
+static int
+dwz_one_file (const char *file, const char *outfile)
+{
+  int ret = 0;
+  struct file_result res;
+
+  if (stats_p)
+    init_stats (file);
+
+  res.die_count = 0;
+
+  ret = (low_mem_die_limit == 0
+	 ? 2
+	 : dwz (file, outfile, &res, NULL, NULL));
+
+  if (ret == 2)
+    {
+      multifile_mode = MULTIFILE_MODE_LOW_MEM;
+      ret = dwz (file, outfile, &res, NULL, NULL);
+    }
+
+  return ret;
+}
+
+/* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
+   if so, dwarf-compress just one, and relink the others.  */
+static int
+dwz_files (int nr_files, const char *files[], bool hardlink)
+{
+  int ret = 0;
+  int i;
+  const char *file;
+  struct file_result *resa;
+  bool hardlinks = false;
+  int successcount = 0;
+
+  resa = (struct file_result *) malloc ((nr_files) * sizeof (*resa));
+  if (resa == NULL)
+    error (1, ENOMEM, "failed to allocate result array");
+  for (i = 0; i < nr_files; ++i)
+    resa[i].die_count = 0;
+
+  if (multifile)
+    {
+      multi_info_fd = make_temp_file ("dwz.debug_info");
+      multi_abbrev_fd = make_temp_file ("dwz.debug_abbrev");
+      multi_line_fd = make_temp_file ("dwz.debug_line");
+      multi_str_fd = make_temp_file ("dwz.debug_str");
+      multi_macro_fd = make_temp_file ("dwz.debug_macro");
+      if (multi_info_fd == -1
+	  || multi_abbrev_fd == -1
+	  || multi_line_fd == -1
+	  || multi_str_fd == -1
+	  || multi_macro_fd == -1)
+	{
+	  error (0, 0, "Could not create multifile temporary files");
+	  multifile = NULL;
+	}
+    }
+
+  for (i = 0; i < nr_files; i++)
+    {
+      int thisret;
+      file = files[i];
+      if (stats_p)
+	init_stats (file);
+      thisret = (low_mem_die_limit == 0
+		 ? 2
+		 : dwz (file, NULL, &resa[i],
+			hardlinks ? resa : NULL, files));
+      if (thisret == 2)
+	{
+	  multifile_mode = MULTIFILE_MODE_LOW_MEM;
+	  thisret = dwz (file, NULL, &resa[i],
+			 hardlinks ? resa : NULL, files);
+	}
+      else if (thisret == 1)
+	ret = 1;
+      else if (resa[i].res >= 0)
+	successcount++;
+      if (hardlink
+	  && resa[i].res >= 0
+	  && resa[i].nlink > 1)
+	hardlinks = true;
+    }
+
+  if (multifile && successcount < 2)
+    {
+      error (0, 0, "Too few files for multifile optimization");
+      multifile = NULL;
+    }
+
+  if (multifile
+      && multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
+    {
+      if (!quiet)
+	error (0, 0, "No suitable DWARF found for multifile optimization");
+      multifile = NULL;
+    }
+
+  if (multifile)
+    {
+      unsigned int multifile_die_count = 0;
+      int multi_fd = optimize_multifile (&multifile_die_count);
+      DSO *dso;
+      if (multi_fd == -1)
+	return 1;
+      dso = read_multifile (multi_fd, multifile_die_count);
+      if (dso == NULL)
+	ret = 1;
+      else
+	{
+	  for (i = 0; i < nr_files; i++)
+	    {
+	      dw_cu_ref cu;
+	      file = files[i];
+	      if (stats_p)
+		init_stats (file);
+	      multifile_mode = MULTIFILE_MODE_FI;
+	      /* Don't process again files that couldn't
+		 be processed successfully.  */
+	      if (resa[i].res == -1)
+		continue;
+	      for (cu = alt_first_cu; cu; cu = cu->cu_next)
+		alt_clear_dups (cu->cu_die);
+	      ret |= dwz (file, NULL, &resa[i],
+			  hardlinks ? resa : NULL, files);
+	    }
+	  elf_end (dso->elf);
+	  close (multi_fd);
+	  free (dso);
+	}
+      cleanup ();
+      strp_htab = alt_strp_htab;
+      off_htab = alt_off_htab;
+      dup_htab = alt_dup_htab;
+      macro_htab = alt_macro_htab;
+      pool = alt_pool;
+      ob = alt_ob;
+      ob2 = alt_ob2;
+      cleanup ();
+    }
+
+  free (resa);
+
+  return ret;
+}
+
+int
+main (int argc, char *argv[])
+{
+  int ret;
+  const char *outfile;
+  bool hardlink;
+
+  if (elf_version (EV_CURRENT) == EV_NONE)
+    error (1, 0, "library out of date");
+
+  outfile = NULL;
+  hardlink = false;
+  parse_args (argc, argv, &hardlink, &outfile);
 
   if (optind == argc || optind + 1 == argc)
     {
-      file = optind == argc ? "a.out" : argv[optind];
+      const char *file = optind == argc ? "a.out" : argv[optind];
+
       if (multifile != NULL)
 	{
 	  error (0, 0, "Too few files for multifile optimization");
 	  multifile = NULL;
 	}
-      if (stats_p)
-	init_stats (file);
-      res.die_count = 0;
-      ret = (low_mem_die_limit == 0
-	     ? 2
-	     : dwz (file, outfile, &res, NULL, NULL));
-      if (ret == 2)
-	{
-	  multifile_mode = MULTIFILE_MODE_LOW_MEM;
-	  ret = dwz (file, outfile, &res, NULL, NULL);
-	}
+
+      ret = dwz_one_file (file, outfile);
     }
   else
     {
       int nr_files = argc - optind;
-      struct file_result *resa
-	= (struct file_result *) malloc ((nr_files) * sizeof (*resa));
-      bool hardlinks = false;
-      int successcount = 0;
+      const char **files = (const char **)&argv[optind];
 
-      for (i = 0; i < nr_files; ++i)
-	resa[i].die_count = 0;
-      if (resa == NULL)
-	error (1, ENOMEM, "failed to allocate result array");
       if (outfile != NULL)
 	error (1, 0, "-o option not allowed for multiple files");
-      if (multifile)
-	{
-	  multi_info_fd = make_temp_file ("dwz.debug_info");
-	  multi_abbrev_fd = make_temp_file ("dwz.debug_abbrev");
-	  multi_line_fd = make_temp_file ("dwz.debug_line");
-	  multi_str_fd = make_temp_file ("dwz.debug_str");
-	  multi_macro_fd = make_temp_file ("dwz.debug_macro");
-	  if (multi_info_fd == -1
-	      || multi_abbrev_fd == -1
-	      || multi_line_fd == -1
-	      || multi_str_fd == -1
-	      || multi_macro_fd == -1)
-	    {
-	      error (0, 0, "Could not create multifile temporary files");
-	      multifile = NULL;
-	    }
-	}
-      for (i = optind; i < argc; i++)
-	{
-	  int thisret;
-	  file = argv[i];
-	  if (stats_p)
-	    init_stats (file);
-	  thisret = (low_mem_die_limit == 0
-		     ? 2
-		     : dwz (file, NULL, &resa[i - optind],
-			    hardlinks ? resa : NULL, &argv[optind]));
-	  if (thisret == 2)
-	    {
-	      multifile_mode = MULTIFILE_MODE_LOW_MEM;
-	      thisret = dwz (file, NULL, &resa[i - optind],
-			     hardlinks ? resa : NULL, &argv[optind]);
-	    }
-	  else if (thisret == 1)
-	    ret = 1;
-	  else if (resa[i - optind].res >= 0)
-	    successcount++;
-	  if (hardlink
-	      && resa[i - optind].res >= 0
-	      && resa[i - optind].nlink > 1)
-	    hardlinks = true;
-	}
-      if (multifile && successcount < 2)
-	{
-	  error (0, 0, "Too few files for multifile optimization");
-	  multifile = NULL;
-	}
-      if (multifile
-	  && multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
-	{
-	  if (!quiet)
-	    error (0, 0, "No suitable DWARF found for multifile optimization");
-	  multifile = NULL;
-	}
-      if (multifile)
-	{
-	  unsigned int multifile_die_count = 0;
-	  int multi_fd = optimize_multifile (&multifile_die_count);
-	  DSO *dso;
-	  if (multi_fd == -1)
-	    return 1;
-	  dso = read_multifile (multi_fd, multifile_die_count);
-	  if (dso == NULL)
-	    ret = 1;
-	  else
-	    {
-	      for (i = optind; i < argc; i++)
-		{
-		  dw_cu_ref cu;
-		  file = argv[i];
-		  if (stats_p)
-		    init_stats (file);
-		  multifile_mode = MULTIFILE_MODE_FI;
-		  /* Don't process again files that couldn't
-		     be processed successfully.  */
-		  if (resa[i - optind].res == -1)
-		    continue;
-		  for (cu = alt_first_cu; cu; cu = cu->cu_next)
-		    alt_clear_dups (cu->cu_die);
-		  ret |= dwz (file, NULL, &resa[i - optind],
-			      hardlinks ? resa : NULL, &argv[optind]);
-		}
-	      elf_end (dso->elf);
-	      close (multi_fd);
-	      free (dso);
-	    }
-	  cleanup ();
-	  strp_htab = alt_strp_htab;
-	  off_htab = alt_off_htab;
-	  dup_htab = alt_dup_htab;
-	  macro_htab = alt_macro_htab;
-	  pool = alt_pool;
-	  ob = alt_ob;
-	  ob2 = alt_ob2;
-	  cleanup ();
-	}
-      free (resa);
+
+      ret = dwz_files (nr_files, files, hardlink);
     }
 
   if (stats_p)
