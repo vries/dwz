@@ -4,7 +4,7 @@ set -e
 
 pwd=$(pwd -P)
 
-version="$1"
+version=$(cat VERSION)
 
 tag=dwz-$version
 rootdir=dwz

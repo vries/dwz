@@ -1,0 +1,28 @@
+- Verify that copyright notices in source files are up-to-date.
+- Update COPYRIGHT_YEARS using contrib/release/gen-copyright-years.sh.
+  Commit modifications if there are any.
+- Run contrib/release/do-release.sh.
+  Use:
+  - --minor to do a minor update: $maj.$min -> $maj.$(($min + 1))
+  - --major to do a major update: $maj.$min -> $(($maj + 1)).0
+  This:
+  - adds a commit that updates the VERSION file,
+  - tags that commit, and
+  - pushes both the commit and the tag to the remote repository.
+- Run contrib/release/upload-release.sh.
+  This creates and uploads two release tarballs.
+- Write draft release announcement.
+  F.i. using template of
+  https://sourceware.org/ml/gdb-announce/2019/msg00001.html.
+- Sent out draft release announcement to maintainers for review and
+  further contributions.
+- Sent out release announcement.  Sent to:
+  - Maintainers
+  - dwz@sourceware.org
+  - dwarf-discuss@lists.dwarfstd.org
+  - gcc@gcc.gnu.org
+  - gdb@sourceware.org
+  - lldb-dev@lists.llvm.org
+- Update web page ( https://sourceware.org/dwz/ ):
+  - Add news item with hlink to release annoucement.
+  - Add entry in release list.
