@@ -14,7 +14,7 @@ datarootdir = $(prefix)/share
 mandir = $(datarootdir)/man
 OBJECTS = dwz.o hashtab.o sha1.o dwarfnames.o
 dwz: $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lelf
+	$(CC) $(LDFLAGS) -o $@ $^ -lelf -lpthread
 install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
 	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
@@ -56,7 +56,7 @@ DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 	sed 's/__GNUC__/NOT_DEFINED/' $< > $@
 
 dwz-for-test: $(DWZ_TEST_SOURCES)
-	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W -DDEVEL \
+	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -lpthread -o $@ -Wall -W -DDEVEL \
 	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"' -I$(srcdir) \
 	  $(shell cat $(srcdir)/COPYRIGHT_YEARS)
 

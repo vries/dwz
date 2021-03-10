@@ -42,6 +42,7 @@
 #include "dwarf2.h"
 #include "hashtab.h"
 #include "sha1.h"
+#include <pthread.h>
 
 #ifndef SHF_COMPRESSED
  /* Glibc elf.h contains SHF_COMPRESSED starting v2.22.  Libelf libelf.h has
@@ -214,7 +215,7 @@ report_progress (void)
 #define obstack_chunk_free      free
 
 /* Where to longjmp on OOM.  */
-static jmp_buf oom_buf;
+static __thread jmp_buf oom_buf;
 
 /* Handle OOM situation.  If handling more than one file, we might
    just fail to handle some large file due to OOM, but could very well
@@ -227,9 +228,9 @@ dwz_oom (void)
 
 /* General obstack for struct dw_cu, dw_die, also used for temporary
    vectors.  */
-static struct obstack ob;
+static __thread struct obstack ob;
 /* Short lived obstack, global only to free it on allocation failures.  */
-static struct obstack ob2;
+static __thread struct obstack ob2;
 
 /* After read_multifile ob and ob2 are moved over to these variables
    and restored during final cleanup.  */
@@ -287,7 +288,7 @@ int odr = 0;
 enum odr_mode { ODR_BASIC, ODR_LINK };
 enum odr_mode odr_mode = ODR_LINK;
 int odr_mode_parsed = 0;
-bool odr_active_p = false;
+__thread bool odr_active_p = false;
 
 /* Struct to gather statistics.  */
 struct stats
@@ -537,23 +538,23 @@ typedef struct
 
 /* Pointer size in the debug info, in bytes.  Only debug info
    with a single pointer size are handled.  */
-static int ptr_size;
+static __thread int ptr_size;
 
 /* Lowest debug_line version we have seen.  When writing out the multi
    file .debug_line we'll only use a DWARF5 version when there is no
    lower line table seen (since the debug_line dir and file table is
    shared between all CUs).  */
-static unsigned int lowest_line_version = 5;
+static __thread unsigned int lowest_line_version = 5;
 
 /* Utility functions and macros for reading/writing values in
    given ELF endianity, which might be different from host endianity.
    No specific alignment is expected.  */
-static uint16_t (*do_read_16) (unsigned char *ptr);
-static uint32_t (*do_read_32) (unsigned char *ptr);
-static uint64_t (*do_read_64) (unsigned char *ptr);
-static void (*do_write_16) (unsigned char *ptr, unsigned short val);
-static void (*do_write_32) (unsigned char *ptr, unsigned int val);
-static void (*do_write_64) (unsigned char *ptr, uint64_t val);
+static __thread uint16_t (*do_read_16) (unsigned char *ptr);
+static __thread uint32_t (*do_read_32) (unsigned char *ptr);
+static __thread uint64_t (*do_read_64) (unsigned char *ptr);
+static __thread void (*do_write_16) (unsigned char *ptr, unsigned short val);
+static __thread void (*do_write_32) (unsigned char *ptr, unsigned int val);
+static __thread void (*do_write_64) (unsigned char *ptr, uint64_t val);
 
 static inline uint16_t
 buf_read_ule16 (unsigned char *data)
@@ -815,7 +816,7 @@ enum debug_section_kind
 };
 
 /* Details about standard DWARF sections.  */
-static struct
+struct debug_section
 {
   const char *name;
   unsigned char *data;
@@ -823,7 +824,8 @@ static struct
   size_t size;
   size_t new_size;
   int sec;
-} debug_sections[] =
+};
+static __thread struct debug_section debug_sections[] =
   {
     { ".debug_info", NULL, NULL, 0, 0, 0 },
     { ".debug_abbrev", NULL, NULL, 0, 0, 0 },
@@ -891,7 +893,7 @@ static unsigned int low_mem_die_limit = 10000000;
 static unsigned int max_die_limit = 50000000;
 
 /* Phase of multifile handling.  */
-static unsigned char multifile_mode;
+static __thread unsigned char multifile_mode;
 
 enum multifile_mode_kind
 {
@@ -1220,7 +1222,7 @@ ALIGN_STRUCT (dw_die)
 
 /* Pointer to the start of the current pool chunk, current first free byte
    in the chunk and byte after the end of the current pool chunk.  */
-static unsigned char *pool, *pool_next, *pool_limit;
+static __thread unsigned char *pool, *pool_next, *pool_limit;
 
 /* After read_multifile, pool variable is moved over to this variable
    as the pool from read_multifile needs to be around for subsequent dwz
@@ -1366,7 +1368,7 @@ compute_abbrev_hash (struct abbrev_tag *t)
 }
 
 /* Maximum number of attributes in a DIE.  */
-static unsigned int max_nattr;
+static __thread unsigned int max_nattr;
 
 /* Parse a .debug_abbrev entry at PTR.  */
 static htab_t
@@ -2132,14 +2134,14 @@ off_eq (const void *p, const void *q)
 }
 
 /* Hash table to map die_offset values to struct dw_die pointers.  */
-static htab_t off_htab;
+static __thread htab_t off_htab;
 
 /* After read_multifile off_htab is copied over to this variable.
    Offsets in the alternate .debug_info are found using this hash table.  */
 static htab_t alt_off_htab;
 
 /* Offset hash table for .debug_types section.  */
-static htab_t types_off_htab;
+static __thread htab_t types_off_htab;
 
 /* Function to add DIE into the hash table (and create the hash table
    when not already created).  */
@@ -3069,8 +3071,8 @@ ALIGN_STRUCT (debug_loc_adjust)
 
 /* Hash table and obstack for recording .debug_loc and .debug_loclists
    adjustment ranges.  */
-static htab_t loc_htab;
-static htab_t loclists_htab;
+static __thread htab_t loc_htab;
+static __thread htab_t loclists_htab;
 
 /* Hash function for loc[lists]_htab.  */
 static hashval_t
@@ -4484,10 +4486,10 @@ die_hash (const void *p)
 }
 
 /* Freelist of !die->die_toplevel DIEs, chained through die_sib fields.  */
-static dw_die_ref die_nontoplevel_freelist;
+static __thread dw_die_ref die_nontoplevel_freelist;
 /* Freelist of die->die_collapsed_child DIEs, chained through die_parent
    fields.  */
-static dw_die_ref die_collapsed_child_freelist;
+static __thread dw_die_ref die_collapsed_child_freelist;
 
 /* Return pointer after the attributes of a DIE from a cu with CU_VERSION
    which uses abbrevs T and starts at PTR.  */
@@ -5373,7 +5375,7 @@ die_eq (const void *p, const void *q)
 
 /* Hash table for finding of matching toplevel DIEs (and all
    its children together with it).  */
-static htab_t dup_htab;
+static __thread htab_t dup_htab;
 
 /* After read_multifile dup_htab is moved to this variable.  */
 static htab_t alt_dup_htab;
@@ -5383,7 +5385,7 @@ static htab_t alt_dup_htab;
    CUs, later on newly created partial units are added
    to the beginning of the list and optionally .debug_types
    CUs are added to its tail.  */
-static dw_cu_ref first_cu, last_cu;
+static __thread dw_cu_ref first_cu, last_cu;
 
 /* After read_multifile first_cu is copied to this variable.  */
 static dw_cu_ref alt_first_cu;
@@ -5637,12 +5639,12 @@ dump_dies (int depth, dw_die_ref die)
    The final set is used during finalize_strp and afterwards, it is
    then used to map strings to their location in the new .debug_str
    section.  */
-static htab_t strp_htab;
+static __thread htab_t strp_htab;
 /* Current offset in .debug_str when adding the tail optimized strings.
    This is initially the size of .debug_str section in the object,
    and as unique tail optimized strings are found, this is increased
    each time.  */
-static unsigned int max_strp_off;
+static __thread unsigned int max_strp_off;
 
 /* At the end of read_multifile strp_htab is moved to this variable,
    which is used to find strings in the shared .debug_str section.  */
@@ -6320,7 +6322,7 @@ struct meta_abbrev_entry
 
 /* Hash table for mapping of .debug_abbrev section offsets to
    abbrev hash tables.  */
-static htab_t meta_abbrev_htab;
+static __thread htab_t meta_abbrev_htab;
 /* Dummy entry used during OOM handling.  */
 static struct meta_abbrev_entry meta_abbrev_fallback;
 
@@ -8699,7 +8701,7 @@ import_cu_cmp (const void *p, const void *q)
 }
 
 /* Freelist for removed edges.  */
-static struct import_edge *edge_freelist;
+static __thread struct import_edge *edge_freelist;
 
 /* Prepare edge E to add to edge_freelist.  */
 static inline void FORCE_INLINE
@@ -9938,9 +9940,9 @@ size_of_sleb128 (int64_t val)
 }
 
 /* Hash table mapping original file IDs to new ids.  */
-static htab_t line_htab;
+static __thread htab_t line_htab;
 /* Current new maximum file ID.  */
-static unsigned int max_line_id;
+static __thread unsigned int max_line_id;
 
 struct line_entry
 {
@@ -10028,7 +10030,7 @@ line_htab_lookup (dw_cu_ref cu, unsigned int id)
    callbacks.  One is used either within handle_macro function (from within
    optimize_multifile), or from handle_macro onwards (read_multifile).
    The second set is used from read_macro onwards during fi_multifile.  */
-static htab_t macro_htab;
+static __thread htab_t macro_htab;
 
 /* At the end of read_multifile macro_htab is copied to this variable.  */
 static htab_t alt_macro_htab;
@@ -13842,7 +13844,7 @@ error_out:
 
 /* Implicit arg for compare_section_numbers.  Could be passed in as explicit arg
    when using qsort_r instead.  */
-static DSO *compare_section_numbers_implicit_arg;
+static __thread DSO *compare_section_numbers_implicit_arg;
 
 /* Helper function for sort_section_numbers.  */
 static int
@@ -14486,6 +14488,8 @@ cleanup (void)
 
   for (i = 0; i < SAVED_SECTIONS; ++i)
     {
+      if (saved_new_data[i] == NULL)
+	continue;
       free (saved_new_data[i]);
       saved_new_data[i] = NULL;
     }
@@ -16824,6 +16828,25 @@ dwz_one_file (const char *file, const char *outfile)
   return ret;
 }
 
+struct dwz_threaded_args
+{
+  const char *file;
+  struct file_result *res;
+  int ret;
+};
+
+static void *
+dwz_threaded (void *data)
+{
+  struct dwz_threaded_args *args
+    = (struct dwz_threaded_args *)data;
+
+  args->ret = dwz (args->file, NULL, args->res, NULL, NULL);
+
+  return NULL;
+}
+
+
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
    if so, dwarf-compress just one, and relink the others.  */
 static int
@@ -16860,30 +16883,62 @@ dwz_files (int nr_files, const char *files[], bool hardlink)
 	}
     }
 
-  for (i = 0; i < nr_files; i++)
+  if (hardlink || low_mem_die_limit == 0 || stats_p || multifile)
     {
-      int thisret;
-      file = files[i];
-      if (stats_p)
-	init_stats (file);
-      thisret = (low_mem_die_limit == 0
-		 ? 2
-		 : dwz (file, NULL, &resa[i],
-			hardlinks ? resa : NULL, files));
-      if (thisret == 2)
+      for (i = 0; i < nr_files; i++)
 	{
-	  multifile_mode = MULTIFILE_MODE_LOW_MEM;
-	  thisret = dwz (file, NULL, &resa[i],
-			 hardlinks ? resa : NULL, files);
+	  int thisret;
+	  file = files[i];
+	  if (stats_p)
+	    init_stats (file);
+	  thisret = (low_mem_die_limit == 0
+		     ? 2
+		     : dwz (file, NULL, &resa[i],
+			    hardlinks ? resa : NULL, files));
+	  if (thisret == 2)
+	    {
+	      multifile_mode = MULTIFILE_MODE_LOW_MEM;
+	      thisret = dwz (file, NULL, &resa[i],
+			     hardlinks ? resa : NULL, files);
+	    }
+	  else if (thisret == 1)
+	    ret = 1;
+	  else if (resa[i].res >= 0)
+	    successcount++;
+	  if (hardlink
+	      && resa[i].res >= 0
+	      && resa[i].nlink > 1)
+	    hardlinks = true;
 	}
-      else if (thisret == 1)
-	ret = 1;
-      else if (resa[i].res >= 0)
-	successcount++;
-      if (hardlink
-	  && resa[i].res >= 0
-	  && resa[i].nlink > 1)
-	hardlinks = true;
+    }
+  else
+    {
+      pthread_t threads[nr_files];
+      struct dwz_threaded_args args[nr_files];
+      for (i = 0; i < nr_files; i++)
+	{
+	  file = files[i];
+	  args[i].file = file;
+	  args[i].res = &resa[i];
+	  pthread_create (&threads[i], NULL, dwz_threaded, &args[i]);
+	}
+      for (int i = 0; i < nr_files; ++i)
+	{
+	  pthread_join (threads[i], NULL);
+	}
+      for (int i = 0; i < nr_files; ++i)
+	{
+	  file = files[i];
+	  if (args->ret == 2)
+	    {
+	      multifile_mode = MULTIFILE_MODE_LOW_MEM;
+	      dwz (file, NULL, &resa[i], NULL, NULL);
+	    }
+	  else if (args->ret == 1)
+	    ret = 1;
+	  else if (resa[i].res >= 0)
+	    successcount++;
+	}
     }
 
   if (multifile && successcount < 2)
