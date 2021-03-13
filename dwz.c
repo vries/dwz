@@ -2045,7 +2045,7 @@ read_debug_line (DSO *dso, dw_cu_ref cu, uint32_t off)
 
 /* Estimate the amount of DIEs in the .debug_info section, based on the size
    of that section.  */
-static unsigned int UNUSED
+static unsigned int
 estimate_nr_dies (void)
 {
   unsigned int average_die_size = 11;
@@ -2053,7 +2053,7 @@ estimate_nr_dies (void)
   return nr_dies;
 }
 
-static size_t UNUSED
+static size_t
 emulate_htab (size_t initial, size_t final_nr_elements)
 {
   size_t size = initial;
@@ -3363,7 +3363,7 @@ set_die_odr_state (dw_cu_ref cu, dw_die_ref die)
 }
 
 /* Return the initialized die_odr_state field for DIE with CU.  */
-static unsigned int UNUSED
+static unsigned int
 die_odr_state (dw_die_ref die)
 {
   assert (die->die_odr_state != ODR_UNKNOWN);
@@ -5597,7 +5597,7 @@ dump_die_with_indent (int indent, dw_die_ref die)
 }
 
 /* Dump DIE to stderr.  */
-static void USED
+static void
 dump_die (dw_die_ref die)
 {
   dump_die_with_indent (0, die);
