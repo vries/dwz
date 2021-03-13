@@ -283,11 +283,11 @@ enum die_count_methods
 };
 static enum die_count_methods die_count_method = estimate;
 
-int odr = 0;
+static int odr = 0;
 enum odr_mode { ODR_BASIC, ODR_LINK };
-enum odr_mode odr_mode = ODR_LINK;
-int odr_mode_parsed = 0;
-bool odr_active_p = false;
+static enum odr_mode odr_mode = ODR_LINK;
+static int odr_mode_parsed = 0;
+static bool odr_active_p = false;
 
 /* Struct to gather statistics.  */
 struct stats
@@ -306,7 +306,7 @@ struct stats
   unsigned int pu_ph2_cnt;
   unsigned int pu_toplevel_die_cnt;
 };
-struct stats *stats;
+static struct stats *stats;
 
 /* Initialize stats struct.  */
 static void
@@ -5597,7 +5597,7 @@ dump_die_with_indent (int indent, dw_die_ref die)
 }
 
 /* Dump DIE to stderr.  */
-void USED
+static void USED
 dump_die (dw_die_ref die)
 {
   dump_die_with_indent (0, die);
@@ -8957,7 +8957,7 @@ verify_edges_1 (struct import_cu *ipu, unsigned int *ic, unsigned int *oc,
 
 /* Helper function for debugging create_import_tree.  Call verify_edges_1
    on all CUs and PUs.  */
-void
+static void
 verify_edges (struct import_cu **ipus, unsigned int npus, unsigned int ncus,
 	      unsigned int phase)
 {
@@ -16314,8 +16314,8 @@ make_temp_file (const char *name)
   return fd;
 }
 
-int die_count_method_parsed;
-int deduplication_mode_parsed;
+static int die_count_method_parsed;
+static int deduplication_mode_parsed;
 
 /* Options for getopt_long.  */
 static struct option dwz_options[] =
