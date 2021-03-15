@@ -570,13 +570,15 @@ buf_read_ube16 (unsigned char *data)
 static inline uint32_t
 buf_read_ule32 (unsigned char *data)
 {
-  return data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+  return (data[0] | (data[1] << 8) | (data[2] << 16)
+	  | ((unsigned int)data[3] << 24));
 }
 
 static inline uint32_t
 buf_read_ube32 (unsigned char *data)
 {
-  return data[3] | (data[2] << 8) | (data[1] << 16) | (data[0] << 24);
+  return (data[3] | (data[2] << 8) | (data[1] << 16)
+	  | ((unsigned int)data[0] << 24));
 }
 
 static inline uint64_t
