@@ -9029,7 +9029,7 @@ bitvector_set_bit (BITVECTOR_TYPE *vector, unsigned idx)
 {
   unsigned div = idx / (sizeof (BITVECTOR_TYPE) * 8);
   unsigned mod = idx % (sizeof (BITVECTOR_TYPE) * 8);
-  vector[div] |= (1 << mod);
+  vector[div] |= (1U << mod);
 }
 
 /* Test bit IDX in bitvector VECTOR.  */
@@ -9038,7 +9038,7 @@ bitvector_bit_p (BITVECTOR_TYPE *vector, unsigned idx)
 {
   unsigned div = idx / (sizeof (BITVECTOR_TYPE) * 8);
   unsigned mod = idx % (sizeof (BITVECTOR_TYPE) * 8);
-  return (vector[div] & (1 << mod)) != 0;
+  return (vector[div] & (1U << mod)) != 0;
 }
 
 /* Clear at least bits [A, B] in VECTOR, possibly more.  */
