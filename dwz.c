@@ -8433,7 +8433,12 @@ merged_singleton (dw_die_ref die)
       {
       case ODR_DEF:
 	if (res)
-	  return NULL;
+	  {
+	    if (die_cu (res) == die_cu (d))
+	      continue;
+	    else
+	      return NULL;
+	  }
 	else
 	  res = d;
 	break;
