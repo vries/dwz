@@ -8250,12 +8250,13 @@ partition_dups_1 (dw_die_ref *arr, size_t nr_partitions, size_t *partitions,
 	      else
 		stats->pu_ph2_cnt++;
 	    }
-	  if (dump_pus_p)
-	    fprintf (stderr, "Partial unit (%s):\n",
-		     second_phase ? "phase two" : "phase one");
 	  partial_cu->cu_kind = CU_PU;
 	  partial_cu->cu_offset = *last_partial_cu == NULL
 				  ? 0 : (*last_partial_cu)->cu_offset + 1;
+	  if (dump_pus_p)
+	    fprintf (stderr, "Partial unit (%s) @ 0x%x:\n",
+		     second_phase ? "phase two" : "phase one",
+		     partial_cu->cu_offset);
 	  partial_cu->cu_version = refcu->cu_version;
 	  if (uni_lang_p)
 	    partial_cu->lang = refcu->lang;
