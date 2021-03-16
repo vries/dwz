@@ -9135,11 +9135,18 @@ create_import_tree (void)
       ipu->cu = pu;
       pu->u1.cu_icu = ipu;
       assert (rdie->die_toplevel);
+      dw_die_ref firstdie = NULL;
+      dw_cu_ref firstdiecu = NULL;
       for (die = rdie->die_nextdup, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
 	  dw_cu_ref diecu = die_cu (die);
-	  if (diecu == prev_cu)
+	  if (firstdie == NULL)
+	    {
+	      firstdie = die;
+	      firstdiecu = die_cu (firstdie);
+	    }
+	  if (diecu == prev_cu || (die != firstdie && diecu == firstdiecu))
 	    continue;
 	  ipu->incoming_count++;
 	  size += 1 + (diecu->cu_version == 2 ? ptr_size : 4);
@@ -9149,11 +9156,18 @@ create_import_tree (void)
 		       obstack_alloc (&ob2,
 				      ipu->incoming_count
 				      * sizeof (*ipu->incoming));
+      firstdie = NULL;
+      firstdiecu = NULL;
       for (die = rdie->die_nextdup, i = 0, prev_cu = NULL;
 	   die; die = die->die_nextdup)
 	{
 	  dw_cu_ref diecu = die_cu (die);
-	  if (diecu == prev_cu)
+	  if (firstdie == NULL)
+	    {
+	      firstdie = die;
+	      firstdiecu = die_cu (firstdie);
+	    }
+	  if (diecu == prev_cu || (die != firstdie && diecu == firstdiecu))
 	    continue;
 	  icu = diecu->u1.cu_icu;
 	  if (icu == NULL)
