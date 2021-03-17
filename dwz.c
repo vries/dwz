@@ -247,6 +247,7 @@ static int verify_dups_p;
 static int verify_edge_freelist;
 static int stats_p;
 static int checksum_cycle_opt = 1;
+static int skip_producers_p;
 #else
 #define tracing 0
 #define ignore_size 0
@@ -258,6 +259,7 @@ static int checksum_cycle_opt = 1;
 #define verify_dups_p 0
 #define stats_p 0
 #define checksum_cycle_opt 1
+#define skip_producers_p 0
 #endif
 static int unoptimized_multifile;
 static int save_temps = 0;
@@ -288,6 +290,8 @@ enum odr_mode { ODR_BASIC, ODR_LINK };
 static enum odr_mode odr_mode = ODR_LINK;
 static int odr_mode_parsed = 0;
 static bool odr_active_p = false;
+
+static int skip_producer_parsed = 0;
 
 /* Struct to gather statistics.  */
 struct stats
@@ -6648,6 +6652,49 @@ read_lang (unsigned char *ptr, enum dwarf_form form,
   return ptr;
 }
 
+static const char **skip_producers;
+static size_t skip_producers_size;
+static size_t nr_skip_producers;
+
+static void
+add_skip_producer (const char *producer)
+{
+  size_t alloc_size;
+  if (skip_producers == NULL)
+    {
+      skip_producers_size = 10;
+      alloc_size = skip_producers_size * sizeof (const char *);
+      skip_producers = malloc (alloc_size);
+    }
+  else if (nr_skip_producers == skip_producers_size)
+    {
+      skip_producers_size += 10;
+      alloc_size = skip_producers_size * sizeof (const char *);
+      skip_producers = realloc (skip_producers, alloc_size);
+    }
+
+  skip_producers[nr_skip_producers] = producer;
+  nr_skip_producers++;
+}
+
+static bool
+skip_producer (const char *producer)
+{
+  size_t i;
+
+  if (producer == NULL)
+    return false;
+
+  for (i = 0; i < nr_skip_producers; ++i)
+    {
+      const char *skip = skip_producers[i];
+      if (strncmp (skip, producer, strlen (skip)) == 0)
+	return true;
+    }
+
+  return false;
+}
+
 /* First phase of the DWARF compression.  Parse .debug_info section
    (for kind == DEBUG_INFO) or .debug_types section (for kind == DEBUG_TYPES)
    for each CU in it construct internal representation for the CU
@@ -7320,6 +7367,12 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
 	}
 
       cu->cu_comp_dir = get_AT_string (cu->cu_die, DW_AT_comp_dir);
+      if (skip_producers_p
+	  && skip_producer (get_AT_string (cu->cu_die, DW_AT_producer)))
+	{
+	  cu->cu_die->die_remove = 1;
+	  continue;
+	}
       enum dwarf_form form;
       debug_line_off
 	= get_AT_int (cu->cu_die, DW_AT_stmt_list, &present, &form);
@@ -16394,6 +16447,8 @@ static struct option dwz_options[] =
 			 no_argument,	    &checksum_cycle_opt, 1 },
   { "devel-no-checksum-cycle-opt",
 			 no_argument,	    &checksum_cycle_opt, 0 },
+  { "devel-skip-producer",
+			 required_argument, &skip_producer_parsed, 1},
 #endif
   { "odr",		 no_argument,	    &odr, 1 },
   { "no-odr",		 no_argument,	    &odr, 0 },
@@ -16650,7 +16705,8 @@ usage (const char *progname, int failing)
 	    "  --devel-die-count-method\n"
 	    "  --devel-deduplication-mode={none,intra-cu,inter-cu}\n"
 	    "  --devel-uni-lang / --devel-no-uni-lang\n"
-	    "  --devel-gen-cu / --devel-no-gen-cu\n"));
+	    "  --devel-gen-cu / --devel-no-gen-cu\n"
+	    "  --devel-skip-producer <producer>\n"));
 #endif
 
   exit (failing);
@@ -16745,6 +16801,15 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 		}
 	      error (1, 0, "invalid argument --odr-mode %s",
 		     optarg);
+	    }
+	  if (skip_producer_parsed)
+	    {
+	      skip_producer_parsed = 0;
+	      add_skip_producer (optarg);
+
+#if DEVEL
+	      skip_producers_p = 1;
+#endif
 	    }
 	  break;
 
