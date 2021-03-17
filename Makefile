@@ -12,7 +12,7 @@ exec_prefix = $(prefix)
 bindir = $(exec_prefix)/bin
 datarootdir = $(prefix)/share
 mandir = $(datarootdir)/man
-OBJECTS = dwz.o hashtab.o sha1.o dwarfnames.o
+OBJECTS = args.o dwz.o hashtab.o sha1.o dwarfnames.o
 dwz: $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lelf
 install: dwz
