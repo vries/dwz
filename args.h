@@ -18,6 +18,8 @@
    the Free Software Foundation, 51 Franklin Street - Fifth Floor,
    Boston, MA 02110-1301, USA.  */
 
+#include <stdbool.h>
+
 #if DEVEL
 extern int tracing;
 extern int ignore_size;
