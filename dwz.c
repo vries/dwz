@@ -17041,6 +17041,8 @@ main (int argc, char *argv[])
   int ret;
   const char *outfile;
   bool hardlink;
+  int nr_files;
+  const char **files;
 
   if (elf_version (EV_CURRENT) == EV_NONE)
     error (1, 0, "library out of date");
@@ -17048,10 +17050,12 @@ main (int argc, char *argv[])
   outfile = NULL;
   hardlink = false;
   parse_args (argc, argv, &hardlink, &outfile);
+  nr_files = argc - optind;
+  files = (const char **)&argv[optind];
 
-  if (optind == argc || optind + 1 == argc)
+  if (nr_files <= 1)
     {
-      const char *file = optind == argc ? "a.out" : argv[optind];
+      const char *file = nr_files == 0 ? "a.out" : files[0];
 
       if (multifile != NULL)
 	{
@@ -17063,9 +17067,6 @@ main (int argc, char *argv[])
     }
   else
     {
-      int nr_files = argc - optind;
-      const char **files = (const char **)&argv[optind];
-
       if (outfile != NULL)
 	error (1, 0, "-o option not allowed for multiple files");
 
