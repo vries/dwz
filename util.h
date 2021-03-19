@@ -43,3 +43,6 @@ extern void print_parse_stats (void);
 extern void print_dups_stats (void);
 extern void print_part_stats (void);
 extern void htab_report (htab_t, const char *);
+extern void dump_die (dw_die_ref);
+extern void dump_dups (dw_die_ref);
+extern void dump_dies (int, dw_die_ref);
