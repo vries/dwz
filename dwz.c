@@ -15267,7 +15267,7 @@ struct file_result
    over FILE.  */
 static int
 dwz (const char *file, const char *outfile, struct file_result *res,
-     struct file_result *resa, const char **files)
+     struct file_result *resa, char **files)
 {
   DSO *dso;
   int ret = 0, fd;
@@ -16285,7 +16285,7 @@ dwz_one_file (const char *file, const char *outfile)
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
    if so, dwarf-compress just one, and relink the others.  */
 static int
-dwz_files (int nr_files, const char *files[], bool hardlink)
+dwz_files (int nr_files, char *files[], bool hardlink)
 {
   int ret = 0;
   int i;
@@ -16413,7 +16413,7 @@ main (int argc, char *argv[])
   const char *outfile;
   bool hardlink;
   int nr_files;
-  const char **files;
+  char **files;
 
   if (elf_version (EV_CURRENT) == EV_NONE)
     error (1, 0, "library out of date");
@@ -16422,7 +16422,7 @@ main (int argc, char *argv[])
   hardlink = false;
   parse_args (argc, argv, &hardlink, &outfile);
   nr_files = argc - optind;
-  files = (const char **)&argv[optind];
+  files = &argv[optind];
 
   if (nr_files <= 1)
     {
