@@ -1,3 +1,8 @@
+readelf_flags=""
+if readelf -h 2>&1 | grep -q "\-wN,"; then
+    readelf_flags=-wN
+fi
+
 cp $execs/cycle 1
 
 # Using mode 3 in checksum_die_ref.
@@ -21,7 +26,7 @@ $execs/dwz-for-test -m 3 1 2 --devel-no-checksum-cycle-opt --devel-ignore-size
 cnt=$(readelf -wi 3 | grep -c "DW_AT_name.*: s$")
 [ $cnt -eq 1 ]
 
-cnt=$(readelf -wi 1 | grep -c "DW_AT_name.*: s$" || true)
+cnt=$(readelf -wi $readelf_flags 1 | grep -c "DW_AT_name.*: s$" || true)
 [ $cnt -eq 0 ]
 
 rm -f 1 2 3
