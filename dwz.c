@@ -16285,18 +16285,15 @@ dwz_one_file (const char *file, const char *outfile)
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
    if so, dwarf-compress just one, and relink the others.  */
 static int
-dwz_files (int nr_files, char *files[], bool hardlink)
+dwz_files_1 (int nr_files, char *files[], bool hardlink,
+	     struct file_result *resa)
 {
   int ret = 0;
   int i;
   const char *file;
-  struct file_result *resa;
   bool hardlinks = false;
   int successcount = 0;
 
-  resa = (struct file_result *) malloc ((nr_files) * sizeof (*resa));
-  if (resa == NULL)
-    error (1, ENOMEM, "failed to allocate result array");
   for (i = 0; i < nr_files; ++i)
     resa[i].die_count = 0;
 
@@ -16344,65 +16341,81 @@ dwz_files (int nr_files, char *files[], bool hardlink)
 	hardlinks = true;
     }
 
-  if (multifile && successcount < 2)
+  if (multifile == NULL)
+    return ret;
+
+  if (successcount < 2)
     {
       error (0, 0, "Too few files for multifile optimization");
-      multifile = NULL;
+      return ret;
     }
 
-  if (multifile
-      && multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
+  if (multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
     {
       if (!quiet)
 	error (0, 0, "No suitable DWARF found for multifile optimization");
-      multifile = NULL;
+      return ret;
     }
 
-  if (multifile)
+  unsigned int multifile_die_count = 0;
+  int multi_fd = optimize_multifile (&multifile_die_count);
+  DSO *dso;
+  if (multi_fd == -1)
+    return 1;
+
+  dso = read_multifile (multi_fd, multifile_die_count);
+  if (dso == NULL)
+    ret = 1;
+  else
     {
-      unsigned int multifile_die_count = 0;
-      int multi_fd = optimize_multifile (&multifile_die_count);
-      DSO *dso;
-      if (multi_fd == -1)
-	return 1;
-      dso = read_multifile (multi_fd, multifile_die_count);
-      if (dso == NULL)
-	ret = 1;
-      else
+      for (i = 0; i < nr_files; i++)
 	{
-	  for (i = 0; i < nr_files; i++)
-	    {
-	      dw_cu_ref cu;
-	      file = files[i];
-	      if (stats_p)
-		init_stats (file);
-	      multifile_mode = MULTIFILE_MODE_FI;
-	      /* Don't process again files that couldn't
-		 be processed successfully.  */
-	      if (resa[i].res == -1)
-		continue;
-	      for (cu = alt_first_cu; cu; cu = cu->cu_next)
-		alt_clear_dups (cu->cu_die);
-	      ret |= dwz (file, NULL, &resa[i],
-			  hardlinks ? resa : NULL, files);
-	    }
-	  elf_end (dso->elf);
-	  close (multi_fd);
-	  free (dso);
+	  dw_cu_ref cu;
+	  file = files[i];
+	  if (stats_p)
+	    init_stats (file);
+	  multifile_mode = MULTIFILE_MODE_FI;
+	  /* Don't process again files that couldn't
+	     be processed successfully.  */
+	  if (resa[i].res == -1)
+	    continue;
+	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
+	    alt_clear_dups (cu->cu_die);
+	  ret |= dwz (file, NULL, &resa[i],
+		      hardlinks ? resa : NULL, files);
 	}
-      cleanup ();
-      strp_htab = alt_strp_htab;
-      off_htab = alt_off_htab;
-      dup_htab = alt_dup_htab;
-      macro_htab = alt_macro_htab;
-      pool = alt_pool;
-      ob = alt_ob;
-      ob2 = alt_ob2;
-      cleanup ();
+      elf_end (dso->elf);
+      close (multi_fd);
+      free (dso);
     }
+
+  cleanup ();
+
+  strp_htab = alt_strp_htab;
+  off_htab = alt_off_htab;
+  dup_htab = alt_dup_htab;
+  macro_htab = alt_macro_htab;
+  pool = alt_pool;
+  ob = alt_ob;
+  ob2 = alt_ob2;
+  cleanup ();
+
+  return ret;
+}
+
+/* Wrapper around dwz_files_1 that takes care of malloc and free of resa.  */
+static int
+dwz_files (int nr_files, char *files[], bool hardlink)
+{
+  int ret;
+  struct file_result *resa
+    = (struct file_result *) malloc ((nr_files) * sizeof (*resa));
+  if (resa == NULL)
+    error (1, ENOMEM, "failed to allocate result array");
+
+  ret = dwz_files_1 (nr_files, files, hardlink, resa);
 
   free (resa);
-
   return ret;
 }
 
