@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <error.h>
+#include <sys/sysinfo.h>
 
 #include "args.h"
 
@@ -52,6 +53,7 @@ int progress_p;
 int progress_mem_p;
 int import_opt_p = 1;
 int force_p;
+int max_forks = -1;
 
 enum deduplication_mode deduplication_mode = dm_inter_cu;
 
@@ -161,6 +163,7 @@ static struct option dwz_options[] =
   { "odr",		 no_argument,	    &odr, 1 },
   { "no-odr",		 no_argument,	    &odr, 0 },
   { "odr-mode",		 required_argument, &odr_mode_parsed, 1 },
+  { "jobs",		 required_argument, 0, 'j' },
   { NULL,		 no_argument,	    0, 0 }
 };
 
@@ -219,7 +222,9 @@ static struct option_help dwz_multi_file_options_help[] =
     " to multifile." },
   { "5", "dwarf-5", NULL, NULL,
     "Emit DWARF 5 standardized supplementary object files instead of"
-    " GNU extension .debug_altlink." }
+    " GNU extension .debug_altlink." },
+  { "j", "jobs", "<n>", "number of processors / 2",
+    "Process <n> files in parallel" }
 };
 
 /* Describe misc command line options.  */
@@ -363,7 +368,8 @@ usage (const char *progname, int failing)
 
   fprintf (stream,
 	   ("Usage:\n"
-	    "  %s [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
+	    "  %s [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-j N]"
+	      " [FILES]\n"
 	    "  %s [common options] -o OUTFILE FILE\n"
 	    "  %s [ -v | -? ]\n"),
 	   progname, progname, progname);
@@ -487,7 +493,7 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
   while (1)
     {
       int option_index = -1;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5", dwz_options,
+      int c = getopt_long (argc, argv, "m:o:j:qhl:L:M:r?v5", dwz_options,
 			   &option_index);
       if (c == -1)
 	break;
@@ -619,6 +625,13 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	case 'v':
 	  version ();
 	  break;
+
+	case 'j':
+	  l = strtoul (optarg, &end, 0);
+	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
+	    error (1, 0, "invalid argument -j %s", optarg);
+	  max_forks = l;
+	  break;
 	}
     }
 
@@ -634,4 +647,12 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 
   if (multifile_relative && multifile_name)
     error (1, 0, "-M and -r options can't be specified together");
+
+  if (max_forks == -1)
+    {
+      long nprocs = get_nprocs ();
+      /* Be conservative on max forks: 4 procs may be actually be 4 SMT threads
+	 with only 2 cores.  */
+      max_forks = nprocs / 2;
+    }
 }

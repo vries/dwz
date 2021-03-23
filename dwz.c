@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/times.h>
+#include <sys/wait.h>
 
 #include <obstack.h>
 
@@ -16393,22 +16394,114 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
   if (hardlink)
     hardlink = detect_hardlinks (nr_files, files, resa);
 
-  for (i = 0; i < nr_files; i++)
+  int nr_forks = 0;
+  if (max_forks > 1 && multifile == NULL)
     {
-      int thisret;
-      file = files[i];
-      struct file_result *res = &resa[i];
-      if (res->res == -2)
-	/* Skip hard links.  */
-	continue;
-      if (stats_p)
-	init_stats (file);
-      bool low_mem_p;
-      thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
-      if (thisret == 1)
-	ret = 1;
-      else if (!low_mem_p && resa[i].res >= 0)
-	successcount++;
+      pid_t pids[nr_files];
+      for (i = 0; i < nr_files; i++)
+	{
+	  int thisret;
+	  file = files[i];
+	  struct file_result *res = &resa[i];
+	  if (res->res == -2)
+	    /* Skip hard links.  */
+	    continue;
+
+	  if (nr_forks == max_forks)
+	    {
+	      int state;
+	      pid_t got_pid = waitpid (-1, &state, 0);
+	      if (!WIFEXITED (state))
+		error (1, 0, "Child dwz process got killed");
+	      thisret = WEXITSTATUS (state) & 0x3;
+	      bool low_mem_p = false;
+	      if (thisret == 2)
+		{
+		  thisret = 0;
+		  low_mem_p = true;
+		}
+	      (void)low_mem_p;
+	      res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+	      if (thisret == 1)
+		ret = 1;
+	      nr_forks--;
+	      int j;
+	      for (j = 0; j < i; ++j)
+		if (pids[j] == got_pid)
+		  {
+		    pids[j] = 0;
+		    break;
+		  }
+	      assert (j < i);
+	    }
+
+	  pid_t fork_res = fork ();
+	  assert (fork_res != -1);
+	  if (fork_res == 0)
+	    {
+	      bool low_mem_p;
+	      thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
+	      /* Encode thisret, low_mem_p and res->res into return status.  */
+	      if (thisret == 0 && low_mem_p)
+		thisret = 2;
+	      assert (thisret >= 0 && thisret <= 2);
+	      assert (res->res >= -3);
+	      thisret = thisret + ((res->res + 3) << 2);
+	      return thisret;
+	    }
+	  else
+	    {
+	      pids[i] = fork_res;
+	      nr_forks++;
+	    }
+	}
+      for (i = 0; i < nr_files; i++)
+	{
+	  int thisret;
+	  file = files[i];
+	  struct file_result *res = &resa[i];
+	  if (res->res == -2)
+	    /* Skip hard links.  */
+	    continue;
+	  if (pids[i] == 0)
+	    continue;
+	  int state;
+	  pid_t got_pid = waitpid (pids[i], &state, 0);
+	  assert (got_pid == pids[i]);
+	  if (!WIFEXITED (state))
+	    error (1, 0, "Child dwz process got killed");
+	  thisret = WEXITSTATUS (state) & 0x3;
+	  bool low_mem_p = false;
+	  if (thisret == 2)
+	    {
+	      thisret = 0;
+	      low_mem_p = true;
+	    }
+	  (void)low_mem_p;
+	  res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+	  if (thisret == 1)
+	    ret = 1;
+	}
+    }
+  else
+    {
+      for (i = 0; i < nr_files; i++)
+	{
+	  int thisret;
+	  file = files[i];
+	  struct file_result *res = &resa[i];
+	  if (res->res == -2)
+	    /* Skip hard links.  */
+	    continue;
+	  if (stats_p)
+	    init_stats (file);
+	  bool low_mem_p;
+	  thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
+	  if (thisret == 1)
+	    ret = 1;
+	  else if (!low_mem_p && resa[i].res >= 0)
+	    successcount++;
+	}
     }
 
   if (hardlink)

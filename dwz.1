@@ -111,6 +111,10 @@ Emit standard DWARF 5 Supplementary Object Files with \fI.debug_sup\fR and
 corresponding forms, instead of the GNU extension \fI.gnu_debugaltlink\fR
 and corresponding forms.
 .TP
+.B \-j <N> \-\-jobs <N>
+Process \fIN\fR files in parallel.  The default is processors / 2.  Disabled
+when multifile is used.
+.TP
 .B \-\-odr / \-\-no-odr
 .B Experimental.
 Enable/disable One-Definition-Rule optimization for C++ compilation units.
