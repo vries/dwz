@@ -6628,7 +6628,8 @@ read_debug_info (DSO *dso, int kind, unsigned int *die_count)
       if (dup_htab == NULL)
 	dwz_oom ();
     }
-  if (unlikely (op_multifile || rd_multifile || fi_multifile || low_mem))
+  if (unlikely (meta_abbrev_htab == NULL
+		&& (op_multifile || rd_multifile || fi_multifile || low_mem)))
     {
       meta_abbrev_htab
 	= htab_try_create (500, meta_abbrev_hash, meta_abbrev_eq,
