@@ -16256,12 +16256,39 @@ make_temp_file (const char *name)
   return fd;
 }
 
+/* As dwz, but retry with MULTIFILE_MODE_LOW_MEM if the low_mem_die_limit
+   is hit.  */
+static int
+dwz_with_low_mem (const char *file, const char *outfile,
+		  struct file_result *res, struct file_result *resa,
+		  char **files, bool *low_mem_p)
+{
+  int ret;
+
+  if (low_mem_p)
+    *low_mem_p = false;
+
+  ret = (low_mem_die_limit == 0
+	 ? 2
+	 : dwz (file, outfile, res, resa, files));
+
+  if (ret == 2)
+    {
+      multifile_mode = MULTIFILE_MODE_LOW_MEM;
+      if (low_mem_p)
+	*low_mem_p = true;
+
+      ret = dwz (file, outfile, res, resa, files);
+    }
+
+  return ret;
+}
+
 /* Dwarf-compress FILE.  If OUTFILE, write to result to OUTFILE, otherwise
    modify FILE.  */
 static int
 dwz_one_file (const char *file, const char *outfile)
 {
-  int ret = 0;
   struct file_result res;
 
   if (stats_p)
@@ -16269,17 +16296,7 @@ dwz_one_file (const char *file, const char *outfile)
 
   res.die_count = 0;
 
-  ret = (low_mem_die_limit == 0
-	 ? 2
-	 : dwz (file, outfile, &res, NULL, NULL));
-
-  if (ret == 2)
-    {
-      multifile_mode = MULTIFILE_MODE_LOW_MEM;
-      ret = dwz (file, outfile, &res, NULL, NULL);
-    }
-
-  return ret;
+  return dwz_with_low_mem (file, outfile, &res, NULL, NULL, NULL);
 }
 
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
@@ -16321,19 +16338,12 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       file = files[i];
       if (stats_p)
 	init_stats (file);
-      thisret = (low_mem_die_limit == 0
-		 ? 2
-		 : dwz (file, NULL, &resa[i],
-			hardlinks ? resa : NULL, files));
-      if (thisret == 2)
-	{
-	  multifile_mode = MULTIFILE_MODE_LOW_MEM;
-	  thisret = dwz (file, NULL, &resa[i],
-			 hardlinks ? resa : NULL, files);
-	}
-      else if (thisret == 1)
+      bool low_mem_p;
+      thisret = dwz_with_low_mem (file, NULL, &resa[i],
+				  hardlinks ? resa : NULL, files, &low_mem_p);
+      if (thisret == 1)
 	ret = 1;
-      else if (resa[i].res >= 0)
+      else if (!low_mem_p && resa[i].res >= 0)
 	successcount++;
       if (hardlink
 	  && resa[i].res >= 0
