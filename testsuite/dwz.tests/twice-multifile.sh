@@ -24,7 +24,10 @@ if [ $(grep -qv "DWARF compression not beneficial" dwz.err \
     exit 1
 fi
 
-[ $status -eq 0 ]
+if [ $status -ne 0 ]; then
+    cat dwz.err
+    exit 1
+fi
 
 smaller-than.sh 1 1.saved
 
