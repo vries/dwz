@@ -15092,10 +15092,15 @@ write_multifile (DSO *dso)
       dw_cu_ref *cup;
 
       for (cup = &first_cu; *cup && (*cup)->cu_kind != CU_TYPES; )
-	if ((*cup)->cu_die->die_no_multifile == 0)
-	  cup = &(*cup)->cu_next;
-	else
-	  *cup = (*cup)->cu_next;
+	{
+	  if ((*cup)->cu_new_abbrev)
+	    htab_delete ((*cup)->cu_new_abbrev);
+
+	  if ((*cup)->cu_die->die_no_multifile == 0)
+	    cup = &(*cup)->cu_next;
+	  else
+	    *cup = (*cup)->cu_next;
+	}
       *cup = NULL;
       multifile_mode = MULTIFILE_MODE_WR;
       if (tracing)
