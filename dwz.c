@@ -11234,7 +11234,10 @@ build_abbrevs (dw_cu_ref cu, struct abbrev_tag *t, unsigned int *ndies,
 
   if (build_abbrevs_for_die (h, cu, cu->cu_die, NULL, NULL, t, ndies, vec,
 			     false))
-    return 1;
+    {
+      htab_delete (h);
+      return 1;
+    }
 
   cu->cu_new_abbrev = h;
   return 0;
