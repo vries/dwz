@@ -15259,7 +15259,8 @@ remove_empty_pus (void)
 /* Helper structure for hardlink discovery.  */
 struct file_result
 {
-  /* -2: Already processed under different name.
+  /* -3: Uninitialized.
+     -2: Already processed under different name.
      -1: Ignore.
       0: Processed, changed.
       1: Processed, unchanged.  */
@@ -15267,6 +15268,7 @@ struct file_result
   dev_t dev;
   ino_t ino;
   nlink_t nlink;
+  size_t hardlink_to;
   unsigned int die_count;
 };
 
@@ -15275,13 +15277,15 @@ struct file_result
    the result will be written into a temporary file that is renamed
    over FILE.  */
 static int
-dwz (const char *file, const char *outfile, struct file_result *res,
-     struct file_result *resa, char **files)
+dwz (const char *file, const char *outfile, struct file_result *res)
 {
   DSO *dso;
   int ret = 0, fd;
   unsigned int i;
   struct stat st;
+
+  if (res->res == -1)
+    return 1;
 
   res->res = -1;
   fd = open (file, O_RDONLY);
@@ -15298,64 +15302,6 @@ dwz (const char *file, const char *outfile, struct file_result *res,
     }
 
   res->res = 1;
-  res->dev = st.st_dev;
-  res->ino = st.st_ino;
-  res->nlink = st.st_nlink;
-  /* Hardlink handling if requested.  */
-  if (resa != NULL)
-    {
-      size_t n;
-      for (n = 0; &resa[n] != res; n++)
-	if (resa[n].res >= 0
-	    && resa[n].nlink > 1
-	    && resa[n].dev == st.st_dev
-	    && resa[n].ino == st.st_ino)
-	  break;
-      if (&resa[n] != res)
-	{
-	  /* If a hardlink to this has been processed before
-	     and we didn't change it, just assume the same
-	     state.  */
-	  if (resa[n].res == 1)
-	    {
-	      if (tracing)
-		fprintf (stderr, "Skipping hardlink %s to unchanged file\n",
-			 file);
-	      close (fd);
-	      res->res = -2;
-	      return 0;
-	    }
-	  /* If it changed, try to hardlink it again.  */
-	  if (resa[n].res == 0)
-	    {
-	      size_t len = strlen (file);
-	      char *filename = alloca (len + sizeof (".#dwz#.XXXXXX"));
-	      int fd2;
-	      if (tracing)
-		fprintf (stderr, "Updating hardlink %s to changed file\n",
-			 file);
-	      memcpy (filename, file, len);
-	      memcpy (filename + len, ".#dwz#.XXXXXX",
-		      sizeof (".#dwz#.XXXXXX"));
-	      fd2 = mkstemp (filename);
-	      if (fd2 >= 0)
-		{
-		  close (fd2);
-		  unlink (filename);
-		  if (link (files[n], filename) == 0)
-		    {
-		      if (rename (filename, file) == 0)
-			{
-			  close (fd);
-			  res->res = -2;
-			  return 0;
-			}
-		      unlink (filename);
-		    }
-		}
-	    }
-	}
-    }
 
   if (tracing)
     {
@@ -16269,8 +16215,7 @@ make_temp_file (const char *name)
    is hit.  */
 static int
 dwz_with_low_mem (const char *file, const char *outfile,
-		  struct file_result *res, struct file_result *resa,
-		  char **files, bool *low_mem_p)
+		  struct file_result *res, bool *low_mem_p)
 {
   int ret;
 
@@ -16279,7 +16224,7 @@ dwz_with_low_mem (const char *file, const char *outfile,
 
   ret = (low_mem_die_limit == 0
 	 ? 2
-	 : dwz (file, outfile, res, resa, files));
+	 : dwz (file, outfile, res));
 
   if (ret == 2)
     {
@@ -16287,7 +16232,7 @@ dwz_with_low_mem (const char *file, const char *outfile,
       if (low_mem_p)
 	*low_mem_p = true;
 
-      ret = dwz (file, outfile, res, resa, files);
+      ret = dwz (file, outfile, res);
     }
 
   return ret;
@@ -16305,7 +16250,117 @@ dwz_one_file (const char *file, const char *outfile)
 
   res.die_count = 0;
 
-  return dwz_with_low_mem (file, outfile, &res, NULL, NULL, NULL);
+  return dwz_with_low_mem (file, outfile, &res, NULL);
+}
+
+/* Detect which FILES are hardlinks, and mark those in RESA.  */
+static bool
+detect_hardlinks (int nr_files, char *files[], struct file_result *resa)
+{
+  bool found = false;
+  int i;
+
+  /* Try to open all files.  */
+  for (i = 0; i < nr_files; i++)
+    {
+      struct file_result *res = &resa[i];
+      int fd;
+      struct stat st;
+
+      const char *file = files[i];
+      res->res = -1;
+
+      fd = open (file, O_RDONLY);
+      if (fd < 0)
+	error (0, errno, "Failed to open input file %s", file);
+      else if (fstat (fd, &st) < 0)
+	error (0, errno, "Failed to stat input file %s", file);
+      else
+	{
+	  res->res = 1;
+	  res->dev = st.st_dev;
+	  res->ino = st.st_ino;
+	  res->nlink = st.st_nlink;
+	}
+
+      close (fd);
+    }
+
+  /* Detect hard links.  */
+  for (i = 0; i < nr_files; i++)
+    {
+      struct file_result *res = &resa[i];
+      size_t n;
+      for (n = 0; &resa[n] != res; n++)
+	if (resa[n].res >= 0
+	    && resa[n].nlink > 1
+	    && resa[n].dev == res->dev
+	    && resa[n].ino == res->ino)
+	  break;
+      if (&resa[n] == res)
+	continue;
+      res->res = -2;
+      res->hardlink_to = n;
+      found = true;
+    }
+
+  return found;
+}
+
+/* Update the FILES marked as hardlink in RESA.  */
+static void
+update_hardlinks (int nr_files, char *files[], struct file_result *resa)
+{
+  int i;
+
+  /* Update hardlinks.  */
+  for (i = 0; i < nr_files; i++)
+    {
+      struct file_result *res = &resa[i];
+      const char *file = files[i];
+      size_t n;
+      if (res->res != -2)
+	continue;
+      n = res->hardlink_to;
+
+      /* If a hardlink to this has been processed before
+	 and we didn't change it, just assume the same
+	 state.  */
+      if (resa[n].res == 1)
+	{
+	  if (tracing)
+	    fprintf (stderr, "Skipping hardlink %s to unchanged file\n",
+		     file);
+	  continue;
+	}
+
+      /* If it changed, try to hardlink it again.  */
+      if (resa[n].res == 0)
+	{
+	  size_t len = strlen (file);
+	  char *filename = alloca (len + sizeof (".#dwz#.XXXXXX"));
+	  int fd2;
+	  if (tracing)
+	    fprintf (stderr, "Updating hardlink %s to changed file\n",
+		     file);
+	  memcpy (filename, file, len);
+	  memcpy (filename + len, ".#dwz#.XXXXXX",
+		  sizeof (".#dwz#.XXXXXX"));
+	  fd2 = mkstemp (filename);
+	  if (fd2 >= 0)
+	    {
+	      close (fd2);
+	      unlink (filename);
+	      if (link (files[n], filename) == 0)
+		{
+		  if (rename (filename, file) == 0)
+		    ;
+		  else
+		    unlink (filename);
+		}
+	    }
+	}
+    }
 }
 
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
@@ -16317,11 +16372,13 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
   int ret = 0;
   int i;
   const char *file;
-  bool hardlinks = false;
   int successcount = 0;
 
   for (i = 0; i < nr_files; ++i)
-    resa[i].die_count = 0;
+    {
+      resa[i].die_count = 0;
+      resa[i].res = -3;
+    }
 
   if (multifile)
     {
@@ -16341,24 +16398,29 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	}
     }
 
+  if (hardlink)
+    hardlink = detect_hardlinks (nr_files, files, resa);
+
   for (i = 0; i < nr_files; i++)
     {
       int thisret;
       file = files[i];
+      struct file_result *res = &resa[i];
+      if (res->res == -2)
+	/* Skip hard links.  */
+	continue;
       if (stats_p)
 	init_stats (file);
       bool low_mem_p;
-      thisret = dwz_with_low_mem (file, NULL, &resa[i],
-				  hardlinks ? resa : NULL, files, &low_mem_p);
+      thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
       if (thisret == 1)
 	ret = 1;
       else if (!low_mem_p && resa[i].res >= 0)
 	successcount++;
-      if (hardlink
-	  && resa[i].res >= 0
-	  && resa[i].nlink > 1)
-	hardlinks = true;
     }
+
+  if (hardlink)
+    update_hardlinks (nr_files, files, resa);
 
   if (multifile == NULL)
     return ret;
@@ -16395,14 +16457,15 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    init_stats (file);
 	  multifile_mode = MULTIFILE_MODE_FI;
 	  /* Don't process again files that couldn't
-	     be processed successfully.  */
-	  if (resa[i].res == -1)
+	     be processed successfully.  Also skip hard links.  */
+	  if (resa[i].res == -1 || resa[i].res == -2)
 	    continue;
 	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 	    alt_clear_dups (cu->cu_die);
-	  ret |= dwz (file, NULL, &resa[i],
-		      hardlinks ? resa : NULL, files);
+	  ret |= dwz (file, NULL, &resa[i]);
 	}
+      if (hardlink)
+	update_hardlinks (nr_files, files, resa);
       elf_end (dso->elf);
       close (multi_fd);
       free (dso);
