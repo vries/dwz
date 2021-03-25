@@ -16238,6 +16238,14 @@ dwz_with_low_mem (const char *file, const char *outfile,
   return ret;
 }
 
+/* Initialize struct file_result RES.  */
+static void
+init_file_result (struct file_result *res)
+{
+  res->die_count = 0;
+  res->res = -3;
+}
+
 /* Dwarf-compress FILE.  If OUTFILE, write to result to OUTFILE, otherwise
    modify FILE.  */
 static int
@@ -16248,7 +16256,7 @@ dwz_one_file (const char *file, const char *outfile)
   if (stats_p)
     init_stats (file);
 
-  res.die_count = 0;
+  init_file_result (&res);
 
   return dwz_with_low_mem (file, outfile, &res, NULL);
 }
@@ -16375,10 +16383,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
   int successcount = 0;
 
   for (i = 0; i < nr_files; ++i)
-    {
-      resa[i].die_count = 0;
-      resa[i].res = -3;
-    }
+    init_file_result (&resa[i]);
 
   if (multifile)
     {
