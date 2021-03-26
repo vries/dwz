@@ -708,4 +708,8 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	 threads with only 2 cores.  */
       max_forks = nprocs / 2;
     }
+
+  if (max_forks > 1 && multifile
+      && multifile_force_ptr_size == 0 && multifile_force_endian == 0)
+    max_forks = 0;
 }

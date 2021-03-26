@@ -15068,6 +15068,17 @@ write_multifile (DSO *dso, struct file_result *res)
   unsigned int i;
   int ret = 0;
 
+  if (max_forks > 1)
+    {
+      lockf (multi_info_fd, F_LOCK, 0);
+
+      multi_info_off = lseek (multi_info_fd, 0L, SEEK_END);
+      multi_abbrev_off = lseek (multi_abbrev_fd, 0L, SEEK_END);
+      multi_line_off = lseek (multi_line_fd, 0L, SEEK_END);
+      multi_str_off = lseek (multi_str_fd, 0L, SEEK_END);
+      multi_macro_off = lseek (multi_macro_fd, 0L, SEEK_END);
+    }
+
   if (unlikely (progress_p))
     {
       report_progress ();
@@ -15091,6 +15102,8 @@ write_multifile (DSO *dso, struct file_result *res)
       error (0, 0, "Multi-file optimization not allowed for different"
 	     " pointer sizes");
       multifile = NULL;
+      if (max_forks > 1)
+	lockf (multi_info_fd, F_ULOCK, 0);
       return 1;
     }
   else
@@ -15229,6 +15242,8 @@ write_multifile (DSO *dso, struct file_result *res)
       debug_sections[i].new_size = saved_new_size[i];
       saved_new_data[i] = NULL;
     }
+  if (max_forks > 1)
+    lockf (multi_info_fd, F_ULOCK, 0);
   return ret;
 }
 
@@ -16410,12 +16425,13 @@ update_hardlinks (int nr_files, char *files[], struct file_result *resa)
 static int
 encode_child_exit_status (int thisret, struct file_result *res)
 {
+  assert (thisret == 0 ||  thisret == 1);
   if (thisret == 0 && res->low_mem_p)
     thisret = 2;
-  assert (thisret >= 0 && thisret <= 2);
-  assert (res->res >= -3);
-  thisret = thisret + ((res->res + 3) << 2);
-  return thisret;
+  assert (res->res >= -3 && res->res <= 1);
+  return (thisret
+	  + ((res->res + 3) << 2)
+	  + ((res->skip_multifile ? 1 : 0) << 5));
 }
 
 /* Decode child process exit status.  */
@@ -16425,14 +16441,21 @@ decode_child_exit_status (int state, struct file_result *res)
   int ret;
   if (!WIFEXITED (state))
     error (1, 0, "Child dwz process got killed");
-  ret = WEXITSTATUS (state) & 0x3;
+  int status = WEXITSTATUS (state);
+  ret = status & 0x3;
+  status >>= 2;
+
   res->low_mem_p = false;
   if (ret == 2)
     {
       ret = 0;
       res->low_mem_p = true;
     }
-  res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+
+  res->res = (int)(status & 0x7) - 3;
+  status >>= 3;
+
+  res->skip_multifile = (status & 0x1) ? true : false;
 
   return ret;
 }
@@ -16473,7 +16496,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
     hardlink = detect_hardlinks (nr_files, files, resa);
 
   int nr_forks = 0;
-  if (max_forks > 1 && multifile == NULL)
+  if (max_forks > 1)
     {
       pid_t pids[nr_files];
       for (i = 0; i < nr_files; i++)
@@ -16493,6 +16516,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 		= decode_child_exit_status (state, res);
 	      if (thisret == 1)
 		ret = 1;
+	      else if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
+		successcount++;
 	      nr_forks--;
 	      int j;
 	      for (j = 0; j < i; ++j)
@@ -16533,6 +16558,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  thisret = decode_child_exit_status (state, res);
 	  if (thisret == 1)
 	    ret = 1;
+	  else if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
+	    successcount++;
 	}
     }
   else
@@ -16567,11 +16594,45 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       return ret;
     }
 
+  if (max_forks > 1)
+    {
+      multi_info_off = lseek (multi_info_fd, 0L, SEEK_END);
+      multi_abbrev_off = lseek (multi_abbrev_fd, 0L, SEEK_END);
+      multi_line_off = lseek (multi_line_fd, 0L, SEEK_END);
+      multi_str_off = lseek (multi_str_fd, 0L, SEEK_END);
+      multi_macro_off = lseek (multi_macro_fd, 0L, SEEK_END);
+    }
   if (multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
     {
       if (!quiet)
 	error (0, 0, "No suitable DWARF found for multifile optimization");
       return ret;
+    }
+
+  if (max_forks > 1)
+    {
+      for (i = 0; i < nr_files; i++)
+	{
+	  struct file_result *res = &resa[i];
+	  if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
+	    {
+	      int fd = open (files[i], O_RDONLY);
+	      if (fd < 0)
+		return ret;
+	      DSO *dso = fdopen_dso (fd, files[i]);
+	      if (dso == NULL)
+		{
+		  close (fd);
+		  return ret;
+		}
+	      assert (multi_ehdr.e_ident[0] == '\0');
+	      multi_ehdr = dso->ehdr;
+	      break;
+	    }
+	}
+
+      multi_ptr_size = multifile_force_ptr_size;
+      multi_endian = multifile_force_endian;
     }
 
   unsigned int multifile_die_count = 0;
