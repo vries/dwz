@@ -355,18 +355,22 @@ print_options_help (FILE *stream, struct option_help *options_help, unsigned int
 
 /* Print usage and exit.  */
 static void
-usage (const char *progname, int failing)
+usage (int failing)
 {
-  unsigned int n;
+  unsigned int n, i;
   unsigned int indent, limit;
   FILE *stream = failing ? stderr : stdout;
+  const char *header_lines[] = {
+    "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]",
+    "dwz [common options] -o OUTFILE FILE",
+    "dwz [ -v | -? ]"
+  };
+  unsigned int nr_header_lines
+    = sizeof (header_lines) / sizeof (*header_lines);
 
-  fprintf (stream,
-	   ("Usage:\n"
-	    "  %s [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]\n"
-	    "  %s [common options] -o OUTFILE FILE\n"
-	    "  %s [ -v | -? ]\n"),
-	   progname, progname, progname);
+  fprintf (stream, "Usage:\n");
+  for (i = 0; i < nr_header_lines; ++i)
+    fprintf (stream, "  %s\n", header_lines[i]);
 
   indent = 30;
   limit = 80;
@@ -495,7 +499,7 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	{
 	default:
 	case '?':
-	  usage (argv[0], option_index == -1);
+	  usage (option_index == -1);
 	  break;
 
 	case 0:
