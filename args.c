@@ -361,7 +361,7 @@ usage (int failing)
   unsigned int indent, limit;
   FILE *stream = failing ? stderr : stdout;
   const char *header_lines[] = {
-    "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [FILES]",
+    "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-5] [FILES]",
     "dwz [common options] -o OUTFILE FILE",
     "dwz [ -v | -? ]"
   };
