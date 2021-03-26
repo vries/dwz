@@ -15055,6 +15055,7 @@ struct file_result
   size_t hardlink_to;
   unsigned int die_count;
   bool skip_multifile;
+  bool low_mem_p;
 };
 
 /* Collect potentially shareable DIEs, strings and .debug_macro
@@ -16249,12 +16250,11 @@ make_temp_file (const char *name)
    is hit.  */
 static int
 dwz_with_low_mem (const char *file, const char *outfile,
-		  struct file_result *res, bool *low_mem_p)
+		  struct file_result *res)
 {
   int ret;
 
-  if (low_mem_p)
-    *low_mem_p = false;
+  res->low_mem_p = false;
 
   ret = (low_mem_die_limit == 0
 	 ? 2
@@ -16263,8 +16263,7 @@ dwz_with_low_mem (const char *file, const char *outfile,
   if (ret == 2)
     {
       multifile_mode = MULTIFILE_MODE_LOW_MEM;
-      if (low_mem_p)
-	*low_mem_p = true;
+      res->low_mem_p = true;
 
       ret = dwz (file, outfile, res);
     }
@@ -16279,6 +16278,7 @@ init_file_result (struct file_result *res)
   res->die_count = 0;
   res->res = -3;
   res->skip_multifile = false;
+  res->low_mem_p = false;
 }
 
 /* Dwarf-compress FILE.  If OUTFILE, write to result to OUTFILE, otherwise
@@ -16293,7 +16293,7 @@ dwz_one_file (const char *file, const char *outfile)
 
   init_file_result (&res);
 
-  return dwz_with_low_mem (file, outfile, &res, NULL);
+  return dwz_with_low_mem (file, outfile, &res);
 }
 
 /* Detect which FILES are hardlinks, and mark those in RESA.  */
@@ -16408,9 +16408,9 @@ update_hardlinks (int nr_files, char *files[], struct file_result *resa)
 
 /* Encode child process exit status.  */
 static int
-encode_child_exit_status (int thisret, bool low_mem_p, struct file_result *res)
+encode_child_exit_status (int thisret, struct file_result *res)
 {
-  if (thisret == 0 && low_mem_p)
+  if (thisret == 0 && res->low_mem_p)
     thisret = 2;
   assert (thisret >= 0 && thisret <= 2);
   assert (res->res >= -3);
@@ -16420,17 +16420,17 @@ encode_child_exit_status (int thisret, bool low_mem_p, struct file_result *res)
 
 /* Decode child process exit status.  */
 static int
-decode_child_exit_status (int state, bool *low_mem_p, struct file_result *res)
+decode_child_exit_status (int state, struct file_result *res)
 {
   int ret;
   if (!WIFEXITED (state))
     error (1, 0, "Child dwz process got killed");
   ret = WEXITSTATUS (state) & 0x3;
-  *low_mem_p = false;
+  res->low_mem_p = false;
   if (ret == 2)
     {
       ret = 0;
-      *low_mem_p = true;
+      res->low_mem_p = true;
     }
   res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
 
@@ -16489,9 +16489,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    {
 	      int state;
 	      pid_t got_pid = waitpid (-1, &state, 0);
-	      bool low_mem_p;
 	      int thisret
-		= decode_child_exit_status (state, &low_mem_p, res);
+		= decode_child_exit_status (state, res);
 	      if (thisret == 1)
 		ret = 1;
 	      nr_forks--;
@@ -16509,9 +16508,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  assert (fork_res != -1);
 	  if (fork_res == 0)
 	    {
-	      bool low_mem_p;
-	      thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
-	      return encode_child_exit_status (thisret, low_mem_p, res);
+	      thisret = dwz_with_low_mem (file, NULL, res);
+	      return encode_child_exit_status (thisret, res);
 	    }
 	  else
 	    {
@@ -16532,8 +16530,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  int state;
 	  pid_t got_pid = waitpid (pids[i], &state, 0);
 	  assert (got_pid == pids[i]);
-	  bool low_mem_p;
-	  thisret = decode_child_exit_status (state, &low_mem_p, res);
+	  thisret = decode_child_exit_status (state, res);
 	  if (thisret == 1)
 	    ret = 1;
 	}
@@ -16550,11 +16547,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    continue;
 	  if (stats_p)
 	    init_stats (file);
-	  bool low_mem_p;
-	  thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
+	  thisret = dwz_with_low_mem (file, NULL, res);
 	  if (thisret == 1)
 	    ret = 1;
-	  else if (!low_mem_p && !res->skip_multifile && resa[i].res >= 0)
+	  else if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
 	    successcount++;
 	}
     }
