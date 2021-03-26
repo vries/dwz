@@ -233,9 +233,9 @@ static struct option_help dwz_multi_file_options_help[] =
   { "5", "dwarf-5", NULL, NULL,
     "Emit DWARF 5 standardized supplementary object files instead of"
     " GNU extension .debug_altlink." },
-  { "p", "multifile-pointer-size", "SIZE", NULL,
+  { "p", "multifile-pointer-size", "<SIZE|auto>", "auto",
     "Set pointer size of multifile, in number of bytes." },
-  { "e", "multifile-endian", "<l|L|b|B>", NULL,
+  { "e", "multifile-endian", "<l|b|auto>", "auto",
     "Set endianity of multifile." },
   { "j", "jobs", "<n>", "number of processors / 2",
     "Process <n> files in parallel" }
@@ -381,7 +381,7 @@ usage (int failing)
   FILE *stream = failing ? stderr : stdout;
   const char *header_lines[] = {
     "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-5]",
-    "    [-p SIZE] [-e <l|b>] [-j N] [FILES]",
+    "    [-p <SIZE|auto>] [-e <l|b|auto>] [-j N] [FILES]",
     "dwz [common options] -o OUTFILE FILE",
     "dwz [ -v | -? ]"
   };
@@ -641,6 +641,11 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	  break;
 
 	case 'p':
+	  if (strcmp (optarg, "auto") == 0)
+	    {
+	      multifile_force_ptr_size = 0;
+	      break;
+	    }
 	  l = strtoul (optarg, &end, 0);
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
 	    error (1, 0, "invalid argument -l %s", optarg);
@@ -648,6 +653,11 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	  break;
 
 	case 'e':
+	  if (strcmp (optarg, "auto") == 0)
+	    {
+	      multifile_force_endian = 0;
+	      break;
+	    }
 	  if (strlen (optarg) != 1)
 	    error (1, 0, "invalid argument -l %s", optarg);
 	  switch (optarg[0])

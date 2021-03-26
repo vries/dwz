@@ -77,11 +77,13 @@ the executable or shared library to the file named in the argument
 of the \fB-m\fR option.  Either \fB-M\fR or \fB-r\fR
 option can be specified, but not both.
 .TP
-.B \-p N \-\-multifile-pointer-size N
-Specify the pointer size of the multifile, in bytes.
+.B \-p N \-\-multifile-pointer-size <N|auto>
+Specify the pointer size of the multifile, in bytes.  If auto, use the
+pointer size of the files, provided they match.
 .TP
-.B \-p <l|L|B|b> \-\-multifile-endian <l|L|B|b>
-Specify the endianity of the multifile.
+.B \-p <l|b|auto> \-\-multifile-endian <l|b|auto>
+Specify the endianity of the multifile.  If auto, use the endianity of
+the files, provided they match.
 .TP
 .B \-q \-\-quiet
 Silence up some of the most common messages.
