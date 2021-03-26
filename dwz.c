@@ -16406,6 +16406,37 @@ update_hardlinks (int nr_files, char *files[], struct file_result *resa)
     }
 }
 
+/* Encode child process exit status.  */
+static int
+encode_child_exit_status (int thisret, bool low_mem_p, struct file_result *res)
+{
+  if (thisret == 0 && low_mem_p)
+    thisret = 2;
+  assert (thisret >= 0 && thisret <= 2);
+  assert (res->res >= -3);
+  thisret = thisret + ((res->res + 3) << 2);
+  return thisret;
+}
+
+/* Decode child process exit status.  */
+static int
+decode_child_exit_status (int state, bool *low_mem_p, struct file_result *res)
+{
+  int ret;
+  if (!WIFEXITED (state))
+    error (1, 0, "Child dwz process got killed");
+  ret = WEXITSTATUS (state) & 0x3;
+  *low_mem_p = false;
+  if (ret == 2)
+    {
+      ret = 0;
+      *low_mem_p = true;
+    }
+  res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+
+  return ret;
+}
+
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
    if so, dwarf-compress just one, and relink the others.  */
 static int
@@ -16458,17 +16489,9 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    {
 	      int state;
 	      pid_t got_pid = waitpid (-1, &state, 0);
-	      if (!WIFEXITED (state))
-		error (1, 0, "Child dwz process got killed");
-	      thisret = WEXITSTATUS (state) & 0x3;
-	      bool low_mem_p = false;
-	      if (thisret == 2)
-		{
-		  thisret = 0;
-		  low_mem_p = true;
-		}
-	      (void)low_mem_p;
-	      res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+	      bool low_mem_p;
+	      int thisret
+		= decode_child_exit_status (state, &low_mem_p, res);
 	      if (thisret == 1)
 		ret = 1;
 	      nr_forks--;
@@ -16488,13 +16511,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    {
 	      bool low_mem_p;
 	      thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
-	      /* Encode thisret, low_mem_p and res->res into return status.  */
-	      if (thisret == 0 && low_mem_p)
-		thisret = 2;
-	      assert (thisret >= 0 && thisret <= 2);
-	      assert (res->res >= -3);
-	      thisret = thisret + ((res->res + 3) << 2);
-	      return thisret;
+	      return encode_child_exit_status (thisret, low_mem_p, res);
 	    }
 	  else
 	    {
@@ -16515,17 +16532,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  int state;
 	  pid_t got_pid = waitpid (pids[i], &state, 0);
 	  assert (got_pid == pids[i]);
-	  if (!WIFEXITED (state))
-	    error (1, 0, "Child dwz process got killed");
-	  thisret = WEXITSTATUS (state) & 0x3;
-	  bool low_mem_p = false;
-	  if (thisret == 2)
-	    {
-	      thisret = 0;
-	      low_mem_p = true;
-	    }
-	  (void)low_mem_p;
-	  res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+	  bool low_mem_p;
+	  thisret = decode_child_exit_status (state, &low_mem_p, res);
 	  if (thisret == 1)
 	    ret = 1;
 	}
