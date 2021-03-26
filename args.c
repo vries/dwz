@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <error.h>
 #include <gelf.h>
+#include <sys/sysinfo.h>
 
 #include "args.h"
 
@@ -53,6 +54,7 @@ int progress_p;
 int progress_mem_p;
 int import_opt_p = 1;
 int force_p;
+int max_forks = -1;
 
 enum deduplication_mode deduplication_mode = dm_inter_cu;
 
@@ -171,6 +173,7 @@ static struct option dwz_options[] =
 			 required_argument, 0, 'p' },
   { "multifile-endian",
 			 required_argument, 0, 'e' },
+  { "jobs",		 required_argument, 0, 'j' },
   { NULL,		 no_argument,	    0, 0 }
 };
 
@@ -234,6 +237,8 @@ static struct option_help dwz_multi_file_options_help[] =
     "Set pointer size of multifile, in number of bytes." },
   { "e", "multifile-endian", "<l|L|b|B>", NULL,
     "Set endianity of multifile." },
+  { "j", "jobs", "<n>", "number of processors / 2",
+    "Process <n> files in parallel" }
 };
 
 /* Describe misc command line options.  */
@@ -376,7 +381,7 @@ usage (int failing)
   FILE *stream = failing ? stderr : stdout;
   const char *header_lines[] = {
     "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-5]",
-    "    [-p SIZE] [-e <l|b>] [FILES]",
+    "    [-p SIZE] [-e <l|b>] [-j N] [FILES]",
     "dwz [common options] -o OUTFILE FILE",
     "dwz [ -v | -? ]"
   };
@@ -506,7 +511,7 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
   while (1)
     {
       int option_index = -1;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5p:e:", dwz_options,
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5p:e:j:", dwz_options,
 			   &option_index);
       if (c == -1)
 	break;
@@ -663,6 +668,13 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	case 'v':
 	  version ();
 	  break;
+
+	case 'j':
+	  l = strtoul (optarg, &end, 0);
+	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
+	    error (1, 0, "invalid argument -j %s", optarg);
+	  max_forks = l;
+	  break;
 	}
     }
 
@@ -678,4 +690,12 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 
   if (multifile_relative && multifile_name)
     error (1, 0, "-M and -r options can't be specified together");
+
+  if (max_forks == -1)
+    {
+      long nprocs = get_nprocs ();
+      /* Be conservative on max forks: 4 procs may be actually be 4 SMT
+	 threads with only 2 cores.  */
+      max_forks = nprocs / 2;
+    }
 }

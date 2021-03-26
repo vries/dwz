@@ -54,6 +54,7 @@ extern int progress_p;
 extern int progress_mem_p;
 extern int import_opt_p;
 extern int force_p;
+extern int max_forks;
 
 enum deduplication_mode
 {
