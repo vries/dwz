@@ -143,9 +143,17 @@ cycle:
 # WARNING: Couldn't find the global config file.
 DEJAGNU ?= /dev/null
 
-check: dwz $(TEST_EXECS)
+VALGRIND_OPTIONS = -q --error-exitcode=99
+
+check check-valgrind: dwz $(TEST_EXECS)
 	mkdir -p testsuite-bin
-	cd testsuite-bin; ln -sf $(PWD)/dwz .
+	cd testsuite-bin; \
+	  if [ "$@" = "check" ]; then \
+	    ln -sf $(PWD)/dwz .; \
+	  else \
+	    echo "valgrind $(VALGRIND_OPTIONS) $(PWD)/dwz \"\$$@\"" > dwz; \
+	    chmod +x dwz; \
+	  fi
 	export DEJAGNU=$(DEJAGNU); \
 	export PATH=$(PWD)/testsuite-bin:$$PATH; export LC_ALL=C; \
 	runtest --tool=dwz -srcdir $(srcdir)/testsuite $(RUNTESTFLAGS)
