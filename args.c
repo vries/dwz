@@ -25,6 +25,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <error.h>
+#include <gelf.h>
 
 #include "args.h"
 
@@ -74,6 +75,11 @@ const char *multifile_name;
    should contain a filename relative to the directory in which
    the particular file is present.  */
 bool multifile_relative;
+
+/* Pointer size of multifile.  */
+int multifile_force_ptr_size;
+/* Endianity of multifile.  */
+int multifile_force_endian;
 
 /* True if DWARF 5 .debug_sup and DW_FORM_ref_sup4 / DW_FORM_strp_sup
    should be used instead of the GNU extensions .gnu_debugaltlink
@@ -161,6 +167,10 @@ static struct option dwz_options[] =
   { "odr",		 no_argument,	    &odr, 1 },
   { "no-odr",		 no_argument,	    &odr, 0 },
   { "odr-mode",		 required_argument, &odr_mode_parsed, 1 },
+  { "multifile-pointer-size",
+			 required_argument, 0, 'p' },
+  { "multifile-endian",
+			 required_argument, 0, 'e' },
   { NULL,		 no_argument,	    0, 0 }
 };
 
@@ -219,7 +229,11 @@ static struct option_help dwz_multi_file_options_help[] =
     " to multifile." },
   { "5", "dwarf-5", NULL, NULL,
     "Emit DWARF 5 standardized supplementary object files instead of"
-    " GNU extension .debug_altlink." }
+    " GNU extension .debug_altlink." },
+  { "p", "multifile-pointer-size", "SIZE", NULL,
+    "Set pointer size of multifile, in number of bytes." },
+  { "e", "multifile-endian", "<l|L|b|B>", NULL,
+    "Set endianity of multifile." },
 };
 
 /* Describe misc command line options.  */
@@ -361,7 +375,8 @@ usage (int failing)
   unsigned int indent, limit;
   FILE *stream = failing ? stderr : stdout;
   const char *header_lines[] = {
-    "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-5] [FILES]",
+    "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-5]",
+    "    [-p SIZE] [-e <l|b>] [FILES]",
     "dwz [common options] -o OUTFILE FILE",
     "dwz [ -v | -? ]"
   };
@@ -491,7 +506,7 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
   while (1)
     {
       int option_index = -1;
-      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5", dwz_options,
+      int c = getopt_long (argc, argv, "m:o:qhl:L:M:r?v5p:e:", dwz_options,
 			   &option_index);
       if (c == -1)
 	break;
@@ -618,6 +633,31 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 
 	case '5':
 	  dwarf_5 = true;
+	  break;
+
+	case 'p':
+	  l = strtoul (optarg, &end, 0);
+	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
+	    error (1, 0, "invalid argument -l %s", optarg);
+	  multifile_force_ptr_size = l;
+	  break;
+
+	case 'e':
+	  if (strlen (optarg) != 1)
+	    error (1, 0, "invalid argument -l %s", optarg);
+	  switch (optarg[0])
+	    {
+	    case 'l':
+	    case 'L':
+	      multifile_force_endian = ELFDATA2LSB;
+		break;
+	    case 'b':
+	    case 'B':
+	      multifile_force_endian = ELFDATA2MSB;
+		break;
+	    default:
+	      error (1, 0, "invalid argument -l %s", optarg);
+	    }
 	  break;
 
 	case 'v':

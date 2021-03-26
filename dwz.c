@@ -15039,10 +15039,27 @@ clear_p2_field (void)
 }
 #endif
 
+/* Helper structure for hardlink discovery.  */
+struct file_result
+{
+  /* -3: Uninitialized.
+     -2: Already processed under different name.
+     -1: Ignore.
+      0: Processed, changed.
+      1: Processed, unchanged.  */
+  int res;
+  dev_t dev;
+  ino_t ino;
+  nlink_t nlink;
+  size_t hardlink_to;
+  unsigned int die_count;
+  bool skip_multifile;
+};
+
 /* Collect potentially shareable DIEs, strings and .debug_macro
    opcode sequences into temporary .debug_* files.  */
 static int
-write_multifile (DSO *dso)
+write_multifile (DSO *dso, struct file_result *res)
 {
   dw_cu_ref cu;
   bool any_cus = false;
@@ -15058,18 +15075,50 @@ write_multifile (DSO *dso)
   if (multi_ehdr.e_ident[0] == '\0')
     multi_ehdr = dso->ehdr;
 
-  if ((multi_ptr_size && ptr_size != multi_ptr_size)
-      || (multi_endian
-	  && multi_endian != (do_read_32 == buf_read_ule32
-			      ? ELFDATA2LSB : ELFDATA2MSB)))
+  if (multifile_force_ptr_size && ptr_size != multifile_force_ptr_size)
+    {
+      error (0, 0, "File %s skipped for multi-file optimization, different"
+	     " pointer size", dso->filename);
+      res->skip_multifile = true;
+      return 1;
+    }
+  else if (multi_ptr_size == 0)
+    multi_ptr_size = ptr_size;
+  else if (ptr_size != multi_ptr_size)
     {
       error (0, 0, "Multi-file optimization not allowed for different"
-		   " pointer sizes or endianity");
+	     " pointer sizes");
       multifile = NULL;
       return 1;
     }
-  multi_ptr_size = ptr_size;
-  multi_endian = do_read_32 == buf_read_ule32 ? ELFDATA2LSB : ELFDATA2MSB;
+  else
+    {
+      /* Same ptr_size.  */
+    }
+
+  int endianity = (do_read_32 == buf_read_ule32
+		   ? ELFDATA2LSB
+		   : ELFDATA2MSB);
+  if (multifile_force_endian && endianity != multifile_force_endian)
+    {
+      error (0, 0, "File %s skipped for multi-file optimization, different"
+	     " endianity", dso->filename);
+      res->skip_multifile = true;
+      return 1;
+    }
+  else if (multi_endian == 0)
+    multi_endian = endianity;
+  else if (multi_endian != endianity)
+    {
+      error (0, 0, "Multi-file optimization not allowed for different"
+	     " endianity");
+      multifile = NULL;
+      return 1;
+    }
+  else
+    {
+      /* Same endianity.  */
+    }
 
 #if DEVEL
   clear_p2_field ();
@@ -15256,22 +15305,6 @@ remove_empty_pus (void)
   return 0;
 }
 
-/* Helper structure for hardlink discovery.  */
-struct file_result
-{
-  /* -3: Uninitialized.
-     -2: Already processed under different name.
-     -1: Ignore.
-      0: Processed, changed.
-      1: Processed, unchanged.  */
-  int res;
-  dev_t dev;
-  ino_t ino;
-  nlink_t nlink;
-  size_t hardlink_to;
-  unsigned int die_count;
-};
-
 /* Handle compression of a single file FILE.  If OUTFILE is
    non-NULL, the result will be stored into that file, otherwise
    the result will be written into a temporary file that is renamed
@@ -15380,7 +15413,7 @@ dwz (const char *file, const char *outfile, struct file_result *res)
 				    + debug_sections[DEBUG_TYPES].new_size));
 
 	  if (multifile && !fi_multifile && !low_mem)
-	    write_multifile (dso);
+	    write_multifile (dso, res);
 
 	  cleanup ();
 	  if (outfile != NULL)
@@ -15519,7 +15552,7 @@ dwz (const char *file, const char *outfile, struct file_result *res)
 	  debug_sections[DEBUG_GNU_PUBTYPES].new_size = 0;
 
 	  if (multifile && !fi_multifile && !low_mem)
-	    write_multifile (dso);
+	    write_multifile (dso, res);
 
 	  bool save_to_temp = save_temps && multifile && multifile_mode == 0;
 	  cleanup ();
@@ -16244,6 +16277,7 @@ init_file_result (struct file_result *res)
 {
   res->die_count = 0;
   res->res = -3;
+  res->skip_multifile = false;
 }
 
 /* Dwarf-compress FILE.  If OUTFILE, write to result to OUTFILE, otherwise
@@ -16420,7 +16454,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       thisret = dwz_with_low_mem (file, NULL, res, &low_mem_p);
       if (thisret == 1)
 	ret = 1;
-      else if (!low_mem_p && resa[i].res >= 0)
+      else if (!low_mem_p && !res->skip_multifile && resa[i].res >= 0)
 	successcount++;
     }
 
@@ -16463,7 +16497,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  multifile_mode = MULTIFILE_MODE_FI;
 	  /* Don't process again files that couldn't
 	     be processed successfully.  Also skip hard links.  */
-	  if (resa[i].res == -1 || resa[i].res == -2)
+	  if (resa[i].res == -1 || resa[i].res == -2
+	      || resa[i].skip_multifile)
 	    continue;
 	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 	    alt_clear_dups (cu->cu_die);

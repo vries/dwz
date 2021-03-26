@@ -80,6 +80,8 @@ extern enum odr_mode odr_mode;
 extern const char *multifile;
 extern const char *multifile_name;
 extern bool multifile_relative;
+extern int multifile_force_ptr_size;
+extern int multifile_force_endian;
 
 extern unsigned char multifile_mode;
 
