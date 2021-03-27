@@ -15040,7 +15040,7 @@ clear_p2_field (void)
 }
 #endif
 
-/* Helper structure for hardlink discovery.  */
+/* Helper structure for file state.  */
 struct file_result
 {
   /* -3: Uninitialized.
@@ -15049,9 +15049,6 @@ struct file_result
       0: Processed, changed.
       1: Processed, unchanged.  */
   int res;
-  dev_t dev;
-  ino_t ino;
-  nlink_t nlink;
   size_t hardlink_to;
   unsigned int die_count;
   bool skip_multifile;
@@ -16296,11 +16293,20 @@ dwz_one_file (const char *file, const char *outfile)
   return dwz_with_low_mem (file, outfile, &res);
 }
 
+/* Helper structure for hardlink discovery.  */
+struct hl_stat
+{
+  dev_t dev;
+  ino_t ino;
+  nlink_t nlink;
+};
+
 /* Detect which FILES are hardlinks, and mark those in RESA.  */
 static bool
 detect_hardlinks (int nr_files, char *files[], struct file_result *resa)
 {
   bool found = false;
+  struct hl_stat hl_stat[nr_files];
   int i;
 
   /* Try to open all files.  */
@@ -16321,9 +16327,9 @@ detect_hardlinks (int nr_files, char *files[], struct file_result *resa)
       else
 	{
 	  res->res = 1;
-	  res->dev = st.st_dev;
-	  res->ino = st.st_ino;
-	  res->nlink = st.st_nlink;
+	  hl_stat[i].dev = st.st_dev;
+	  hl_stat[i].ino = st.st_ino;
+	  hl_stat[i].nlink = st.st_nlink;
 	}
 
       close (fd);
@@ -16333,14 +16339,14 @@ detect_hardlinks (int nr_files, char *files[], struct file_result *resa)
   for (i = 0; i < nr_files; i++)
     {
       struct file_result *res = &resa[i];
-      size_t n;
-      for (n = 0; &resa[n] != res; n++)
+      int n;
+      for (n = 0; n != i; n++)
 	if (resa[n].res >= 0
-	    && resa[n].nlink > 1
-	    && resa[n].dev == res->dev
-	    && resa[n].ino == res->ino)
+	    && hl_stat[n].nlink > 1
+	    && hl_stat[n].dev == hl_stat[i].dev
+	    && hl_stat[n].ino == hl_stat[i].ino)
 	  break;
-      if (&resa[n] == res)
+      if (n == i)
 	continue;
       res->res = -2;
       res->hardlink_to = n;
