@@ -16603,32 +16603,36 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 
   dso = read_multifile (multi_fd, multifile_die_count);
   if (dso == NULL)
-    ret = 1;
-  else
     {
-      for (i = 0; i < nr_files; i++)
-	{
-	  dw_cu_ref cu;
-	  file = files[i];
-	  if (stats_p)
-	    init_stats (file);
-	  multifile_mode = MULTIFILE_MODE_FI;
-	  /* Don't process again files that couldn't
-	     be processed successfully.  Also skip hard links.  */
-	  if (resa[i].res == -1 || resa[i].res == -2
-	      || resa[i].skip_multifile)
-	    continue;
-	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
-	    alt_clear_dups (cu->cu_die);
-	  ret |= dwz (file, NULL, &resa[i]);
-	}
-      if (hardlink)
-	update_hardlinks (nr_files, files, resa);
-      elf_end (dso->elf);
-      close (multi_fd);
-      free (dso);
+      ret = 1;
+      goto cleanup;
     }
 
+  for (i = 0; i < nr_files; i++)
+    {
+      dw_cu_ref cu;
+      file = files[i];
+      if (stats_p)
+	init_stats (file);
+      multifile_mode = MULTIFILE_MODE_FI;
+      /* Don't process again files that couldn't
+	 be processed successfully.  Also skip hard links.  */
+      if (resa[i].res == -1 || resa[i].res == -2
+	  || resa[i].skip_multifile)
+	continue;
+      for (cu = alt_first_cu; cu; cu = cu->cu_next)
+	alt_clear_dups (cu->cu_die);
+      ret |= dwz (file, NULL, &resa[i]);
+    }
+
+  if (hardlink)
+    update_hardlinks (nr_files, files, resa);
+
+  elf_end (dso->elf);
+  close (multi_fd);
+  free (dso);
+
+ cleanup:
   cleanup ();
 
   strp_htab = alt_strp_htab;
