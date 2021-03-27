@@ -16491,7 +16491,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	     struct file_result *resa)
 {
   int ret = 0;
-  int i;
+  int i, j;
   const char *file;
   int successcount = 0;
 
@@ -16519,20 +16519,30 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
   if (hardlink)
     hardlink = detect_hardlinks (nr_files, files, resa);
 
+  int workset[nr_files];
+  int workset_size = 0;
+  for (i = 0; i < nr_files; i++)
+    {
+      struct file_result *res = &resa[i];
+      if (res->res == -2)
+	/* Skip hard links.  */
+	continue;
+      workset[workset_size] = i;
+      workset_size++;
+    }
+
   if (max_forks > 1 && multifile == NULL)
     {
       pid_t pids[nr_files];
       int nr_forks = 0;
       for (i = 0; i < nr_files; i++)
 	pids[i] = 0;
-      for (i = 0; i < nr_files; i++)
+      for (j = 0; j < workset_size; j++)
 	{
+	  int i = workset[j];
 	  int thisret;
 	  file = files[i];
 	  struct file_result *res = &resa[i];
-	  if (res->res == -2)
-	    /* Skip hard links.  */
-	    continue;
 
 	  if (nr_forks == max_forks)
 	    {
@@ -16564,14 +16574,12 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
     }
   else
     {
-      for (i = 0; i < nr_files; i++)
+      for (j = 0; j < workset_size; j++)
 	{
+	  int i = workset[j];
 	  int thisret;
 	  file = files[i];
 	  struct file_result *res = &resa[i];
-	  if (res->res == -2)
-	    /* Skip hard links.  */
-	    continue;
 	  if (stats_p)
 	    init_stats (file);
 	  thisret = dwz_with_low_mem (file, NULL, res);
@@ -16614,22 +16622,31 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       goto cleanup;
     }
 
+  workset_size = 0;
+  for (i = 0; i < nr_files; i++)
+    {
+      struct file_result *res = &resa[i];
+      /* Don't process again files that couldn't
+	 be processed successfully.  Also skip hard links.  */
+      if (res->res == -1 || res->res == -2
+	  || res->skip_multifile)
+	continue;
+      workset[workset_size] = i;
+      workset_size++;
+    }
+
   if (max_forks > 1)
     {
       pid_t pids[nr_files];
       int nr_forks = 0;
       for (i = 0; i < nr_files; i++)
 	pids[i] = 0;
-      for (i = 0; i < nr_files; i++)
+      for (j = 0; j < workset_size; j++)
 	{
+	  int i = workset[j];
 	  file = files[i];
 	  struct file_result *res = &resa[i];
 	  multifile_mode = MULTIFILE_MODE_FI;
-	  /* Don't process again files that couldn't
-	     be processed successfully.  Also skip hard links.  */
-	  if (resa[i].res == -1 || resa[i].res == -2
-	      || resa[i].skip_multifile)
-	    continue;
 
 	  if (nr_forks == max_forks)
 	    {
@@ -16661,18 +16678,14 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
     }
   else
     {
-      for (i = 0; i < nr_files; i++)
+      for (j = 0; j < workset_size; j++)
 	{
+	  int i = workset[j];
 	  dw_cu_ref cu;
 	  file = files[i];
 	  if (stats_p)
 	    init_stats (file);
 	  multifile_mode = MULTIFILE_MODE_FI;
-	  /* Don't process again files that couldn't
-	     be processed successfully.  Also skip hard links.  */
-	  if (resa[i].res == -1 || resa[i].res == -2
-	      || resa[i].skip_multifile)
-	    continue;
 	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 	    alt_clear_dups (cu->cu_die);
 	  ret |= dwz (file, NULL, &resa[i]);
