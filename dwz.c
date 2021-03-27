@@ -16608,21 +16608,69 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       goto cleanup;
     }
 
-  for (i = 0; i < nr_files; i++)
+  if (max_forks > 1)
     {
-      dw_cu_ref cu;
-      file = files[i];
-      if (stats_p)
-	init_stats (file);
-      multifile_mode = MULTIFILE_MODE_FI;
-      /* Don't process again files that couldn't
-	 be processed successfully.  Also skip hard links.  */
-      if (resa[i].res == -1 || resa[i].res == -2
-	  || resa[i].skip_multifile)
-	continue;
-      for (cu = alt_first_cu; cu; cu = cu->cu_next)
-	alt_clear_dups (cu->cu_die);
-      ret |= dwz (file, NULL, &resa[i]);
+      pid_t pids[nr_files];
+      int nr_forks = 0;
+      for (i = 0; i < nr_files; i++)
+	pids[i] = 0;
+      for (i = 0; i < nr_files; i++)
+	{
+	  file = files[i];
+	  struct file_result *res = &resa[i];
+	  multifile_mode = MULTIFILE_MODE_FI;
+	  /* Don't process again files that couldn't
+	     be processed successfully.  Also skip hard links.  */
+	  if (resa[i].res == -1 || resa[i].res == -2
+	      || resa[i].skip_multifile)
+	    continue;
+
+	  if (nr_forks == max_forks)
+	    {
+	      int thisret = wait_child_exit (-1, pids, i, res);
+	      if (thisret == 1)
+		ret = 1;
+	      nr_forks--;
+	    }
+
+	  pid_t fork_res = fork ();
+	  assert (fork_res != -1);
+	  if (fork_res == 0)
+	    {
+	      int thisret = dwz (file, NULL, res);
+	      return encode_child_exit_status (thisret, res);
+	    }
+	  else
+	    {
+	      pids[i] = fork_res;
+	      nr_forks++;
+	    }
+	}
+      if (nr_forks > 0)
+	{
+	  int thisret = wait_children_exit (pids, nr_files, resa);
+	  if (thisret == 1)
+	    ret = 1;
+	}
+    }
+  else
+    {
+      for (i = 0; i < nr_files; i++)
+	{
+	  dw_cu_ref cu;
+	  file = files[i];
+	  if (stats_p)
+	    init_stats (file);
+	  multifile_mode = MULTIFILE_MODE_FI;
+	  /* Don't process again files that couldn't
+	     be processed successfully.  Also skip hard links.  */
+	  if (resa[i].res == -1 || resa[i].res == -2
+	      || resa[i].skip_multifile)
+	    continue;
+	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
+	    alt_clear_dups (cu->cu_die);
+	  ret |= dwz (file, NULL, &resa[i]);
+	}
     }
 
   if (hardlink)
