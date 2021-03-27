@@ -16497,6 +16497,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
     {
       pid_t pids[nr_files];
       for (i = 0; i < nr_files; i++)
+	pids[i] = 0;
+      for (i = 0; i < nr_files; i++)
 	{
 	  int thisret;
 	  file = files[i];
@@ -16529,11 +16531,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       for (i = 0; i < nr_files; i++)
 	{
 	  int thisret;
-	  file = files[i];
 	  struct file_result *res = &resa[i];
-	  if (res->res == -2)
-	    /* Skip hard links.  */
-	    continue;
 	  if (pids[i] == 0)
 	    continue;
 	  thisret = wait_child_exit (pids[i], &pids[i], 1, res);
