@@ -16457,6 +16457,27 @@ wait_child_exit (pid_t pid, pid_t *pids, int nr_pids,
   return decode_child_exit_status (state, res);
 }
 
+/* Wait on exit of chilren in PIDS, update RESA.  */
+static int
+wait_children_exit (pid_t *pids, int nr_files, struct file_result *resa)
+{
+  int ret = 0;
+
+  int i;
+  for (i = 0; i < nr_files; i++)
+    {
+      int thisret;
+      struct file_result *res = &resa[i];
+      if (pids[i] == 0)
+	continue;
+      thisret = wait_child_exit (pids[i], &pids[i], 1, res);
+      if (thisret == 1)
+	ret = 1;
+    }
+
+  return ret;
+}
+
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
    if so, dwarf-compress just one, and relink the others.  */
 static int
@@ -16492,10 +16513,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
   if (hardlink)
     hardlink = detect_hardlinks (nr_files, files, resa);
 
-  int nr_forks = 0;
   if (max_forks > 1 && multifile == NULL)
     {
       pid_t pids[nr_files];
+      int nr_forks = 0;
       for (i = 0; i < nr_files; i++)
 	pids[i] = 0;
       for (i = 0; i < nr_files; i++)
@@ -16528,13 +16549,9 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	      nr_forks++;
 	    }
 	}
-      for (i = 0; i < nr_files; i++)
+      if (nr_forks > 0)
 	{
-	  int thisret;
-	  struct file_result *res = &resa[i];
-	  if (pids[i] == 0)
-	    continue;
-	  thisret = wait_child_exit (pids[i], &pids[i], 1, res);
+	  int thisret = wait_children_exit (pids, nr_files, resa);
 	  if (thisret == 1)
 	    ret = 1;
 	}
