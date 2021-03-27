@@ -16437,6 +16437,26 @@ decode_child_exit_status (int state, struct file_result *res)
   return ret;
 }
 
+/* Wait on child exit with PID, update PIDS and RES.  */
+static int
+wait_child_exit (pid_t pid, pid_t *pids, int nr_pids,
+		 struct file_result *res)
+{
+  int state;
+  pid_t got_pid = waitpid (pid, &state, 0);
+
+  int i;
+  for (i = 0; i < nr_pids; ++i)
+    if (pids[i] == got_pid)
+      {
+	pids[i] = 0;
+	break;
+      }
+  assert (i < nr_pids);
+
+  return decode_child_exit_status (state, res);
+}
+
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
    if so, dwarf-compress just one, and relink the others.  */
 static int
@@ -16487,21 +16507,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 
 	  if (nr_forks == max_forks)
 	    {
-	      int state;
-	      pid_t got_pid = waitpid (-1, &state, 0);
-	      int thisret
-		= decode_child_exit_status (state, res);
+	      int thisret = wait_child_exit (-1, pids, i, res);
 	      if (thisret == 1)
 		ret = 1;
 	      nr_forks--;
-	      int j;
-	      for (j = 0; j < i; ++j)
-		if (pids[j] == got_pid)
-		  {
-		    pids[j] = 0;
-		    break;
-		  }
-	      assert (j < i);
 	    }
 
 	  pid_t fork_res = fork ();
@@ -16527,10 +16536,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    continue;
 	  if (pids[i] == 0)
 	    continue;
-	  int state;
-	  pid_t got_pid = waitpid (pids[i], &state, 0);
-	  assert (got_pid == pids[i]);
-	  thisret = decode_child_exit_status (state, res);
+	  thisret = wait_child_exit (pids[i], &pids[i], 1, res);
 	  if (thisret == 1)
 	    ret = 1;
 	}
