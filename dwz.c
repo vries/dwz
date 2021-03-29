@@ -15049,6 +15049,7 @@ struct file_result
       0: Processed, changed.
       1: Processed, unchanged.  */
   int res;
+  int ret;
   size_t hardlink_to;
   unsigned int die_count;
   bool skip_multifile;
@@ -16444,7 +16445,7 @@ decode_child_exit_status (int state, struct file_result *res)
 }
 
 /* Wait on child exit with PID, update PIDS and RES.  */
-static int
+static void
 wait_child_exit (pid_t pid, pid_t *pids, int nr_pids,
 		 struct file_result *resa)
 {
@@ -16460,28 +16461,21 @@ wait_child_exit (pid_t pid, pid_t *pids, int nr_pids,
       }
   assert (i < nr_pids);
 
-  return decode_child_exit_status (state, &resa[i]);
+  resa[i].ret = decode_child_exit_status (state, &resa[i]);
 }
 
 /* Wait on exit of chilren in PIDS, update RESA.  */
-static int
+static void
 wait_children_exit (pid_t *pids, int nr_files, struct file_result *resa)
 {
-  int ret = 0;
-
   int i;
   for (i = 0; i < nr_files; i++)
     {
-      int thisret;
       struct file_result *res = &resa[i];
       if (pids[i] == 0)
 	continue;
-      thisret = wait_child_exit (pids[i], &pids[i], 1, res);
-      if (thisret == 1)
-	ret = 1;
+      wait_child_exit (pids[i], &pids[i], 1, res);
     }
-
-  return ret;
 }
 
 /* Dwarf-compress FILES.  If HARDLINK, detect if some files are hardlinks and
@@ -16540,13 +16534,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       for (j = 0; j < workset_size; j++)
 	{
 	  int i = workset[j];
-	  int thisret;
 
 	  if (nr_forks == max_forks)
 	    {
-	      int thisret = wait_child_exit (-1, pids, i, resa);
-	      if (thisret == 1)
-		ret = 1;
+	      wait_child_exit (-1, pids, i, resa);
 	      nr_forks--;
 	    }
 
@@ -16556,7 +16547,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    {
 	      file = files[i];
 	      struct file_result *res = &resa[i];
-	      thisret = dwz_with_low_mem (file, NULL, res);
+	      int thisret = dwz_with_low_mem (file, NULL, res);
 	      return encode_child_exit_status (thisret, res);
 	    }
 	  else
@@ -16566,28 +16557,30 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    }
 	}
       if (nr_forks > 0)
-	{
-	  int thisret = wait_children_exit (pids, nr_files, resa);
-	  if (thisret == 1)
-	    ret = 1;
-	}
+	wait_children_exit (pids, nr_files, resa);
     }
   else
     {
       for (j = 0; j < workset_size; j++)
 	{
 	  int i = workset[j];
-	  int thisret;
 	  file = files[i];
 	  struct file_result *res = &resa[i];
 	  if (stats_p)
 	    init_stats (file);
-	  thisret = dwz_with_low_mem (file, NULL, res);
-	  if (thisret == 1)
-	    ret = 1;
-	  else if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
-	    successcount++;
+	  res->ret = dwz_with_low_mem (file, NULL, res);
 	}
+    }
+
+  for (j = 0; j < workset_size; j++)
+    {
+      int i = workset[j];
+      struct file_result *res = &resa[i];
+      int thisret = res->ret;
+      if (thisret == 1)
+	ret = 1;
+      else if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
+	successcount++;
     }
 
   if (hardlink)
@@ -16647,9 +16640,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 
 	  if (nr_forks == max_forks)
 	    {
-	      int thisret = wait_child_exit (-1, pids, i, resa);
-	      if (thisret == 1)
-		ret = 1;
+	      wait_child_exit (-1, pids, i, resa);
 	      nr_forks--;
 	    }
 
@@ -16670,17 +16661,14 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	    }
 	}
       if (nr_forks > 0)
-	{
-	  int thisret = wait_children_exit (pids, nr_files, resa);
-	  if (thisret == 1)
-	    ret = 1;
-	}
+	wait_children_exit (pids, nr_files, resa);
     }
   else
     {
       for (j = 0; j < workset_size; j++)
 	{
 	  int i = workset[j];
+	  struct file_result *res = &resa[i];
 	  dw_cu_ref cu;
 	  file = files[i];
 	  if (stats_p)
@@ -16688,8 +16676,16 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  multifile_mode = MULTIFILE_MODE_FI;
 	  for (cu = alt_first_cu; cu; cu = cu->cu_next)
 	    alt_clear_dups (cu->cu_die);
-	  ret |= dwz (file, NULL, &resa[i]);
+	  res->ret = dwz (file, NULL, res);
 	}
+    }
+
+  for (j = 0; j < workset_size; j++)
+    {
+      int i = workset[j];
+      struct file_result *res = &resa[i];
+      int thisret = res->ret;
+      ret |= thisret;
     }
 
   if (hardlink)
