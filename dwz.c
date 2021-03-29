@@ -16446,7 +16446,7 @@ decode_child_exit_status (int state, struct file_result *res)
 /* Wait on child exit with PID, update PIDS and RES.  */
 static int
 wait_child_exit (pid_t pid, pid_t *pids, int nr_pids,
-		 struct file_result *res)
+		 struct file_result *resa)
 {
   int state;
   pid_t got_pid = waitpid (pid, &state, 0);
@@ -16460,7 +16460,7 @@ wait_child_exit (pid_t pid, pid_t *pids, int nr_pids,
       }
   assert (i < nr_pids);
 
-  return decode_child_exit_status (state, res);
+  return decode_child_exit_status (state, &resa[i]);
 }
 
 /* Wait on exit of chilren in PIDS, update RESA.  */
@@ -16541,12 +16541,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	{
 	  int i = workset[j];
 	  int thisret;
-	  file = files[i];
-	  struct file_result *res = &resa[i];
 
 	  if (nr_forks == max_forks)
 	    {
-	      int thisret = wait_child_exit (-1, pids, i, res);
+	      int thisret = wait_child_exit (-1, pids, i, resa);
 	      if (thisret == 1)
 		ret = 1;
 	      nr_forks--;
@@ -16556,6 +16554,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  assert (fork_res != -1);
 	  if (fork_res == 0)
 	    {
+	      file = files[i];
+	      struct file_result *res = &resa[i];
 	      thisret = dwz_with_low_mem (file, NULL, res);
 	      return encode_child_exit_status (thisret, res);
 	    }
@@ -16644,13 +16644,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       for (j = 0; j < workset_size; j++)
 	{
 	  int i = workset[j];
-	  file = files[i];
-	  struct file_result *res = &resa[i];
-	  multifile_mode = MULTIFILE_MODE_FI;
 
 	  if (nr_forks == max_forks)
 	    {
-	      int thisret = wait_child_exit (-1, pids, i, res);
+	      int thisret = wait_child_exit (-1, pids, i, resa);
 	      if (thisret == 1)
 		ret = 1;
 	      nr_forks--;
@@ -16660,6 +16657,9 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  assert (fork_res != -1);
 	  if (fork_res == 0)
 	    {
+	      file = files[i];
+	      struct file_result *res = &resa[i];
+	      multifile_mode = MULTIFILE_MODE_FI;
 	      int thisret = dwz (file, NULL, res);
 	      return encode_child_exit_status (thisret, res);
 	    }
