@@ -16502,6 +16502,11 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 
   if (multifile)
     {
+      if (multifile_force_ptr_size)
+	multi_ptr_size = multifile_force_ptr_size;
+      if (multifile_force_endian)
+	multi_endian = multifile_force_endian;
+
       multi_info_fd = make_temp_file ("dwz.debug_info");
       multi_abbrev_fd = make_temp_file ("dwz.debug_abbrev");
       multi_line_fd = make_temp_file ("dwz.debug_line");
