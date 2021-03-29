@@ -16417,12 +16417,13 @@ update_hardlinks (int nr_files, char *files[], struct file_result *resa)
 static int
 encode_child_exit_status (int thisret, struct file_result *res)
 {
+  assert (thisret == 0 ||  thisret == 1);
   if (thisret == 0 && res->low_mem_p)
     thisret = 2;
-  assert (thisret >= 0 && thisret <= 2);
-  assert (res->res >= -3);
-  thisret = thisret + ((res->res + 3) << 2);
-  return thisret;
+  assert (res->res >= -3 && res->res <= 1);
+  return (thisret
+	  + ((res->res + 3) << 2)
+	  + ((res->skip_multifile ? 1 : 0) << 5));
 }
 
 /* Decode child process exit status.  */
@@ -16432,14 +16433,21 @@ decode_child_exit_status (int state, struct file_result *res)
   int ret;
   if (!WIFEXITED (state))
     error (1, 0, "Child dwz process got killed");
-  ret = WEXITSTATUS (state) & 0x3;
+  int status = WEXITSTATUS (state);
+  ret = status & 0x3;
+  status >>= 2;
+
   res->low_mem_p = false;
   if (ret == 2)
     {
       ret = 0;
       res->low_mem_p = true;
     }
-  res->res = (int)((WEXITSTATUS (state) & ~0x3) >> 2) - 3;
+
+  res->res = (int)(status & 0x7) - 3;
+  status >>= 3;
+
+  res->skip_multifile = (status & 0x1) ? true : false;
 
   return ret;
 }
