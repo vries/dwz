@@ -15059,7 +15059,7 @@ struct file_result
 /* Collect potentially shareable DIEs, strings and .debug_macro
    opcode sequences into temporary .debug_* files.  */
 static int
-write_multifile (DSO *dso, struct file_result *res)
+write_multifile_1 (DSO *dso, struct file_result *res)
 {
   dw_cu_ref cu;
   bool any_cus = false;
@@ -15227,6 +15227,71 @@ write_multifile (DSO *dso, struct file_result *res)
       debug_sections[i].new_size = saved_new_size[i];
       saved_new_data[i] = NULL;
     }
+  return ret;
+}
+
+static bool write_multifile_parallel_p;
+static int child_id;
+static int last_child_id;
+static int *pipes;
+
+/* Get token from child N - 1 using pipe N - 1.  */
+static void
+get_token (void)
+{
+  if (child_id == 0)
+    return;
+
+  int n = child_id - 1;
+  int *base = &pipes[n * 2];
+  int readfd = base[0];
+  int writefd = base[1];
+  close (writefd);
+  char buf;
+  read (readfd, &buf, 1);
+  close (readfd);
+}
+
+/* Pass token to child N + 1 using pipe N.  */
+static void
+pass_token ()
+{
+  if (child_id == last_child_id)
+    return;
+
+  int n = child_id;
+  int *base = &pipes[n * 2];
+  int readfd = base[0];
+  int writefd = base[1];
+  close (readfd);
+  char buf = '\0';
+  write (writefd, &buf, 1);
+  close (writefd);
+}
+
+/* Wrapper around write_multifile_1 that ensures write_multifile_1 is called
+   in file order.  */
+static int
+write_multifile (DSO *dso, struct file_result *res)
+{
+  int ret;
+
+  if (write_multifile_parallel_p)
+    {
+      get_token ();
+
+      multi_info_off = lseek (multi_info_fd, 0L, SEEK_END);
+      multi_abbrev_off = lseek (multi_abbrev_fd, 0L, SEEK_END);
+      multi_line_off = lseek (multi_line_fd, 0L, SEEK_END);
+      multi_str_off = lseek (multi_str_fd, 0L, SEEK_END);
+      multi_macro_off = lseek (multi_macro_fd, 0L, SEEK_END);
+    }
+
+  ret = write_multifile_1 (dso, res);
+
+  if (write_multifile_parallel_p)
+    pass_token ();
+
   return ret;
 }
 
@@ -16537,7 +16602,29 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       workset[workset_size] = i;
       workset_size++;
     }
-  bool initial_parallel_p = max_forks > 1 && multifile;
+  last_child_id = workset_size - 1;
+
+  bool initial_parallel_p = max_forks > 1;
+  if (initial_parallel_p && multifile)
+    {
+     if (multifile_force_ptr_size != 0 && multifile_force_endian != 0)
+       {
+	 write_multifile_parallel_p = true;
+	 pipes = malloc (workset_size * 2 * sizeof (int));
+	 if (pipes == NULL)
+	   error (1, ENOMEM, "failed to allocate pipes array");
+	 for (i = 0; i < workset_size; i++)
+	   {
+	     int fds[2];
+	     if (pipe (fds) != 0)
+	       error (1, ENOMEM, "failed to initialize pipe");
+	     pipes[i * 2] = fds[0];
+	     pipes[i * 2 + 1] = fds[1];
+	   }
+       }
+     else
+       initial_parallel_p = false;
+    }
   if (initial_parallel_p)
     {
       pid_t pids[nr_files];
@@ -16558,6 +16645,7 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	  assert (fork_res != -1);
 	  if (fork_res == 0)
 	    {
+	      child_id = j;
 	      file = files[i];
 	      struct file_result *res = &resa[i];
 	      int thisret = dwz_with_low_mem (file, NULL, res);
@@ -16608,11 +16696,44 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       return ret;
     }
 
+  if (write_multifile_parallel_p)
+    {
+      multi_info_off = lseek (multi_info_fd, 0L, SEEK_END);
+      multi_abbrev_off = lseek (multi_abbrev_fd, 0L, SEEK_END);
+      multi_line_off = lseek (multi_line_fd, 0L, SEEK_END);
+      multi_str_off = lseek (multi_str_fd, 0L, SEEK_END);
+      multi_macro_off = lseek (multi_macro_fd, 0L, SEEK_END);
+    }
   if (multi_info_off == 0 && multi_str_off == 0 && multi_macro_off == 0)
     {
       if (!quiet)
 	error (0, 0, "No suitable DWARF found for multifile optimization");
       return ret;
+    }
+
+  if (write_multifile_parallel_p)
+    {
+      /* We reproduce here what happens when we run sequentially.  This is a
+	 kludge that probably needs to be replaced by IPC.  */
+      for (i = 0; i < nr_files; i++)
+	{
+	  struct file_result *res = &resa[i];
+	  if (!res->low_mem_p && !res->skip_multifile && res->res >= 0)
+	    {
+	      int fd = open (files[i], O_RDONLY);
+	      if (fd < 0)
+		return ret;
+	      DSO *dso = fdopen_dso (fd, files[i]);
+	      if (dso == NULL)
+		{
+		  close (fd);
+		  return ret;
+		}
+	      assert (multi_ehdr.e_ident[0] == '\0');
+	      multi_ehdr = dso->ehdr;
+	      break;
+	    }
+	}
     }
 
   unsigned int multifile_die_count = 0;
