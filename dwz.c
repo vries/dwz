@@ -16537,8 +16537,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       workset[workset_size] = i;
       workset_size++;
     }
-
-  if (max_forks > 1 && multifile == NULL)
+  bool initial_parallel_p = max_forks > 1 && multifile == NULL;
+  if (initial_parallel_p)
     {
       pid_t pids[nr_files];
       int nr_forks = 0;
@@ -16641,7 +16641,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
       workset_size++;
     }
 
-  if (max_forks > 1)
+  bool finalize_multifile_parallel_p = max_forks > 1;
+  if (finalize_multifile_parallel_p)
     {
       pid_t pids[nr_files];
       int nr_forks = 0;
