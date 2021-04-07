@@ -14,6 +14,11 @@ section_size ()
 	    | sed 's/.*\.debug_//' \
 	    | awk '{print $5}')
 
+    if [ "$s" = "" ]; then
+       echo 0
+       return
+    fi
+
     # Convert hex to decimal.
     s=$(printf "%d" $((16#$s)))
 
