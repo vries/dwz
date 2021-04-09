@@ -18,6 +18,7 @@
    the Free Software Foundation, 51 Franklin Street - Fifth Floor,
    Boston, MA 02110-1301, USA.  */
 
+#include <assert.h>
 #include <getopt.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -29,6 +30,8 @@
 #include <sys/sysinfo.h>
 
 #include "args.h"
+
+#define IMPLIES(A, B) (!((A) && !(B)))
 
 #if DEVEL
 int tracing;
@@ -238,7 +241,7 @@ static struct option_help dwz_multi_file_options_help[] =
   { "e", "multifile-endian", "<l|b|auto>", "auto",
     "Set endianity of multifile." },
   { "j", "jobs", "<n>", "number of processors / 2",
-    "Process <n> files in parallel" }
+    "Process <n> files in parallel." }
 };
 
 /* Describe misc command line options.  */
@@ -350,6 +353,7 @@ print_options_help (FILE *stream, struct option_help *options_help, unsigned int
       s = options_help[i].msg;
       if (s)
 	{
+	  assert (IMPLIES (strlen (s) > 0, s[strlen (s) - 1] == '.'));
 	  if (len > indent)
 	    {
 	      fprintf (stream, "\n");
