@@ -3,18 +3,23 @@ VPATH = $(srcdir)
 else
 srcdir=$(shell pwd)
 endif
+
 CFLAGS = -O2 -g
 DWZ_VERSION := $(shell cat $(srcdir)/VERSION)
-override CFLAGS += -Wall -W -D_FILE_OFFSET_BITS=64 \
-	-DDWZ_VERSION='"$(DWZ_VERSION)"' $(shell cat $(srcdir)/COPYRIGHT_YEARS)
+CFLAGS_VERSION = -DDWZ_VERSION='"$(DWZ_VERSION)"'
+CFLAGS_COPYRIGHT = $(shell cat $(srcdir)/COPYRIGHT_YEARS)
+CFLAGS_COMMON = -Wall -W -D_FILE_OFFSET_BITS=64
+override CFLAGS += $(CFLAGS_COMMON) $(CFLAGS_VERSION) $(CFLAGS_COPYRIGHT)
+
 prefix = /usr
 exec_prefix = $(prefix)
 bindir = $(exec_prefix)/bin
 datarootdir = $(prefix)/share
 mandir = $(datarootdir)/man
 OBJECTS = args.o dwz.o hashtab.o sha1.o dwarfnames.o
+LIBS=-lelf
 dwz: $(OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lelf
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
 	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
@@ -56,9 +61,8 @@ DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
 	sed 's/__GNUC__/NOT_DEFINED/' $< > $@
 
 dwz-for-test: $(DWZ_TEST_SOURCES)
-	$(CC) $(DWZ_TEST_SOURCES) -O2 -g -lelf -o $@ -Wall -W -DDEVEL \
-	  -D_FILE_OFFSET_BITS=64 -DDWZ_VERSION='"for-test"' -I$(srcdir) \
-	  $(shell cat $(srcdir)/COPYRIGHT_YEARS)
+	$(CC) $(DWZ_TEST_SOURCES) -O2 -g $(LIBS) -o $@ $(CFLAGS_COMMON) \
+	  -DDEVEL -DDWZ_VERSION='"for-test"' -I$(srcdir) $(CFLAGS_COPYRIGHT)
 
 min:
 	$(CC) $(TEST_SRC)/min.c $(TEST_SRC)/min-2.c -o $@ -g
