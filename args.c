@@ -31,7 +31,7 @@
 
 #include "args.h"
 
-#define IMPLIES(A, B) (!((A) && !(B)))
+#include "util.h"
 
 #if DEVEL
 int tracing;

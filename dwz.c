@@ -43,14 +43,7 @@
 #include "hashtab.h"
 #include "sha1.h"
 #include "args.h"
-
-#ifndef USE_GNUC
-#ifdef __GNUC__
-#define USE_GNUC 1
-#else
-#define USE_GNUC 0
-#endif
-#endif
+#include "util.h"
 
 #ifndef SHF_COMPRESSED
  /* Glibc elf.h contains SHF_COMPRESSED starting v2.22.  Libelf libelf.h has
@@ -117,29 +110,6 @@
 #ifndef NT_GNU_BUILD_ID
 # define NT_GNU_BUILD_ID 3
 #endif
-
-#if USE_GNUC && __GNUC__ >= 3
-# define likely(x) __builtin_expect (!!(x), 1)
-# define unlikely(x) __builtin_expect (!!(x), 0)
-#else
-# define likely(x) (x)
-# define unlikely(x) (x)
-#endif
-
-#if USE_GNUC
-# define FORCE_INLINE __attribute__((always_inline))
-# define UNUSED __attribute__((unused))
-# define USED __attribute__((used))
-#else
-# define FORCE_INLINE
-# define UNUSED
-# define USED
-#endif
-
-/* Utility macro.  */
-#define IMPLIES(A, B) (!((A) && !(B)))
-#define MAX(A, B) ((A) > (B) ? (A) : (B))
-#define MIN(A, B) ((A) < (B) ? (A) : (B))
 
 /* Print memory amount M (in kb) in both exact and human readable, like so:
    1382508 (1.3G).  */
@@ -1129,11 +1099,6 @@ die_cu (dw_die_ref die)
 #define die_safe_nextdup(die) \
   ((die)->die_toplevel ? (die)->die_nextdup : (dw_die_ref) NULL)
 
-#if USE_GNUC
-# define ALIGN_STRUCT(name)
-#else
-# define ALIGN_STRUCT(name) struct align_##name { char c; struct name s; };
-#endif
 ALIGN_STRUCT (abbrev_tag)
 ALIGN_STRUCT (dw_file)
 ALIGN_STRUCT (dw_cu)
@@ -1194,13 +1159,8 @@ pool_destroy (void)
     }
 }
 
-#if USE_GNUC
-# define pool_alloc(name, size) \
-  (struct name *) pool_alloc_1 (__alignof__ (struct name), size)
-#else
-# define pool_alloc(name, size) \
-  (struct name *) pool_alloc_1 (offsetof (struct align_##name, s), size)
-#endif
+#define pool_alloc(name, size) \
+  (struct name *) pool_alloc_1 (ALIGNOF_STRUCT (name), size)
 
 static struct abbrev_tag *
 pool_clone_abbrev (struct abbrev_tag *t)
