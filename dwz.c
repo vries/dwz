@@ -44,6 +44,14 @@
 #include "sha1.h"
 #include "args.h"
 
+#ifndef USE_GNUC
+#ifdef __GNUC__
+#define USE_GNUC 1
+#else
+#define USE_GNUC 0
+#endif
+#endif
+
 #ifndef SHF_COMPRESSED
  /* Glibc elf.h contains SHF_COMPRESSED starting v2.22.  Libelf libelf.h has
     a fallback definition starting v0.166.  Define a fallback definition here
@@ -110,7 +118,7 @@
 # define NT_GNU_BUILD_ID 3
 #endif
 
-#if defined __GNUC__ && __GNUC__ >= 3
+#if USE_GNUC && __GNUC__ >= 3
 # define likely(x) __builtin_expect (!!(x), 1)
 # define unlikely(x) __builtin_expect (!!(x), 0)
 #else
@@ -118,7 +126,7 @@
 # define unlikely(x) (x)
 #endif
 
-#if defined __GNUC__
+#if USE_GNUC
 # define FORCE_INLINE __attribute__((always_inline))
 # define UNUSED __attribute__((unused))
 # define USED __attribute__((used))
@@ -1121,7 +1129,7 @@ die_cu (dw_die_ref die)
 #define die_safe_nextdup(die) \
   ((die)->die_toplevel ? (die)->die_nextdup : (dw_die_ref) NULL)
 
-#ifdef __GNUC__
+#if USE_GNUC
 # define ALIGN_STRUCT(name)
 #else
 # define ALIGN_STRUCT(name) struct align_##name { char c; struct name s; };
@@ -1186,7 +1194,7 @@ pool_destroy (void)
     }
 }
 
-#ifdef __GNUC__
+#if USE_GNUC
 # define pool_alloc(name, size) \
   (struct name *) pool_alloc_1 (__alignof__ (struct name), size)
 #else

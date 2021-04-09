@@ -24,7 +24,7 @@ install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
 	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
 clean:
-	rm -f $(OBJECTS) *~ core* dwz $(TEST_EXECS) $(DWZ_TEST_SOURCES) \
+	rm -f $(OBJECTS) *~ core* dwz $(TEST_EXECS) $(DWZ_TEST_OBJECTS) \
 	  dwz.log dwz.sum
 	rm -Rf testsuite-bin tmp.*
 
@@ -55,14 +55,17 @@ dw2-skip-prologue:
 py-section-script:
 	$(CC) $(TEST_SRC)/py-section-script.s -o $@ -g || touch $@
 
-DWZ_TEST_SOURCES := $(patsubst %.o,%-for-test.c,$(OBJECTS))
-
-%-for-test.c: %.c
-	sed 's/__GNUC__/NOT_DEFINED/' $< > $@
-
-dwz-for-test: $(DWZ_TEST_SOURCES)
-	$(CC) $(DWZ_TEST_SOURCES) -O2 -g $(LIBS) -o $@ $(CFLAGS_COMMON) \
-	  -DDEVEL -DDWZ_VERSION='"for-test"' -I$(srcdir) $(CFLAGS_COPYRIGHT)
+DWZ_TEST_OBJECTS := $(patsubst %.o,%-for-test.o,$(OBJECTS))
+dwz-for-test: $(DWZ_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+	rm -f $(DWZ_TEST_OBJECTS)
+$(DWZ_TEST_OBJECTS): %-for-test.o : %.c
+	$(CC) $< -o $@ -c \
+	  -DUSE_GNUC=0 -DDEVEL \
+	  -O2 -g \
+	  $(CFLAGS_COMMON) \
+	  -DDWZ_VERSION='"for-test"' \
+	  $(CFLAGS_COPYRIGHT)
 
 min:
 	$(CC) $(TEST_SRC)/min.c $(TEST_SRC)/min-2.c -o $@ -g
@@ -161,4 +164,4 @@ check check-valgrind: dwz $(TEST_EXECS)
 	export DEJAGNU=$(DEJAGNU); \
 	export PATH=$(PWD)/testsuite-bin:$$PATH; export LC_ALL=C; \
 	runtest --tool=dwz -srcdir $(srcdir)/testsuite $(RUNTESTFLAGS)
-	rm -Rf testsuite-bin $(TEST_EXECS) $(DWZ_TEST_SOURCES)
+	rm -Rf testsuite-bin $(TEST_EXECS) $(DWZ_TEST_OBJECTS)
