@@ -20,13 +20,30 @@ OBJECTS = args.o dwz.o hashtab.o pool.o sha1.o dwarfnames.o
 LIBS=-lelf
 dwz: $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
+args.o: native.o
+args.o: CFLAGS_FOR_SOURCE = \
+	-DNATIVE_ENDIAN_VAL=$(NATIVE_ENDIAN_VAL) \
+	-DNATIVE_POINTER_SIZE=$(NATIVE_POINTER_SIZE)
+NATIVE_ENDIAN=$(shell readelf -h native.o \
+	| grep Data \
+	| sed 's/.*, //;s/ endian//')
+NATIVE_ENDIAN_LITTLE=$(findstring $(NATIVE_ENDIAN),$(findstring little,$(NATIVE_ENDIAN)))
+NATIVE_ENDIAN_BIG=$(findstring $(NATIVE_ENDIAN),$(findstring big,$(NATIVE_ENDIAN)))
+NATIVE_ENDIAN_VAL=$(if $(NATIVE_ENDIAN_LITTLE),ELFDATA2LSB,$(if $(NATIVE_ENDIAN_BIG),ELFDATA2MSB,ELFDATANONE))
+NATIVE_POINTER_SIZE=$(shell readelf -wi native.o \
+	| grep "Pointer Size:" \
+	| sed 's/.*: *//')
+%.o: %.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c -o $@ $< $(CFLAGS_FOR_SOURCE)
 install: dwz
 	install -D dwz $(DESTDIR)$(bindir)/dwz
 	install -D -m 644 $(srcdir)/dwz.1 $(DESTDIR)$(mandir)/man1/dwz.1
 clean:
 	rm -f $(OBJECTS) *~ core* dwz $(TEST_EXECS) $(DWZ_TEST_OBJECTS) \
-	  dwz.log dwz.sum
+	  dwz.log dwz.sum native.o
 	rm -Rf testsuite-bin tmp.*
+native.o: native.c
+	$(CC) -o $@ $< -c -g
 
 PWD:=$(shell pwd -P)
 
@@ -59,13 +76,17 @@ DWZ_TEST_OBJECTS := $(patsubst %.o,%-for-test.o,$(OBJECTS))
 dwz-for-test: $(DWZ_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ $(LIBS)
 	rm -f $(DWZ_TEST_OBJECTS)
+args-for-test.o: CFLAGS_FOR_SOURCE = \
+	-DNATIVE_ENDIAN_VAL=$(NATIVE_ENDIAN_VAL) \
+	-DNATIVE_POINTER_SIZE=$(NATIVE_POINTER_SIZE)
 $(DWZ_TEST_OBJECTS): %-for-test.o : %.c
 	$(CC) $< -o $@ -c \
 	  -DUSE_GNUC=0 -DDEVEL \
 	  -O2 -g \
 	  $(CFLAGS_COMMON) \
 	  -DDWZ_VERSION='"for-test"' \
-	  $(CFLAGS_COPYRIGHT)
+	  $(CFLAGS_COPYRIGHT) \
+	  $(CFLAGS_FOR_SOURCE)
 
 min:
 	$(CC) $(TEST_SRC)/min.c $(TEST_SRC)/min-2.c -o $@ -g

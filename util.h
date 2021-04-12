@@ -25,6 +25,9 @@
 #define MAX(A, B) ((A) > (B) ? (A) : (B))
 #define MIN(A, B) ((A) < (B) ? (A) : (B))
 
+#define XSTR(s) STR(s)
+#define STR(s) #s
+
 #ifndef USE_GNUC
 #ifdef __GNUC__
 #define USE_GNUC 1

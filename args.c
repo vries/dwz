@@ -220,6 +220,14 @@ static struct option_help dwz_single_file_options_help[] =
     "Place the output in OUTFILE." }
 };
 
+#if NATIVE_ENDIAN_VAL == ELFDATA2MSB
+#define NATIVE_ENDIAN "big"
+#elif NATIVE_ENDIAN_VAL == ELFDATA2LSB
+#define NATIVE_ENDIAN "little"
+#else
+#define NATIVE_ENDIAN "not available"
+#endif
+
 /* Describe mult-file command line options.  */
 static struct option_help dwz_multi_file_options_help[] =
 {
@@ -236,10 +244,12 @@ static struct option_help dwz_multi_file_options_help[] =
   { "5", "dwarf-5", NULL, NULL,
     "Emit DWARF 5 standardized supplementary object files instead of"
     " GNU extension .debug_altlink." },
-  { "p", "multifile-pointer-size", "<SIZE|auto>", "auto",
-    "Set pointer size of multifile, in number of bytes." },
-  { "e", "multifile-endian", "<l|b|auto>", "auto",
-    "Set endianity of multifile." },
+  { "p", "multifile-pointer-size", "<SIZE|auto|native>", "auto",
+     "Set pointer size of multifile, in number of bytes."
+    " Native pointer size is " XSTR (NATIVE_POINTER_SIZE) "." },
+  { "e", "multifile-endian", "<l|b|auto|native>", "auto",
+    "Set endianity of multifile."
+    " Native endianity is " NATIVE_ENDIAN "." },
   { "j", "jobs", "<n>", "number of processors / 2",
     "Process <n> files in parallel." }
 };
@@ -385,7 +395,7 @@ usage (int failing)
   FILE *stream = failing ? stderr : stdout;
   const char *header_lines[] = {
     "dwz [common options] [-h] [-m COMMONFILE] [-M NAME | -r] [-5]",
-    "    [-p <SIZE|auto>] [-e <l|b|auto>] [-j N] [FILES]",
+    "    [-p <SIZE|auto|native>] [-e <l|b|auto|native>] [-j N] [FILES]",
     "dwz [common options] -o OUTFILE FILE",
     "dwz [ -v | -? ]"
   };
@@ -650,6 +660,11 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	      multifile_force_ptr_size = 0;
 	      break;
 	    }
+	  if (strcmp (optarg, "native") == 0)
+	    {
+	      multifile_force_ptr_size = NATIVE_POINTER_SIZE;
+	      break;
+	    }
 	  l = strtoul (optarg, &end, 0);
 	  if (*end != '\0' || optarg == end || (unsigned int) l != l)
 	    error (1, 0, "invalid argument -l %s", optarg);
@@ -660,6 +675,19 @@ parse_args (int argc, char *argv[], bool *hardlink, const char **outfile)
 	  if (strcmp (optarg, "auto") == 0)
 	    {
 	      multifile_force_endian = 0;
+	      break;
+	    }
+	  if (strcmp (optarg, "native") == 0)
+	    {
+	      switch (NATIVE_ENDIAN_VAL)
+		{
+		case ELFDATA2MSB:
+		case ELFDATA2LSB:
+		  multifile_force_endian = NATIVE_ENDIAN_VAL;
+		  break;
+		default:
+		  error (1, 0, "Cannot determine native endian");
+		}
 	      break;
 	    }
 	  if (strlen (optarg) != 1)
