@@ -44,6 +44,7 @@
 #include "sha1.h"
 #include "args.h"
 #include "util.h"
+#include "pool.h"
 
 #ifndef SHF_COMPRESSED
  /* Glibc elf.h contains SHF_COMPRESSED starting v2.22.  Libelf libelf.h has
@@ -196,7 +197,7 @@ static jmp_buf oom_buf;
 /* Handle OOM situation.  If handling more than one file, we might
    just fail to handle some large file due to OOM, but could very well
    handle other smaller files after it.  */
-static void
+void
 dwz_oom (void)
 {
   longjmp (oom_buf, 1);
@@ -1104,63 +1105,11 @@ ALIGN_STRUCT (dw_file)
 ALIGN_STRUCT (dw_cu)
 ALIGN_STRUCT (dw_die)
 
-/* Big pool allocator.  obstack isn't efficient, because it aligns everything
-   too much, and allocates too small chunks.  All these objects are only freed
-   together.  */
-
-/* Pointer to the start of the current pool chunk, current first free byte
-   in the chunk and byte after the end of the current pool chunk.  */
-static unsigned char *pool, *pool_next, *pool_limit;
 
 /* After read_multifile, pool variable is moved over to this variable
    as the pool from read_multifile needs to be around for subsequent dwz
    calls.  Freed only during the final cleanup at the very end.  */
 static unsigned char *alt_pool;
-
-/* Allocate SIZE bytes with ALIGN bytes alignment from the pool.  */
-static void *
-pool_alloc_1 (unsigned int align, unsigned int size)
-{
-  void *ret;
-  if (pool == NULL
-      || (size_t) (pool_limit - pool_next) < (size_t) align + size)
-    {
-      size_t new_size = (size_t) align + size;
-      unsigned char *new_pool;
-      new_size += sizeof (void *);
-      if (new_size < 16384 * 1024 - 64)
-	new_size = 16384 * 1024 - 64;
-      new_pool = (unsigned char *) malloc (new_size);
-      if (new_pool == NULL)
-	dwz_oom ();
-      *(unsigned char **) new_pool = pool;
-      pool_next = new_pool + sizeof (unsigned char *);
-      pool_limit = new_pool + new_size;
-      pool = new_pool;
-    }
-  pool_next = (unsigned char *) (((uintptr_t) pool_next + align - 1)
-				 & ~(uintptr_t) (align - 1));
-  ret = pool_next;
-  pool_next += size;
-  return ret;
-}
-
-/* Free the whole pool.  */
-static void
-pool_destroy (void)
-{
-  pool_next = NULL;
-  pool_limit = NULL;
-  while (pool)
-    {
-      void *p = (void *) pool;
-      pool = *(unsigned char **) pool;
-      free (p);
-    }
-}
-
-#define pool_alloc(name, size) \
-  (struct name *) pool_alloc_1 (ALIGNOF_STRUCT (name), size)
 
 static struct abbrev_tag *
 pool_clone_abbrev (struct abbrev_tag *t)
@@ -14411,7 +14360,7 @@ cleanup (void)
   memset (&ob, '\0', sizeof (ob2));
   die_nontoplevel_freelist = NULL;
   die_collapsed_child_freelist = NULL;
-  pool_destroy ();
+  pool_destroy (NULL);
   first_cu = NULL;
   last_cu = NULL;
   ptr_size = 0;
@@ -16162,10 +16111,7 @@ read_multifile (int fd, unsigned int die_count)
       alt_macro_htab = macro_htab;
       macro_htab = NULL;
       alt_first_cu = first_cu;
-      alt_pool = pool;
-      pool = NULL;
-      pool_next = NULL;
-      pool_limit = NULL;
+      alt_pool = finalize_pool ();
       alt_ob = ob;
       alt_ob2 = ob2;
       memset (&ob, '\0', sizeof (ob));
@@ -16826,10 +16772,10 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
   off_htab = alt_off_htab;
   dup_htab = alt_dup_htab;
   macro_htab = alt_macro_htab;
-  pool = alt_pool;
   ob = alt_ob;
   ob2 = alt_ob2;
   cleanup ();
+  pool_destroy (alt_pool);
 
   return ret;
 }
