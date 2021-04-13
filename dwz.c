@@ -15147,18 +15147,23 @@ write_multifile_1 (DSO *dso, struct file_result *res)
   return ret;
 }
 
+struct pipe
+{
+  int readfd;
+  int writefd;
+};
+
 static bool write_multifile_parallel_p;
 static int child_id;
-static int *pipes;
+static struct pipe *pipes;
 
 /* Get token.  */
 static void
 get_token (void)
 {
   int n = child_id;
-  int *base = &pipes[n * 2];
-  int readfd = base[0];
-  int writefd = base[1];
+  int readfd = pipes[n].readfd;
+  int writefd = pipes[n].writefd;
   close (writefd);
   char buf;
   read (readfd, &buf, 1);
@@ -15169,9 +15174,8 @@ get_token (void)
 static void
 pass_token (int n)
 {
-  int *base = &pipes[n * 2];
-  int readfd = base[0];
-  int writefd = base[1];
+  int readfd = pipes[n].readfd;
+  int writefd = pipes[n].writefd;
   close (readfd);
   char buf = '\0';
   write (writefd, &buf, 1);
@@ -16536,8 +16540,8 @@ dwz_files_1 (int nr_files, char *files[], bool hardlink,
 	     int fds[2];
 	     if (pipe (fds) != 0)
 	       error (1, ENOMEM, "failed to initialize pipe");
-	     pipes[i * 2] = fds[0];
-	     pipes[i * 2 + 1] = fds[1];
+	     pipes[i].readfd = fds[0];
+	     pipes[i].writefd = fds[1];
 	   }
        }
      else
