@@ -15166,7 +15166,8 @@ get_token (void)
   int writefd = pipes[n].writefd;
   close (writefd);
   char buf;
-  read (readfd, &buf, 1);
+  ssize_t res = read (readfd, &buf, 1);
+  assert (res == 1);
   close (readfd);
 }
 
@@ -15178,7 +15179,8 @@ pass_token (int n)
   int writefd = pipes[n].writefd;
   close (readfd);
   char buf = '\0';
-  write (writefd, &buf, 1);
+  ssize_t res = write (writefd, &buf, 1);
+  assert (res == 1);
   close (writefd);
 }
 
